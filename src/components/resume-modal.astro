@@ -39,6 +39,7 @@ const { isVisible } = Astro.props;
 </div>
 
 <script>
+  import { getPath } from '../lib/path-utils'
   const modal = document.getElementById('resume-modal');
   const content = document.getElementById('resume-modal-content');
   const noButton = document.getElementById('resume-no');
@@ -95,7 +96,7 @@ const { isVisible } = Astro.props;
   });
 
   yesButton?.addEventListener('click', () => {
-    window.location.href = '/game';
+    window.location.href = getPath('/game');
   });
 
   // Export function for use in parent

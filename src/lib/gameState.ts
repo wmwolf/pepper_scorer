@@ -1,5 +1,5 @@
 // src/lib/gameState.ts
-
+import { getPath } from './path-utils';
 interface GameState {
   players: string[];
   teams: string[];
@@ -250,7 +250,7 @@ export class GameManager {
         this.state.scores = this.getScores();
       } else {
         // At very start of game, navigate back to setup
-        window.location.href = '/';
+        window.location.href = getPath('');
         return;
       }
     } else {
@@ -259,7 +259,7 @@ export class GameManager {
       
       // Special case: First pepper round, trump phase
       if (handIndex === 0 && phase === 'trump') {
-        window.location.href = '/';
+        window.location.href = getPath('');
         return;
       }
       

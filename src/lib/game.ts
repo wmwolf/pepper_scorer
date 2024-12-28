@@ -1,10 +1,11 @@
 // src/lib/game.ts
 
 import { GameManager, getCurrentPhase, isPepperRound, calculateScore, getNextDealer } from './gameState';
+import { getPath } from './path-utils';
 export function loadGameState() {
     const storedGame = localStorage.getItem('currentGame');
     if (!storedGame) {
-        window.location.href = '/';
+        window.location.href = getPath(''); // Redirect to home
         return null;
     }
     return JSON.parse(storedGame);
@@ -455,7 +456,7 @@ export function startGameplay(gameData: any) {
                 
                 document.getElementById('new-game-control')?.addEventListener('click', () => {
                     localStorage.removeItem('currentGame');
-                    window.location.href = '/';
+                    window.location.href = getPath(''); // Redirect to home
                 });
             }
             

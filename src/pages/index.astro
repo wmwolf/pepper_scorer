@@ -121,6 +121,7 @@ import ResumeGameModal from '../components/resume-modal.astro';
 
 <script>
   import { GameManager } from '../lib/gameState';
+  import { getPath } from '../lib/path-utils';
   // Check for unfinished game on load
   document.addEventListener('DOMContentLoaded', () => {
     const savedGame = localStorage.getItem('currentGame');
@@ -230,6 +231,6 @@ import ResumeGameModal from '../components/resume-modal.astro';
   localStorage.setItem('currentGame', gameManager.toJSON());
 
   // Navigate to game page
-  window.location.href = '/game';
+  window.location.href = getPath('/game');
 });
 </script>
