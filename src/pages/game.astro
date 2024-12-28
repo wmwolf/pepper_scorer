@@ -1,0 +1,204 @@
+---
+// src/pages/game.astro
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Current Game">
+  <div class="max-w-6xl mx-auto px-4">
+  <!-- Score Display -->
+  <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Team 1 Score -->
+      <div class="text-center md:text-left">
+        <div class="flex items-center justify-center md:justify-start gap-1">
+          <h2 class="text-lg font-medium text-gray-700" id="team1-name">Team 1</h2>
+          <div id="team1-wins" class="flex gap-1">
+            <!-- Trophy icons will be added here by JS -->
+          </div>
+        </div>
+        <p class="text-3xl font-bold text-blue-600" id="team1-score">0</p>
+      </div>
+      <!-- Team 2 Score -->
+      <div class="text-center md:text-right">
+        <div class="flex items-center justify-center md:justify-end gap-1">
+          <div id="team2-wins" class="flex gap-1">
+            <!-- Trophy icons will be added here by JS -->
+          </div>
+          <h2 class="text-lg font-medium text-gray-700" id="team2-name">Team 2</h2>
+        </div>
+        <p class="text-3xl font-bold text-red-600" id="team2-score">0</p>
+      </div>
+    </div>
+  </div>
+    <!-- Game Area -->
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+      <!-- Action Area (now spans 3 columns instead of 2) -->
+      <div class="lg:col-span-3 space-y-6">
+        <!-- Instructions -->
+        <div class="bg-white rounded-lg shadow-sm p-6">
+          <div class="flex justify-between items-center mb-4">
+            <p class="text-lg text-gray-700" id="game-instruction">
+              Waiting for game to start...
+            </p>
+            <button 
+              id="undo-button"
+              class="px-3 py-1 text-sm rounded-md bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Undo last action"
+              disabled
+            >
+              <span class="flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M7.707 3.293a1 1 0 010 1.414L5.414 7H11a7 7 0 017 7v2a1 1 0 11-2 0v-2a5 5 0 00-5-5H5.414l2.293 2.293a1 1 0 11-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" />
+                </svg>
+                Undo
+              </span>
+            </button>
+          </div>
+        </div>
+        <!-- Game Controls -->
+        <div class="bg-white rounded-lg shadow-sm p-6">
+          <!-- Player Selection -->
+          <div id="player-controls" class="hidden space-y-4">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Select Player</h3>
+            <div id="player-buttons" class="space-y-3">
+              <div id="player-grid" class="grid grid-cols-4 gap-3">
+                <!-- Player buttons will be inserted here -->
+              </div>
+              <!-- No one button will be added here -->
+            </div>
+          </div>
+
+          <!-- Bid Selection -->
+          <div id="bid-controls" class="hidden space-y-4">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Select Bid</h3>
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <button class="btn-bid" data-bid="4">4</button>
+              <button class="btn-bid" data-bid="5">5</button>
+              <button class="btn-bid" data-bid="6">6</button>
+              <button class="btn-bid" data-bid="M">🌙</button>
+              <button class="btn-bid" data-bid="D">🌙🌙</button>
+            </div>
+          </div>
+
+          <!-- Trump Selection -->
+          <div id="trump-controls" class="hidden space-y-4">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Select Trump</h3>
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <button class="btn-trump" data-suit="C">♣️</button>
+              <button class="btn-trump" data-suit="D">♦️</button>
+              <button class="btn-trump" data-suit="H">♥️</button>
+              <button class="btn-trump" data-suit="S">♠️</button>
+              <button class="btn-trump" data-suit="N">NT</button>
+            </div>
+          </div>
+
+          <!-- Decision Controls -->
+          <div id="decision-controls" class="hidden space-y-4">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Defending Team Decision</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <button class="btn-decision" data-decision="F">Fold</button>
+              <button class="btn-decision" data-decision="P">Play</button>
+              <button class="btn-decision" id="btn-pass-1" data-decision="F1">Pass (+1)</button>
+              <button class="btn-decision" id="btn-pass-2" data-decision="F2">Pass (+2)</button>
+            </div>
+          </div>
+
+          <!-- Tricks Controls -->
+          <div id="tricks-controls" class="hidden space-y-4">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Tricks Taken</h3>
+            <div class="grid grid-cols-2 md:grid-cols-7 gap-3">
+              {Array.from({ length: 7 }, (_, i) => (
+                <button class="btn-tricks" data-tricks={i}>{i}</button>
+              ))}
+            </div>
+          </div>
+
+          <!-- end game controls -->
+          <div id="end-game-controls" class="hidden space-y-4">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">End Game</h3>
+            <!-- div with end game button choices will go here -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Score Log -->
+           <!-- Score Log (now spans 2 columns instead of 1) -->
+      <div class="lg:col-span-2 bg-white rounded-lg shadow-sm p-6">
+      <!-- <div class="bg-white rounded-lg shadow-sm p-6"> -->
+        <h3 class="text-lg font-medium text-gray-900 mb-4">Game History</h3>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead>
+                <tr>
+                    <th class="text-center text-sm font-medium text-gray-500">Hand</th>
+                    <th class="text-left text-sm font-medium text-gray-500 px-4">Dealer</th>
+                    <th class="text-left text-sm font-medium text-gray-500 px-4">Bid</th>
+                    <th class="text-center text-sm font-medium text-gray-500" id="log-team1">Team 1</th>
+                    <th class="text-center text-sm font-medium text-gray-500" id="log-team2">Team 2</th>
+                </tr>
+            </thead>
+            <tbody id="score-log" class="divide-y divide-gray-200">
+                <!-- Score log entries will be inserted here -->
+            </tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  /* Base button styles */
+  button {
+    @apply px-4 py-2 rounded-md text-sm font-medium transition-colors
+    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500;
+  }
+
+  /* Default state */
+  button:not(.active) {
+    @apply bg-gray-100 text-gray-700 hover:bg-gray-200;
+  }
+
+  /* Active state */
+  button.active {
+    @apply bg-blue-600 text-white;
+  }
+
+  /* Special buttons */
+  .btn-trump[data-suit="H"], .btn-trump[data-suit="D"] {
+    @apply text-red-600;
+  }
+
+  .btn-trump[data-suit="C"], .btn-trump[data-suit="S"] {
+    @apply text-black;
+  }
+</style>
+
+<script>
+  import { loadGameState, startGameplay } from '../lib/game';
+  document.addEventListener('DOMContentLoaded', () => {
+    const gameData = loadGameState();
+    if (gameData) {
+      // Update team names and scores as before
+      const team1Name = document.getElementById('team1-name');
+      const team2Name = document.getElementById('team2-name');
+      if (team1Name) team1Name.textContent = gameData.teams[0];
+      if (team2Name) team2Name.textContent = gameData.teams[1];
+      
+      // Add series trophies if in series mode
+      if (gameData.isSeries && gameData.seriesScores) {
+        const team1Wins = document.getElementById('team1-wins');
+        const team2Wins = document.getElementById('team2-wins');
+        
+        if (team1Wins) {
+          team1Wins.innerHTML = '🏆'.repeat(gameData.seriesScores[0]);
+        }
+        if (team2Wins) {
+          team2Wins.innerHTML = '🏆'.repeat(gameData.seriesScores[1]);
+        }
+      }
+      
+      startGameplay(gameData);
+    }
+});
+</script>

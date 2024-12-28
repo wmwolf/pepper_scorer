@@ -1,0 +1,59 @@
+---
+// src/layouts/BaseLayout.astro
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { 
+  title, 
+  description = "A modern scoring app for the card game Pepper"
+} = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <title>{title} | Pepper Scorer</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body class="min-h-screen bg-gray-50 flex flex-col">
+    <header class="bg-blue-600 text-white shadow-md">
+      <nav class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex justify-between h-16 items-center">
+          <div class="flex-shrink-0">
+            <h1 class="text-2xl font-bold">Pepper Scorer</h1>
+          </div>
+          <div class="hidden sm:block">
+            <div class="flex space-x-4">
+              <a href="/" class="px-3 py-2 rounded-md hover:bg-blue-700">
+                New Game
+              </a>
+              <a href="/stats" class="px-3 py-2 rounded-md hover:bg-blue-700">
+                Statistics
+              </a>
+              <a href="/help" class="px-3 py-2 rounded-md hover:bg-blue-700">
+                Help
+              </a>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="flex-grow container mx-auto px-4 py-8">
+      <slot />
+    </main>
+
+    <footer class="bg-gray-100 border-t">
+      <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+        <p class="text-center text-gray-600 text-sm">
+          © {new Date().getFullYear()} Pepper Scorer. Rules and instructions available in the Help section.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,11 +1,235 @@
 ---
-import Welcome from '../components/Welcome.astro';
-import Layout from '../layouts/Layout.astro';
-
-// Welcome to Astro! Wondering what to do next? Check out the Astro documentation at https://docs.astro.build
-// Don't want to use any of this? Delete everything in this file, the `assets`, `components`, and `layouts` directories, and start fresh.
+// src/pages/index.astro
+import BaseLayout from '../layouts/BaseLayout.astro';
+import ResumeGameModal from '../components/resume-modal.astro';
 ---
+<ResumeGameModal isVisible={false}/>
+<BaseLayout title="New Game">
+  <div class="max-w-3xl mx-auto">
+    <div class="bg-white shadow-sm rounded-lg p-6">
+      <div class="space-y-6">
+        <h2 class="text-2xl font-bold text-gray-900 text-center">
+          Start a New Game
+        </h2>
+        
+        <div class="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
+          <div class="flex">
+            <div class="ml-3">
+              <p class="text-sm text-blue-700">
+                Enter the names of the players in clockwise order, starting with the first dealer.
+              </p>
+            </div>
+          </div>
+        </div>
 
-<Layout>
-	<Welcome />
-</Layout>
+        <!-- Player Setup Form -->
+        <div id="player-setup" class="space-y-6">
+          <form id="player-form" class="space-y-4">
+            <div class="space-y-4">
+              {[1, 2, 3, 4].map(i => (
+                <div class="space-y-2">
+                  <label 
+                    class="block text-sm font-medium text-gray-700"
+                    for={`player-${i}`}
+                  >
+                    {i === 1 ? 'First Dealer' : `Player ${i}`}
+                  </label>
+                  <input
+                    type="text"
+                    id={`player-${i}`}
+                    name={`player-${i}`}
+                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    placeholder={`Enter player ${i} name`}
+                    required
+                  />
+                </div>
+              ))}
+            </div>
+
+            <p id="player-error" class="text-red-600 text-sm hidden"></p>
+
+            <button
+              type="submit"
+              class="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+              Continue to Team Names
+            </button>
+          </form>
+        </div>
+
+        <!-- Team Setup Form (initially hidden) -->
+        <div id="team-setup" class="space-y-6 hidden">
+          <form id="team-form" class="space-y-4">
+            <div class="space-y-4">
+              {[1, 2].map(i => (
+                <div class="space-y-2">
+                  <label 
+                    class="block text-sm font-medium text-gray-700"
+                    for={`team-${i}`}
+                    id={`team-${i}-label`}
+                  >
+                    Team {i}
+                  </label>
+                  <input
+                    type="text"
+                    id={`team-${i}`}
+                    name={`team-${i}`}
+                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    placeholder={`Enter team ${i} name`}
+                    required
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div class="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="series"
+                name="series"
+                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <label for="series" class="text-sm text-gray-700">
+                Play a series (best of three games)
+              </label>
+            </div>
+
+            <p id="team-error" class="text-red-600 text-sm hidden"></p>
+
+            <div class="flex space-x-4">
+              <button
+                type="button"
+                id="back-to-players"
+                class="flex-1 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              >
+                Back
+              </button>
+              <button
+                type="submit"
+                class="flex-1 rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              >
+                Start Game
+              </button>
+            </div>
+          </form>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</BaseLayout>
+
+<script>
+  import { GameManager } from '../lib/gameState';
+  // Check for unfinished game on load
+  document.addEventListener('DOMContentLoaded', () => {
+    const savedGame = localStorage.getItem('currentGame');
+    if (savedGame) {
+      try {
+        const gameData = JSON.parse(savedGame);
+        const modal = document.getElementById('resume-modal');
+        
+        if (modal) {
+          // Show the modal
+          modal.classList.remove('opacity-0', 'pointer-events-none');
+          // Populate the content
+          if (window.populateModalContent) {
+            window.populateModalContent(gameData);
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing saved game:', e);
+      }
+    }
+  });
+
+  // State management
+  const state = {
+    players: ['', '', '', ''],
+    teams: ['', ''],
+    isSeries: false
+  };
+
+
+  // DOM Elements
+  const playerForm = document.getElementById('player-form');
+  const teamForm = document.getElementById('team-form');
+  const playerSetup = document.getElementById('player-setup');
+  const teamSetup = document.getElementById('team-setup');
+  const backButton = document.getElementById('back-to-players');
+  const playerError = document.getElementById('player-error');
+  const teamError = document.getElementById('team-error');
+
+  // Handle player form submission
+  playerForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    
+    // Get player names
+    state.players = [1, 2, 3, 4].map(i => {
+      const input = document.getElementById(`player-${i}`) as HTMLInputElement;
+      return input.value.trim();
+    });
+
+    // Validate
+    if (state.players.some(name => !name)) {
+      if (playerError) {
+        playerError.textContent = 'All player names are required';
+        playerError.classList.remove('hidden');
+      }
+      return;
+    }
+
+    // Update team labels
+    document.getElementById('team-1-label')!.textContent = 
+      `${state.players[0]} and ${state.players[2]}'s Team`;
+    document.getElementById('team-2-label')!.textContent = 
+      `${state.players[1]} and ${state.players[3]}'s Team`;
+
+    // Show team setup
+    playerSetup?.classList.add('hidden');
+    teamSetup?.classList.remove('hidden');
+  });
+
+  // Handle back button
+  backButton?.addEventListener('click', () => {
+    teamSetup?.classList.add('hidden');
+    playerSetup?.classList.remove('hidden');
+  });
+
+  // Handle team form submission
+  teamForm?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  
+  // Get team names and series preference
+  state.teams = [1, 2].map(i => {
+    const input = document.getElementById(`team-${i}`) as HTMLInputElement;
+    return input.value.trim();
+  });
+  
+  const seriesCheckbox = document.getElementById('series') as HTMLInputElement;
+  state.isSeries = seriesCheckbox.checked;
+
+  // Validate
+  if (state.teams.some(name => !name)) {
+    if (teamError) {
+      teamError.textContent = 'Both team names are required';
+      teamError.classList.remove('hidden');
+    }
+    return;
+  }
+
+  // Create game using GameManager
+  const gameManager = new GameManager(state.players, state.teams);
+  if (state.isSeries) {
+    gameManager.state.isSeries = true;
+    gameManager.state.seriesScores = [0, 0];
+    gameManager.state.gameNumber = 1;
+  }
+
+  // Save to localStorage
+  localStorage.setItem('currentGame', gameManager.toJSON());
+
+  // Navigate to game page
+  window.location.href = '/game';
+});
+</script>

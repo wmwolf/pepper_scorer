@@ -1,0 +1,103 @@
+---
+// src/components/resume-modal.astro
+interface Props {
+  isVisible: boolean;
+}
+
+const { isVisible } = Astro.props;
+---
+
+<div 
+  id="resume-modal"
+  class:list={[
+    'fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50 transition-opacity duration-300',
+    { 'opacity-0 pointer-events-none': !isVisible }
+  ]}
+>
+  <div class="bg-white rounded-lg p-6 max-w-lg w-full mx-4 shadow-xl">
+    <h2 class="text-xl font-semibold mb-4">Unfinished Game Found</h2>
+    
+    <div id="resume-modal-content" class="mb-6 space-y-4">
+      <!-- Content will be populated by JavaScript -->
+    </div>
+
+    <div class="flex justify-end space-x-3">
+      <button
+        id="resume-no"
+        class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+      >
+        Start New Game
+      </button>
+      <button
+        id="resume-yes"
+        class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+      >
+        Resume Game
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const modal = document.getElementById('resume-modal');
+  const content = document.getElementById('resume-modal-content');
+  const noButton = document.getElementById('resume-no');
+  const yesButton = document.getElementById('resume-yes');
+
+  // Function to populate modal content
+  function populateModalContent(gameData) {
+    if (!content) return;
+
+    const numHands = gameData.hands.filter(hand => 
+      hand.length === 6 || (hand.length >= 2 && hand[1] === '0')
+    ).length;
+
+    console.log('Game data in modal:', gameData);
+    console.log('startTime:', gameData.startTime);
+    const startDate = new Date(gameData.startTime);
+    console.log('parsed date:', startDate);
+
+    content.innerHTML = `
+      <p class="text-gray-600">
+        You started a game on ${startDate.toLocaleDateString()} at ${startDate.toLocaleTimeString()} 
+        and played ${numHands} hands.
+      </p>
+
+      <div class="grid grid-cols-2 gap-6 mt-4">
+        ${gameData.teams.map((team, i) => `
+          <div class="space-y-3">
+            <div class="text-center pb-2 border-b">
+              <h3 class="font-medium text-lg text-gray-900">${team}</h3>
+              <p class="text-2xl font-bold text-gray-700">${gameData.scores[i]}</p>
+            </div>
+            <div class="space-y-1">
+              <p class="text-sm text-gray-600">
+                ${gameData.players[i * 2]}
+              </p>
+              <p class="text-sm text-gray-600">
+                ${gameData.players[i * 2 + 1]}
+              </p>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+
+      <p class="text-gray-600 mt-4">
+        Would you like to resume this game or start a new one?
+      </p>
+    `;
+  }
+
+  // Handle modal interactions
+  noButton?.addEventListener('click', () => {
+    localStorage.removeItem('currentGame');
+    modal?.classList.add('opacity-0', 'pointer-events-none');
+  });
+
+  yesButton?.addEventListener('click', () => {
+    window.location.href = '/game';
+  });
+
+  // Export function for use in parent
+  window.populateModalContent = populateModalContent;
+</script>

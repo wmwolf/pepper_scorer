@@ -1,0 +1,84 @@
+# Rules for the card game "Pepper"
+
+## Objective
+
+Pepper is a trick-taking card game that combines bidding, negotiation, and strategic play. The objective of the game is to be the first team to score 42 points.
+
+## Setup
+
+Before beginning play, the players must organize themselves into teams and prepare a specialized deck of cards. The game is played with 4 players in 2 teams of 2. The players sit across from each other. The game is played with a deck of 24 cards taken from a standard 52-card deck with ranks 9, 10, Jack, Queen, King, and Ace and all four suits. No jokers are included. In each hand, each player receives six cards, often dealt in two groups of three.
+
+## Gameplay
+
+The game starts with four hands known as the "Pepper Round," which will be discussed later. For now, we'll describe the standard gameplay beyond the fourth hand.
+
+### Bidding
+
+After dealing, the player to the left of the dealer starts bidding, and the bidding continues clockwise. Each player may only make bids higher than the highest one before them, or they may pass. The allowed bids in ascending order are 4, 5, 6, moon, and double moon. The bids indicate how many tricks the bidding player thinks they can win (out of six). The difference between 6, moon, and double moon is a bit subtle and will be explained in more detail later, but the table below may help as a reference.
+
+| Bid | Points | Tricks | Notes |
+| :---: | :------: | :------: | ----- |
+| 4   | 4      | 4      | Defending team scores points equal to number of tricks taken |
+| 5   | 5      | 5      | Defending team scores points equal to number of tricks taken |
+| 6   | 6      | 6      | Defending team scores points equal to number of tricks taken |
+| Moon| 7      | 6      | If defending team scores even one trick, they win 7 points |
+| Double Moon | 14 | 6      | No pass for bidder. If defending team scores even one trick, they win 14 points |
+
+If no player bids, the hand is thrown in, and the deal progresses to the next player.
+
+### Card Exchange and Negotiation
+
+After bidding concludes, players must determine whether to play the hand and engage in a card exchange process with specific rules for each type of bid.    The team that won the bid is the "bidding team" and the team that did not is the "defending team".
+
+The player who won the bid earns the right to select a suit to be trump, or to elect to play without a trump suit. For any bid other than a double moon, and after declaring the trump suit (or lack thereof), the bidding player must exchange one card from their hand for one from their partner (of their partner's choosing). Neither partner may see what the other partner is passing before selecting their card. The partner who did not win the bid will not participate further in the hand.
+
+If the hand is played, the bidding team must score at least the number of points they bid (4, 5, or 6), or else they will lose a number of points equal to the value of the bid (4 for a bid of 4, 5 for a bid of 5, 6 for a bid of 6, 7 for a bid of moon, and 14 for a bid of 14). If the *defending team* does not score *any* tricks, then they also lose this amount of points. For bids of 4, 5, or 6, the defending team scores points equal to the number of tricks they took. For bids of moon or double moon, the defending team scores 7 or 14 points, respectively, if they take even one trick.
+
+Since the defending team stands a decent chance to go negative, they may negotiate with the bidding player to avoid playing altogether. They always have the option to "throw it in", taking no points and simply giving the bidding team their bid. For a bid of 4, they may ask for one or two tricks for free. Similarly, the defending team may ask for one trick for free for a bid of 5. No tricks may be negotiated for higher bids. If the bidding team grants the defending team one or two tricks, negotiating is over, the hand is thrown in, and the defending team scores the tricks they were granted while the bidding team scores their bid. If no tricks are granted, the defending team may still throw the hand in or play it out.
+
+To facilitate negotation, the defending team may engage in some limited table talk. Typically this is limited to stating how many "stops" they think they have. A stop is a card or group of cards that will prevent the bidding team from taking a trick. 
+
+For example, if the bidding team selects a trump suit and the defending team has the highest trump card, the player with it might say "I have one on", which means they have a stop in the trump suit. Multiple cards can constitute a single stop, though. For instance, a player could have the second-highest trump card and any other trump card (in this case, we say that the second highest card is "guarded"). This is also a stop, since if the bidding team played the highest trump card, the requirement to follow suit would force the defending player to play one of their trump cards, so they would play the lower one, leaving the second highest trump card in their hand as the highest trump card still in play.
+
+A stop can also be an off-suit stop. Perhaps an ace or a king guarded of a suit. These are harder to predict, since it's not clear what off-trump suits the bidding player may have, if any. A defending player could say "I have one off and one long off" to indicate that they have two stops, one being pretty strong (probably an ace or king) and one being weaker (maybe an ace with multiple cards beneath it or a queen "three deep" in a suit).
+
+### Bluffing
+
+Due to the negotiation aspect of the game, bluffing can be a valid strategy, especially when calling "no trump" as the bid, since it is difficult for the defending team to know what cards the bidding team has. Even suited hands can be bluffed if part of their strength comes from decent off-suit cards. There is one exception to this strategy, however, that we now discuss.
+
+### Clubs
+
+If clubs are selected as trump, the defending team **must** play the hand. There is no negotiating, and certainly no bluffing!
+
+## Play of the Hand
+
+If the defending team opts to play the hand (or the called trump is clubs), then the player who won the bid starts play by placing a card from their hand into the play area. Play continues clockwise, with each player playing a card of the same suit if they have one. If they do not have a card of the same suit, they may play any card in their hand. Note that only the bidding player and the two defending players participate in the hand; the other player on the bidding team does not participate (and should offer to get drinks and snacks for other players, or at least reel in tricks for their partner). After all three players have played a card, the highest value card wins, and the team who played it wins the trick, gathering the cards to a face-down pile. The player who won the trick leads the next trick.
+
+### Card Value
+
+Understanding how cards rank against each other is crucial to successful play. To determine the winner of a trick, follow this algorithm:
+
+1. If any trump cards are present, the highest value trump card wins.
+2. If no trump cards are present, the highest value card of the suit led wins.
+3. Any cards from suits other than the trump suit or the suit led are worthless.
+
+If there is no trump suit, then only rules 2 and 3 apply.
+
+Within a non-trump suit, the cards rank in the following order: Ace, King, Queen, Jack (if available), 10, and 9. Within a trump suit, things get more interesting. The highest valued card is the jack of that suit, which is called the **right bower**. The next highest card is the jack of the other suit of the same color, which is called the **left bower**. The remaining cards rank in the same order as in non-trump suits. Notably, the left bower is considered a trump card, and is temporarily not a member of its original suit. So if spades are trump, then there is no jack of clubs in the deck, only the left bower of spades.
+
+### End of hand and scoring
+
+Once play concludes, points are awarded or deducted based on the outcome of the hand. Once all six tricks have been played, the hand is over. If the bidding team won at least as many tricks as they bid, they score the number of points associated with their bid (see the table above). If they did not make their bid, they lose the number of points associated with their bid (this is called "going **set**").
+
+If the defending team won at least one trick, they score the number of tricks the took, except for moon and double moon hands. In that case, they score 7 or 14 points, respectively (and regardless of the number of tricks they won). If the defending team did not win any tricks, they lose the number of points associated with the bid (also called "going **set**").
+
+If either team reaches 42 points or more (and has more points than the other team), then the game is over, and that team wins. If both teams reach 42 points in the same hand, then the team with the higher score wins. If both teams reach the same score at or above 42 in the same hand, then the game is a tie, there is no clear prescription for what to do next, but there are two most common options
+
+1. Play hands until the tie is broken and one team has more than 42 points and more than the other team.
+2. Play another pepper round (see below)
+
+Assuming neither team has won, the deal passes to the left (of the previous dealer) and a new hand is dealt. The game continues until one teams wins.
+
+## The Pepper Round
+
+The first four rounds of the game are called the **pepper round**. During these hands, the player to the left of the dealer "takes pepper." This means that they automatically bid 4 and win the bid; no one else may bid. They are free to chose whatever trump they wish (or no trump at all). Beyond that, each hand of the pepper round plays as normal; the defending team may throw in, negotiate, or play the hand (though again, they *must* play if clubs are selected as trump). The pepper round is a good way to get a feel for the game and to get a sense of the other players' strategies while not being fully responsible for the consequences of a bad bid.
