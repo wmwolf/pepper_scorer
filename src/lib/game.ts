@@ -30,7 +30,7 @@ function trumpToString(trump: string): string {
       case 'D': return '♦️';
       case 'S': return '♠️';
       case 'H': return '♥️';
-      case 'N': return '<span className="text-2xl font-mathematical">∅</span>';
+      case 'N': return '∅';
       default: return trump;
     }
   }
