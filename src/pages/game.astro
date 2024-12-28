@@ -88,7 +88,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               <button class="btn-trump" data-suit="D">♦️</button>
               <button class="btn-trump" data-suit="H">♥️</button>
               <button class="btn-trump" data-suit="S">♠️</button>
-              <button class="btn-trump" data-suit="N">NT</button>
+              <button class="btn-trump" data-suit="N">
+                <span class="text-2xl font-mathematical">∅</span>
+              </button>
             </div>
           </div>
 
@@ -98,8 +100,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
               <button class="btn-decision" data-decision="F">Fold</button>
               <button class="btn-decision" data-decision="P">Play</button>
-              <button class="btn-decision" id="btn-pass-1" data-decision="F1">Pass (+1)</button>
-              <button class="btn-decision" id="btn-pass-2" data-decision="F2">Pass (+2)</button>
+              <button class="btn-decision" id="btn-pass-1" data-decision="F1">Negotiate (+1)</button>
+              <button class="btn-decision" id="btn-pass-2" data-decision="F2">Negotiate (+2)</button>
             </div>
           </div>
 

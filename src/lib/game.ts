@@ -24,16 +24,16 @@ function bidToString(bid: string) {
     }
 }
 
-function trumpToString(trump: string) {
+function trumpToString(trump: string): string {
     switch (trump) {
-        case 'C': return '♣︎';
-        case 'D': return '♦️';
-        case 'S': return '♠︎';
-        case 'H': return '♥️';
-        case 'N': return '🃏';
-        default: return trump;
+      case 'C': return '♣️';
+      case 'D': return '♦️';
+      case 'S': return '♠️';
+      case 'H': return '♥️';
+      case 'N': return '<span className="text-2xl font-mathematical">∅</span>';
+      default: return trump;
     }
-}
+  }
 
 function hideAllControls() {
     ['player-controls', 'bid-controls', 'trump-controls', 
