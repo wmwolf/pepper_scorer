@@ -127,7 +127,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
            <!-- Score Log (now spans 2 columns instead of 1) -->
       <div class="lg:col-span-2 bg-white rounded-lg shadow-sm p-6">
       <!-- <div class="bg-white rounded-lg shadow-sm p-6"> -->
-        <h3 class="text-lg font-medium text-gray-900 mb-4">Game History</h3>
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-lg font-medium text-gray-900">Game History</h3>
+          <button 
+            id="reverse-history-button"
+            class="px-3 py-1 text-sm rounded-md bg-gray-100 text-gray-600 hover:bg-gray-200 flex items-center gap-1"
+            title="Toggle chronological order"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" id="history-icon" class="h-4 w-4 transition-transform" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clip-rule="evenodd" />
+            </svg>
+            <span id="reverse-button-text">Oldest First</span>
+          </button>
+        </div>
         <div class="overflow-x-auto">
           <table class="min-w-full divide-y divide-gray-200">
             <thead>

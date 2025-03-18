@@ -286,6 +286,8 @@ function processPepperRound(gameManager: GameManager, updateUI: () => void) {
 
 export function startGameplay(gameData: any) {
     const gameManager = GameManager.fromJSON(JSON.stringify(gameData));
+    // Initialize reverse history preference from localStorage
+    let reverseHistory = localStorage.getItem('reverseHistory') === 'true';
     
     function updateUI() {
         const currentHand = gameManager.getCurrentHand();
@@ -309,13 +311,56 @@ export function startGameplay(gameData: any) {
         const team2Header = document.getElementById('log-team2');
         if (team1Header) team1Header.textContent = gameManager.state.teams[0];
         if (team2Header) team2Header.textContent = gameManager.state.teams[1];
+        
+        // Update history toggle button text
+        const reverseButtonText = document.getElementById('reverse-button-text');
+        if (reverseButtonText) {
+            reverseButtonText.textContent = reverseHistory ? "Newest First" : "Oldest First";
+        }
+        
+        // Update history toggle button icon
+        const historyIcon = document.getElementById('history-icon');
+        if (historyIcon) {
+            // Rotate icon 180 degrees when in reverse chronological order
+            if (reverseHistory) {
+                historyIcon.style.transform = 'rotate(180deg)';
+            } else {
+                historyIcon.style.transform = 'rotate(0deg)';
+            }
+        }
+        
         const scoreLog = document.getElementById('score-log');
         if (scoreLog) {
             scoreLog.innerHTML = '';  // Clear existing log
             
+            // Get hands array to display
+            let handsToDisplay = [...gameManager.state.hands];
+            
+            // Reverse the array if needed (but create a copy first to avoid affecting the actual game state)
+            if (reverseHistory) {
+                handsToDisplay = handsToDisplay.slice().reverse();
+            }
+            
             let runningScores: [number, number] = [0, 0];
-            gameManager.state.hands.forEach((hand, index) => {
+            
+            // If we're showing newest first, we need to pre-calculate the running scores
+            if (reverseHistory) {
+                gameManager.state.hands.forEach((hand) => {
+                    if (hand.length === 6 || (hand.length >= 2 && hand[1] === '0')) {
+                        const [score1, score2] = calculateScore(hand);
+                        runningScores[0] += score1;
+                        runningScores[1] += score2;
+                    }
+                });
+            }
+            
+            handsToDisplay.forEach((hand, displayIndex) => {
                 const row = document.createElement('tr');
+                
+                // Get the actual index in the original array
+                const actualIndex = reverseHistory 
+                    ? gameManager.state.hands.length - 1 - displayIndex 
+                    : displayIndex;
                 
                 // Always show hand number and dealer
                 const dealer = parseInt(hand[0]);
@@ -338,7 +383,7 @@ export function startGameplay(gameData: any) {
                 }
                 
                 // Get hand classification for styling
-                const classification = gameManager.getHandClassification(index);
+                const classification = gameManager.getHandClassification(actualIndex);
                 
                 // Apply background color based on classification
                 switch (classification.type) {
@@ -353,19 +398,34 @@ export function startGameplay(gameData: any) {
                         break;
                 }
                 
-                // If hand is complete, show scores
+                // Calculate scores based on display order
                 if (hand.length === 6 || (hand.length >= 2 && hand[1] === '0')) {
                     const [score1, score2] = calculateScore(hand);
-                    runningScores[0] += score1;
-                    runningScores[1] += score2;
                     
-                    team1Score = `${runningScores[0]}`;
-                    team2Score = `${runningScores[1]}`;
+                    if (reverseHistory) {
+                        // For reverse order, decrement from the total
+                        runningScores[0] -= score1;
+                        runningScores[1] -= score2;
+                        
+                        // Display the scores after subtracting this hand
+                        team1Score = `${runningScores[0]}`;
+                        team2Score = `${runningScores[1]}`;
+                    } else {
+                        // For chronological order, increment as usual
+                        runningScores[0] += score1;
+                        runningScores[1] += score2;
+                        
+                        team1Score = `${runningScores[0]}`;
+                        team2Score = `${runningScores[1]}`;
+                    }
                 }
+                
+                // Show actual hand number regardless of display order
+                const handNumber = actualIndex + 1;
                 
                 // Add cells with score coloring based on classification
                 row.innerHTML = `
-                    <td class="py-2 text-center">${index + 1}</td>
+                    <td class="py-2 text-center">${handNumber}</td>
                     <td class="py-2 px-4 text-left">${dealerName}</td>
                     <td class="py-2 px-4 text-left">${bidDisplay}</td>
                     <td class="py-2 text-center ${classification.setTeam === 0 ? 'text-red-600 font-medium' : ''}">${team1Score}</td>
@@ -471,6 +531,18 @@ export function startGameplay(gameData: any) {
         setupDecisionButtons(gameManager, updateUI);
         setupTricksButtons(gameManager, updateUI);
         setupUndoButton(gameManager, updateUI);
+        
+        // Setup history toggle button
+        const reverseButton = document.getElementById('reverse-history-button');
+        if (reverseButton) {
+            // Set initial button text based on current state via updateUI
+            
+            reverseButton.addEventListener('click', () => {
+                reverseHistory = !reverseHistory;
+                localStorage.setItem('reverseHistory', reverseHistory.toString());
+                updateUI();
+            });
+        }
     }
 
     // Start game
