@@ -37,7 +37,7 @@ function trumpToString(trump: string): string {
 
 function hideAllControls() {
     ['player-controls', 'bid-controls', 'trump-controls', 
-     'decision-controls', 'tricks-controls'].forEach(id => {
+     'decision-controls', 'tricks-controls', 'end-game-controls'].forEach(id => {
         const element = document.getElementById(id);
         if (element) element.classList.add('hidden');
     });
@@ -313,6 +313,34 @@ function setupUndoButton(gameManager: GameManager, updateUI: () => void) {
     if (!undoButton) return;
   
     undoButton.addEventListener('click', () => {
+      // If we're in the end-game state
+      if (gameManager.isGameComplete()) {
+        // Check if statistics are visible
+        const statsVisible = document.getElementById('game-statistics-container')?.classList.contains('hidden') === false;
+        
+        // If statistics are showing, just show victory modal instead of undoing
+        if (statsVisible) {
+          // Hide statistics
+          document.getElementById('game-statistics-container')?.classList.add('hidden');
+          
+          // Hide post-victory controls if present
+          const postControls = document.getElementById('post-victory-controls');
+          if (postControls) postControls.remove();
+          
+          // Show victory celebration (which has its own undo button)
+          showVictoryCelebration(gameManager);
+          return;
+        }
+        
+        // If victory modal is visible, remove it
+        const victoryModal = document.getElementById('dynamic-victory-overlay') || 
+                          document.getElementById('victory-overlay');
+        if (victoryModal) {
+          victoryModal.remove();
+        }
+      }
+
+      // Now perform the actual undo
       gameManager.undo();
       updateUI();
     });
@@ -504,8 +532,13 @@ export function startGameplay(gameData: any) {
         localStorage.setItem('currentGame', gameManager.toJSON());
 
         // Check for game completion
-        if (gameManager.isGameComplete() && !gameManager.state.isComplete) {
-            gameManager.completeGame();
+        if (gameManager.isGameComplete()) {
+            // If not already marked as complete, do that first
+            if (!gameManager.state.isComplete) {
+                gameManager.completeGame();
+                // Save again after marking as complete
+                localStorage.setItem('currentGame', gameManager.toJSON());
+            }
             
             const winnerIndex = gameManager.getWinner()!;
             const winningTeam = gameManager.state.teams[winnerIndex];
@@ -516,75 +549,25 @@ export function startGameplay(gameData: any) {
             
             const seriesComplete = gameManager.state.isSeries && gameManager.isSeriesComplete();
             const nextDealer = seriesComplete ? null : gameManager.getNextDealer();
-        
+          
             // Update instruction area with victory message
             const instructionEl = document.getElementById('game-instruction');
             if (instructionEl) {
-                instructionEl.textContent = `${winningTeam} wins${gameManager.state.isSeries ? ` Game ${gameManager.state.gameNumber}` : ''}!`;
+              instructionEl.textContent = `${winningTeam} wins${gameManager.state.isSeries ? ` Game ${gameManager.state.gameNumber}` : ''}!`;
             }
             
-            // Hide all game controls and show end game controls
-            hideAllControls();
-            const endGameControls = document.getElementById('end-game-controls');
-            if (endGameControls) {
-                endGameControls.classList.remove('hidden');
-                endGameControls.innerHTML = `
-                    <div class="grid ${gameManager.state.isSeries ? 'grid-cols-1' : 'grid-cols-2'} gap-4">
-                        ${gameManager.state.isSeries ? 
-                            !seriesComplete ? `
-                                <button
-                                    id="next-game-control"
-                                    class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
-                                >
-                                    Start Next Game
-                                </button>
-                            ` : `
-                                <button
-                                    id="new-game-control"
-                                    class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
-                                >
-                                    Start New Series
-                                </button>
-                            `
-                        : `
-                            <button
-                                id="make-series-control"
-                                class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700"
-                            >
-                                Let's make it a series!
-                            </button>
-                            <button
-                                id="new-game-control"
-                                class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
-                            >
-                                New Game
-                            </button>
-                        `}
-                    </div>
-                `;
-                
-                // Add event listeners to buttons
-                document.getElementById('next-game-control')?.addEventListener('click', () => {
-                    gameManager.startNextGame();
-                    localStorage.setItem('currentGame', gameManager.toJSON());
-                    window.location.reload();
-                });
-                
-                document.getElementById('make-series-control')?.addEventListener('click', () => {
-                    gameManager.convertToSeries();
-                    gameManager.startNextGame();
-                    localStorage.setItem('currentGame', gameManager.toJSON());
-                    window.location.reload();
-                });
-                
-                document.getElementById('new-game-control')?.addEventListener('click', () => {
-                    localStorage.removeItem('currentGame');
-                    window.location.href = getPath(''); // Redirect to home
-                });
+            // Check if victory modal is already present
+            const existingModal = document.getElementById('dynamic-victory-overlay') || 
+                                document.getElementById('victory-overlay');
+            
+            // Only show victory celebration if not already displayed
+            if (!existingModal) {
+                // Show victory celebration instead of normal end game controls
+                showVictoryCelebration(gameManager);
             }
             
             return; // Don't continue with normal UI updates
-        }
+          }
     }
 
     function setupEventListeners() {
@@ -667,3 +650,527 @@ function updateScoreColor(element: HTMLElement | null, score: number) {
         element.classList.add('text-gray-800'); // Normal scores
     }
 }
+
+function createConfettiEffect() {
+    // Create a canvas for the confetti
+    const canvas = document.createElement('canvas');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    canvas.style.position = 'fixed';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.pointerEvents = 'none';
+    canvas.style.zIndex = '1000';
+    canvas.id = 'confetti-canvas';
+    document.body.appendChild(canvas);
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    const particles = [];
+    const colors = [
+      '#f44336', '#e91e63', '#9c27b0', '#673ab7', 
+      '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4',
+      '#009688', '#4caf50', '#8bc34a', '#cddc39', 
+      '#ffeb3b', '#ffc107', '#ff9800', '#ff5722'
+    ];
+    
+    // Constants for timing
+    const ANIMATION_DURATION = 15000; // 15 seconds total
+    const FADE_START = 14000;         // Start fading at 14 seconds
+    const FADE_DURATION = 1000;       // 1 second fade duration
+    
+    // Create particles
+    for (let i = 0; i < 180; i++) {
+      particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height - canvas.height,
+        size: Math.random() * 10 + 5,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        speedX: Math.random() * 6 - 3,
+        speedY: Math.random() * 3 + 2,
+        rotation: Math.random() * 360,
+        rotationSpeed: Math.random() * 10 - 5
+      });
+    }
+    
+    const startTime = Date.now();
+    let canvasOpacity = 1;
+    
+    // Animation loop
+    function animate() {
+      const now = Date.now();
+      const elapsed = now - startTime;
+      
+      // Check if animation is complete
+      if (elapsed > ANIMATION_DURATION) {
+        canvas.remove();
+        return;
+      }
+      
+      // Calculate canvas opacity for fade-out
+      if (elapsed > FADE_START) {
+        canvasOpacity = 1 - (elapsed - FADE_START) / FADE_DURATION;
+        if (canvasOpacity < 0) canvasOpacity = 0;
+      }
+      
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Set global canvas opacity
+      ctx.globalAlpha = canvasOpacity;
+      
+      // Draw and update particles
+      particles.forEach(particle => {
+        // Draw particle
+        ctx.save();
+        ctx.translate(particle.x, particle.y);
+        ctx.rotate((particle.rotation * Math.PI) / 180);
+        ctx.fillStyle = particle.color;
+        ctx.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
+        ctx.restore();
+        
+        // Update position
+        particle.x += particle.speedX;
+        particle.y += particle.speedY;
+        particle.rotation += particle.rotationSpeed;
+        
+        // Reset particle if it's off screen
+        if (particle.y > canvas.height) {
+          // Gradually reduce recycling probability over time
+          // This creates a natural thinning effect
+          const timeRatio = Math.min(1, elapsed / FADE_START);
+          const recycleChance = 0.9 - (0.7 * timeRatio);
+          
+          if (Math.random() < recycleChance) {
+            particle.y = -particle.size;
+            particle.x = Math.random() * canvas.width;
+          }
+        }
+      });
+      
+      // Continue animation
+      requestAnimationFrame(animate);
+    }
+    
+    // Start animation
+    animate();
+  }
+  
+  // Create animated trophy element
+  function createAnimatedTrophy() {
+    const trophy = document.createElement('div');
+    trophy.innerHTML = '🏆';
+    trophy.className = 'text-6xl trophy-bounce fixed z-[1001]';
+    trophy.style.top = '20%';
+    trophy.style.left = '50%';
+    trophy.style.transform = 'translate(-50%, -50%)';
+    trophy.style.transition = 'opacity 1.5s ease, transform 0.3s ease';
+    document.body.appendChild(trophy);
+    
+    // Start fade out after 3.5 seconds
+    setTimeout(() => {
+      trophy.style.opacity = '0';
+    }, 3500);
+    
+    // Remove the trophy after fade completes
+    setTimeout(() => {
+      trophy.remove();
+    }, 5000);
+  }
+  
+  // Add this function after updateScoreColor
+  function showVictoryCelebration(gameManager) {
+    // Hide all current controls
+    hideAllControls();
+    
+    // First, remove any existing victory overlay to prevent duplicates
+    const existingOverlay = document.getElementById('dynamic-victory-overlay');
+    if (existingOverlay) {
+      existingOverlay.remove();
+    }
+    
+    const winnerIndex = gameManager.getWinner()!;
+    const winningTeam = gameManager.state.teams[winnerIndex];
+    const [score1, score2] = gameManager.getScores();
+    
+    // Add controls to the main decision pane
+    const endGameControls = document.getElementById('end-game-controls');
+    if (endGameControls) {
+      endGameControls.innerHTML = `
+        <h3 class="text-lg font-medium text-gray-900 mb-4">Game Results</h3>
+        <div class="mb-4 p-4 bg-blue-50 rounded-lg text-center">
+          <div class="text-2xl font-semibold mb-2">
+            <span class="text-blue-600">${winningTeam}</span> Wins!
+          </div>
+          ${gameManager.state.isSeries && gameManager.state.seriesScores ? 
+            `<div class="text-lg text-gray-700">Series Score: ${gameManager.state.seriesScores[0]}-${gameManager.state.seriesScores[1]}</div>` : 
+            ''}
+        </div>
+        <div class="flex flex-wrap gap-4">
+          ${!gameManager.state.isSeries ? `
+            <button 
+              id="post-victory-series-btn"
+              class="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              Make it a Series
+            </button>
+          ` : `
+            <button 
+              id="post-victory-new-series-btn"
+              class="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              Next Game
+            </button>
+          `}
+          
+          ${!gameManager.state.isSeries ? `
+            <button 
+              id="post-victory-new-game-btn" 
+              class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              New Game
+            </button>
+          ` : ''}
+        </div>
+      `;
+      
+      // Add event listeners to the post-victory buttons
+      document.getElementById('post-victory-series-btn')?.addEventListener('click', () => {
+        gameManager.convertToSeries();
+        gameManager.startNextGame();
+        localStorage.setItem('currentGame', gameManager.toJSON());
+        window.location.reload();
+      });
+      
+      document.getElementById('post-victory-new-series-btn')?.addEventListener('click', () => {
+        // In series mode, this is "Next Game"
+        gameManager.startNextGame();
+        localStorage.setItem('currentGame', gameManager.toJSON());
+        window.location.reload();
+      });
+      
+      document.getElementById('post-victory-new-game-btn')?.addEventListener('click', () => {
+        localStorage.removeItem('currentGame');
+        window.location.href = getPath('');
+      });
+    }
+    
+    // Create victory overlay element
+    const victoryElement = document.createElement('div');
+    victoryElement.id = 'dynamic-victory-overlay';
+    victoryElement.className = 'fixed inset-0 bg-gray-900 bg-opacity-80 z-50 flex items-center justify-center transition-opacity duration-500';
+    
+    // Prepare the series data if applicable
+    const seriesScoresHtml = gameManager.state.isSeries && gameManager.state.seriesScores 
+      ? `<p class="text-xl text-blue-300 mb-6">Series Score: ${gameManager.state.seriesScores[0]}-${gameManager.state.seriesScores[1]}</p>` 
+      : '';
+    
+    // Generate HTML content
+    victoryElement.innerHTML = `
+      <div class="max-w-2xl w-full mx-4 text-center">
+        <div class="py-8">
+          <span class="text-6xl animate-bounce inline-block">🏆</span>
+        </div>
+        
+        <h2 class="text-4xl font-bold text-white mb-3">
+          <span class="text-yellow-300">${winningTeam}</span> Wins!
+        </h2>
+        
+        ${seriesScoresHtml}
+        
+        <div class="bg-white bg-opacity-10 rounded-lg p-6 backdrop-blur-sm mb-8">
+          <div class="grid grid-cols-2 gap-8">
+            <div class="space-y-2 ${winnerIndex === 0 ? 'text-yellow-300' : 'text-white'}">
+              <h3 class="text-xl font-semibold">${gameManager.state.teams[0]}</h3>
+              <p class="text-5xl font-bold ${winnerIndex === 0 ? 'animate-pulse' : ''}">
+                ${score1}
+              </p>
+            </div>
+            <div class="space-y-2 ${winnerIndex === 1 ? 'text-yellow-300' : 'text-white'}">
+              <h3 class="text-xl font-semibold">${gameManager.state.teams[1]}</h3>
+              <p class="text-5xl font-bold ${winnerIndex === 1 ? 'animate-pulse' : ''}">
+                ${score2}
+              </p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="flex flex-col sm:flex-row justify-center gap-4">
+          <button 
+            id="victory-undo-btn"
+            class="px-6 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
+          >
+            Edit Last Tricks
+          </button>
+
+          <button 
+            id="victory-history-btn"
+            class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            History & Statistics
+          </button>
+          
+          ${!gameManager.state.isSeries ? `
+            <button 
+              id="victory-series-btn"
+              class="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              Make it a Series!
+            </button>
+          ` : `
+            <button 
+              id="victory-new-series-btn"
+              class="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+            >
+              Next Game
+            </button>
+          `}
+          
+          ${!gameManager.state.isSeries ? `
+            <button 
+              id="victory-new-game-btn" 
+              class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              New Game
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(victoryElement);
+    
+    // Trigger confetti effect
+    createConfettiEffect();
+    
+    // Add bouncing trophy
+    createAnimatedTrophy();
+    
+    // Create end-game floating control panel (for after victory modal is dismissed)
+    const createPostVictoryControls = () => {
+      // Check if they already exist
+      if (document.getElementById('post-victory-controls')) return;
+      
+      const controlPanel = document.createElement('div');
+      controlPanel.id = 'post-victory-controls';
+      controlPanel.className = 'fixed bottom-4 right-4 bg-white bg-opacity-90 rounded-lg shadow-lg p-4 z-30 transition-all duration-300';
+      
+      const buttonClass = 'px-4 py-2 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 mr-2';
+      
+      controlPanel.innerHTML = `
+        <div class="flex flex-wrap gap-2 justify-end">
+          ${!gameManager.state.isSeries ? `
+            <button 
+              id="post-victory-series-btn"
+              class="${buttonClass} bg-green-600 text-white hover:bg-green-700"
+            >
+              Make it a Series
+            </button>
+          ` : `
+            <button 
+              id="post-victory-new-series-btn"
+              class="${buttonClass} bg-purple-600 text-white hover:bg-purple-700"
+            >
+              New Series
+            </button>
+          `}
+          
+          <button 
+            id="post-victory-new-game-btn" 
+            class="${buttonClass} bg-gray-600 text-white hover:bg-gray-700"
+          >
+            New Game
+          </button>
+        </div>
+      `;
+      
+      document.body.appendChild(controlPanel);
+      
+      // Add event listeners to the post-victory buttons
+      document.getElementById('post-victory-series-btn')?.addEventListener('click', () => {
+        gameManager.convertToSeries();
+        gameManager.startNextGame();
+        localStorage.setItem('currentGame', gameManager.toJSON());
+        window.location.reload();
+      });
+      
+      document.getElementById('post-victory-new-series-btn')?.addEventListener('click', () => {
+        localStorage.removeItem('currentGame');
+        window.location.href = getPath('');
+      });
+      
+      document.getElementById('post-victory-new-game-btn')?.addEventListener('click', () => {
+        localStorage.removeItem('currentGame');
+        window.location.href = getPath('');
+      });
+    };
+
+    // Add event listeners to buttons
+    document.getElementById('victory-undo-btn')?.addEventListener('click', () => {
+      // Remove the victory modal
+      victoryElement.remove();
+      
+      // Get the current hand before undoing
+      const currentHand = gameManager.getCurrentHand();
+      const phase = getCurrentPhase(currentHand);
+      
+      // For most victory cases, we want to go back to the tricks entry phase
+      // This happens when a hand was just completed with tricks
+      if (phase === 'tricks' || (currentHand.length === 6 && currentHand[5] !== undefined)) {
+        // The last action was entering tricks - undo just that part
+        gameManager.state.hands[gameManager.state.hands.length - 1] = currentHand.slice(0, -1);
+      } else {
+        // Otherwise use the standard undo logic
+        gameManager.undo();
+      }
+      
+      // Always reset the completion flag
+      gameManager.state.isComplete = false;
+      
+      // Recompute scores
+      gameManager.state.scores = gameManager.getScores();
+      
+      // Update the UI
+      hideAllControls();
+      showPhaseControls(gameManager);
+      updateHandInfo(gameManager);
+      updateScores(gameManager.getScores());
+      
+      // Make sure the undo button is enabled
+      const undoButton = document.getElementById('undo-button');
+      if (undoButton) {
+        undoButton.disabled = false;
+      }
+    });
+    
+    document.getElementById('victory-history-btn')?.addEventListener('click', () => {
+      victoryElement.remove();
+      
+      // First, ensure statistics are generated if they haven't been yet
+      const statsContainer = document.getElementById('game-statistics-container');
+      if (statsContainer) {
+        // Make sure the container is visible
+        statsContainer.classList.remove('hidden');
+        
+        // If statistics haven't been generated yet (container is empty),
+        // generate them now
+        if (!statsContainer.innerHTML.trim()) {
+          const winnerIndex = gameManager.getWinner();
+          if (winnerIndex !== null) {
+            // Use dynamic import to load the statistics module
+            import('../lib/statistics-util.ts').then(module => {
+              try {
+                const statsHTML = module.generateStatisticsHTML(
+                  gameManager.state.hands,
+                  gameManager.state.players,
+                  gameManager.state.teams,
+                  gameManager.getScores(),
+                  winnerIndex
+                );
+                statsContainer.innerHTML = statsHTML;
+              } catch (err) {
+                console.error('Error generating statistics:', err);
+                statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Error generating statistics</div>';
+              }
+            }).catch(err => {
+              console.error('Error loading statistics module:', err);
+              statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Failed to load statistics module</div>';
+            });
+          }
+        }
+        
+        // Show end game controls
+        const endGameControls = document.getElementById('end-game-controls');
+        if (endGameControls) {
+          endGameControls.classList.remove('hidden');
+        }
+        
+        // Scroll to statistics first
+        statsContainer.scrollIntoView({ behavior: 'smooth' });
+        statsContainer.classList.add('ring-4', 'ring-blue-400');
+        setTimeout(() => {
+          statsContainer.classList.remove('ring-4', 'ring-blue-400');
+        }, 2000);
+      }
+    });
+    
+    document.getElementById('victory-series-btn')?.addEventListener('click', () => {
+      gameManager.convertToSeries();
+      gameManager.startNextGame();
+      localStorage.setItem('currentGame', gameManager.toJSON());
+      window.location.reload();
+    });
+    
+    document.getElementById('victory-new-series-btn')?.addEventListener('click', () => {
+      // In series mode, this is "Next Game"
+      gameManager.startNextGame();
+      localStorage.setItem('currentGame', gameManager.toJSON());
+      window.location.reload();
+    });
+    
+    document.getElementById('victory-new-game-btn')?.addEventListener('click', () => {
+      localStorage.removeItem('currentGame');
+      window.location.href = getPath('');
+    });
+  }
+  
+  // Simple function to create confetti particles using DOM elements
+  function createConfettiParticle(container) {
+    const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'];
+    
+    const particle = document.createElement('div');
+    particle.className = 'absolute rounded-full';
+    
+    // Random properties
+    const size = Math.random() * 10 + 5; // 5-15px
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    
+    // Starting position (centered horizontally, from the top)
+    const startX = 50; // percentage
+    const startY = 0;  // percentage
+    
+    // Random angle and speed
+    const angle = Math.random() * Math.PI * 2;
+    const velocity = Math.random() * 2 + 1;
+    const rotationSpeed = Math.random() * 360;
+    
+    particle.style.width = `${size}px`;
+    particle.style.height = `${size}px`;
+    particle.style.backgroundColor = color;
+    particle.style.left = `calc(${startX}% - ${size/2}px)`;
+    particle.style.top = `calc(${startY}% - ${size/2}px)`;
+    
+    container.appendChild(particle);
+    
+    // Animate the particle
+    let posX = startX;
+    let posY = startY;
+    let rotation = 0;
+    let life = 100; // percentage of life remaining
+    
+    const animate = () => {
+      if (life <= 0) {
+        particle.remove();
+        return;
+      }
+      
+      // Update position
+      posX += Math.cos(angle) * velocity;
+      posY += Math.sin(angle) * velocity + 0.5; // Add gravity
+      rotation += rotationSpeed;
+      life -= 0.7;
+      
+      // Update styles
+      particle.style.left = `calc(${posX}% - ${size/2}px)`;
+      particle.style.top = `calc(${posY}% - ${size/2}px)`;
+      particle.style.transform = `rotate(${rotation}deg)`;
+      particle.style.opacity = (life / 100).toString();
+      
+      requestAnimationFrame(animate);
+    };
+    
+    requestAnimationFrame(animate);
+    
+    return particle;
+  }

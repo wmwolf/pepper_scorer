@@ -241,6 +241,7 @@ export class GameManager {
 
   public undo(): void {
     const currentHand = this.getCurrentHand();
+    const wasCompleteBeforeUndo = this.isGameComplete();
     
     // If no current hand, we're at the start of the game
     if (!currentHand) {
@@ -304,6 +305,27 @@ export class GameManager {
       
       // Default case: Remove last character
       this.state.hands[handIndex] = currentHand.slice(0, -1);
+    }
+    
+    // Check if we've undone a victory condition
+    const isCompleteAfterUndo = this.isGameComplete();
+    
+    // If the game was complete before but is no longer complete after the undo,
+    // we need to reset the isComplete flag
+    if (wasCompleteBeforeUndo && !isCompleteAfterUndo && this.state.isComplete) {
+      this.state.isComplete = false;
+      
+      // If this was in series mode, we need to adjust the series score as well
+      if (this.state.isSeries && this.state.seriesScores && this.state.completedGames) {
+        // Get the winner that was recorded
+        const lastGame = this.state.completedGames[this.state.completedGames.length - 1];
+        if (lastGame) {
+          // Decrement the series score for that winner
+          this.state.seriesScores[lastGame.winner]--;
+          // Remove the game from completed games
+          this.state.completedGames.pop();
+        }
+      }
     }
   }
 

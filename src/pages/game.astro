@@ -1,6 +1,7 @@
 ---
 // src/pages/game.astro
 import BaseLayout from '../layouts/BaseLayout.astro';
+import GameStatistics from '../components/game-statistics.astro';
 ---
 
 <BaseLayout title="Current Game">
@@ -166,9 +167,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       </div>
 
       <!-- Score Log -->
-           <!-- Score Log (now spans 2 columns instead of 1) -->
-      <div class="lg:col-span-2 bg-white rounded-lg shadow-sm p-6">
-      <!-- <div class="bg-white rounded-lg shadow-sm p-6"> -->
+      <div id="game-history-section" class="lg:col-span-2 bg-white rounded-lg shadow-sm p-6 transition-all duration-300">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-lg font-medium text-gray-900">Game History</h3>
           <button 
@@ -196,9 +195,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <tbody id="score-log" class="divide-y divide-gray-200">
                 <!-- Score log entries will be inserted here -->
             </tbody>
-        </table>
+          </table>
         </div>
       </div>
+    </div>
+    
+    <!-- This div will hold the game statistics when game is complete -->
+    <div id="game-statistics-container" class="mt-8 hidden">
+      <!-- Game Statistics will be inserted here by JS -->
     </div>
   </div>
 </BaseLayout>
@@ -228,10 +232,46 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   .btn-trump[data-suit="C"], .btn-trump[data-suit="S"] {
     @apply text-black;
   }
+  
+  /* Victory animations */
+  @keyframes bounce {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-20px);
+    }
+  }
+  
+  .trophy-bounce {
+    animation: bounce 1s ease infinite;
+  }
+  
+  /* Confetti animation */
+  @keyframes confetti-fall {
+    0% {
+      transform: translateY(0) rotate(0deg);
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(100vh) rotate(720deg);
+      opacity: 0;
+    }
+  }
+  
+  .confetti-particle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background-color: var(--color);
+    border-radius: 50%;
+    animation: confetti-fall var(--fall-duration) ease-in forwards;
+  }
 </style>
 
 <script>
   import { loadGameState, startGameplay } from '../lib/game';
+  
   document.addEventListener('DOMContentLoaded', () => {
     const gameData = loadGameState();
     if (gameData) {
@@ -262,7 +302,42 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         if (team2WinsMobile) team2WinsMobile.innerHTML = team2TrophyHTML;
       }
       
-      startGameplay(gameData);
+      // Expose GameManager to window for use in victory component
+      window.GameManager = { fromJSON: (json) => startGameplay(JSON.parse(json)).constructor.fromJSON(json) };
+      
+      const gameManager = startGameplay(gameData);
+      
+      // Check if game is complete to generate statistics (keep hidden until needed)
+      if (gameManager.isGameComplete()) {
+        const statsContainer = document.getElementById('game-statistics-container');
+        if (statsContainer) {
+          // Generate statistics HTML
+          const winnerIndex = gameManager.getWinner();
+          if (winnerIndex !== null) {
+            // Import statistics utility but don't show yet - this will be shown when needed
+            import('../lib/statistics-util.ts').then(module => {
+              try {
+                const statsHTML = module.generateStatisticsHTML(
+                  gameManager.state.hands,
+                  gameManager.state.players,
+                  gameManager.state.teams,
+                  gameManager.getScores(),
+                  winnerIndex
+                );
+                
+                statsContainer.innerHTML = statsHTML;
+                // Note: We keep this hidden until the user clicks "View Game History"
+              } catch (err) {
+                console.error('Error generating statistics:', err);
+                statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Error loading game statistics</div>';
+              }
+            }).catch(err => {
+              console.error('Error loading statistics module:', err);
+              statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Failed to load statistics module</div>';
+            });
+          }
+        }
+      }
     }
-});
+  });
 </script>

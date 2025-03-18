@@ -5,6 +5,13 @@
 - `npm run dev` - Start dev server at localhost:4321
 - `npm run build` - Build production site to ./dist/
 - `npm run preview` - Preview production build locally
+- `npm run lint` - Run ESLint checks
+- `npm run typecheck` - Check TypeScript types
+
+## LaTeX Commands (in rules directory)
+- `pdflatex rules.tex` - Generate PDF from LaTeX
+- `latexmk -pdf rules.tex` - Compile LaTeX with dependencies
+- `pandoc -o rules.md rules.tex` - Convert LaTeX to Markdown
 
 ## Code Style Guidelines
 - **TypeScript**: Use strict typing with interfaces/types for all data structures
@@ -24,3 +31,4 @@
 - `/src/components/` - Reusable UI components
 - `/src/layouts/` - Page layout templates 
 - `/src/pages/` - Page routes and components
+- `/rules/` - Game rules documentation in LaTeX and Markdown

@@ -1,0 +1,85 @@
+// src/components/animated-card.astro
+---
+interface Props {
+  suit: 'C' | 'D' | 'H' | 'S';
+  value?: string;
+  size?: 'sm' | 'md' | 'lg';
+  style?: string;
+  isHidden?: boolean;
+}
+
+const { 
+  suit, 
+  value = 'A', 
+  size = 'md', 
+  style = '',
+  isHidden = false
+} = Astro.props;
+
+// Map suit to emoji
+const suitEmoji = {
+  'C': '♣️',
+  'D': '♦️',
+  'H': '♥️',
+  'S': '♠️'
+}[suit];
+
+// Map suit to color
+const suitColor = (suit === 'H' || suit === 'D') ? 'text-red-600' : 'text-black';
+
+// Map size to class
+const sizeClass = {
+  'sm': 'w-10 h-14',
+  'md': 'w-16 h-24',
+  'lg': 'w-24 h-36'
+}[size];
+
+// Map size to font classes
+const fontClass = {
+  'sm': 'text-sm',
+  'md': 'text-base',
+  'lg': 'text-xl'
+}[size];
+
+// Map size to border radius
+const radiusClass = {
+  'sm': 'rounded-md',
+  'md': 'rounded-lg',
+  'lg': 'rounded-xl'
+}[size];
+---
+
+<div 
+  class:list={[
+    'relative bg-white border-2 border-gray-300 shadow-md transform transition-transform duration-300 flex items-center justify-center',
+    sizeClass,
+    radiusClass,
+    style
+  ]}
+>
+  {isHidden ? (
+    <div class="absolute inset-0 bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center">
+      <div class="text-white font-bold text-2xl">P</div>
+    </div>
+  ) : (
+    <div class:list={["flex flex-col items-center justify-center", suitColor]}>
+      <div class:list={["font-bold", fontClass]}>{value}</div>
+      <div class="text-lg">{suitEmoji}</div>
+    </div>
+  )}
+</div>
+
+<script>
+  // Add hover effect
+  document.addEventListener('DOMContentLoaded', () => {
+    const cards = document.querySelectorAll('[data-hoverable="true"]');
+    cards.forEach(card => {
+      card.addEventListener('mouseenter', () => {
+        card.classList.add('scale-110');
+      });
+      card.addEventListener('mouseleave', () => {
+        card.classList.remove('scale-110');
+      });
+    });
+  });
+</script>
