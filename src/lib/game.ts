@@ -48,6 +48,65 @@ function updateInstructions(text: string) {
     if (element) element.textContent = text;
 }
 
+function updateHandInfo(gameManager: GameManager) {
+    const currentHand = gameManager.getCurrentHand();
+    const handIndex = gameManager.state.hands.length - 1;
+    const handNumber = handIndex + 1;
+    
+    // Basic hand info elements
+    const handInfoEl = document.getElementById('hand-info');
+    const handInfoMobileEl = document.getElementById('hand-info-mobile');
+    const bidInfoEl = document.getElementById('bid-info');
+    const bidInfoMobileEl = document.getElementById('bid-info-mobile');
+    
+    // Only update if at least one element exists
+    if (!handInfoEl && !handInfoMobileEl && !bidInfoEl && !bidInfoMobileEl) return;
+    
+    // Get current dealer
+    const dealerIndex = parseInt(currentHand[0] || '1') - 1;
+    const dealer = gameManager.state.players[dealerIndex];
+    
+    // Hand number and dealer info
+    const handInfoText = `Hand ${handNumber}: ${dealer} is dealer`;
+    if (handInfoEl) handInfoEl.textContent = handInfoText;
+    if (handInfoMobileEl) handInfoMobileEl.textContent = handInfoText;
+    
+    // Bid info text depends on phase
+    const phase = getCurrentPhase(currentHand);
+    let bidInfoText = "Waiting for bid";
+    
+    if (phase === 'bidder') {
+        const nextPlayerIndex = (dealerIndex + 1) % 4;
+        const nextPlayer = gameManager.state.players[nextPlayerIndex];
+        
+        if (isPepperRound(handIndex)) {
+            bidInfoText = `${nextPlayer} has first bid (pepper)`;
+        } else {
+            bidInfoText = `Bidding starts with ${nextPlayer}`;
+        }
+    } else if (phase === 'bid') {
+        const bidderIndex = parseInt(currentHand[1]) - 1;
+        const bidder = gameManager.state.players[bidderIndex];
+        bidInfoText = `${bidder} won the bid`;
+    } else if (phase === 'trump' || phase === 'decision' || phase === 'tricks') {
+        const bidderIndex = parseInt(currentHand[1]) - 1;
+        const bidder = gameManager.state.players[bidderIndex];
+        const bid = currentHand[2];
+        const bidText = bidToString(bid);
+        
+        if (phase === 'trump') {
+            bidInfoText = `${bidder} bid ${bidText}`;
+        } else {
+            const trump = currentHand[3];
+            const trumpText = trumpToString(trump);
+            bidInfoText = `${bidder} bid ${bidText} in ${trumpText}`;
+        }
+    }
+    
+    if (bidInfoEl) bidInfoEl.textContent = bidInfoText;
+    if (bidInfoMobileEl) bidInfoMobileEl.textContent = bidInfoText;
+}
+
 function showPhaseControls(gameManager: GameManager) {
     const currentHand = gameManager.getCurrentHand();
     const phase = getCurrentPhase(currentHand);
@@ -296,6 +355,10 @@ export function startGameplay(gameData: any) {
 
         // Update scores
         updateScores(scores);
+        
+        // Update hand and bid info
+        updateHandInfo(gameManager);
+        
         hideAllControls();
 
         // Update undo button state
@@ -561,8 +624,46 @@ export function startGameplay(gameData: any) {
 }
 
 function updateScores(scores: [number, number]) {
+    // Update both desktop and mobile score elements
     const team1Score = document.getElementById('team1-score');
     const team2Score = document.getElementById('team2-score');
-    if (team1Score) team1Score.textContent = scores[0].toString();
-    if (team2Score) team2Score.textContent = scores[1].toString();
+    const team1ScoreMobile = document.getElementById('team1-score-mobile');
+    const team2ScoreMobile = document.getElementById('team2-score-mobile');
+    
+    // Update scores
+    const score1 = scores[0].toString();
+    const score2 = scores[1].toString();
+    
+    // Set score values
+    if (team1Score) team1Score.textContent = score1;
+    if (team2Score) team2Score.textContent = score2;
+    if (team1ScoreMobile) team1ScoreMobile.textContent = score1;
+    if (team2ScoreMobile) team2ScoreMobile.textContent = score2;
+    
+    // Update colors based on score values
+    updateScoreColor(team1Score, scores[0]);
+    updateScoreColor(team2Score, scores[1]);
+    updateScoreColor(team1ScoreMobile, scores[0]);
+    updateScoreColor(team2ScoreMobile, scores[1]);
+}
+
+function updateScoreColor(element: HTMLElement | null, score: number) {
+    if (!element) return;
+    
+    // Remove all existing color classes
+    element.classList.remove(
+        'text-red-600', 'text-blue-600', 
+        'text-gray-800', 'text-orange-500'
+    );
+    
+    // Add appropriate color class based on score
+    if (score < 0) {
+        element.classList.add('text-red-600'); // Negative scores - danger
+    } else if (score >= 40) {
+        element.classList.add('text-orange-500'); // Very close to winning
+    } else if (score >= 28) {
+        element.classList.add('text-blue-600'); // Approaching win condition
+    } else {
+        element.classList.add('text-gray-800'); // Normal scores
+    }
 }

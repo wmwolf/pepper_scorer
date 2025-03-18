@@ -7,26 +7,68 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <div class="max-w-6xl mx-auto px-4">
   <!-- Score Display -->
   <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <!-- Mobile Layout -->
+    <div class="flex justify-between md:hidden">
+      <!-- New Element (left on mobile) -->
+      <div class="text-left">
+        <p class="text-base text-gray-600" id="hand-info-mobile">Hand 1</p>
+        <p class="text-lg font-medium text-gray-700" id="bid-info-mobile">Waiting for bid</p>
+      </div>
+      
+      <!-- Stacked scores on right (mobile) -->
+      <div class="flex flex-col gap-4">
+        <!-- Team 1 Score -->
+        <div class="text-right">
+          <div class="flex items-center justify-end gap-1">
+            <h2 class="text-lg font-medium text-gray-700" id="team1-name-mobile">Team 1</h2>
+            <div id="team1-wins-mobile" class="flex gap-1">
+              <!-- Trophy icons will be added here by JS -->
+            </div>
+          </div>
+          <p class="text-3xl font-bold text-gray-800" id="team1-score-mobile">0</p>
+        </div>
+        
+        <!-- Team 2 Score -->
+        <div class="text-right">
+          <div class="flex items-center justify-end gap-1">
+            <div id="team2-wins-mobile" class="flex gap-1">
+              <!-- Trophy icons will be added here by JS -->
+            </div>
+            <h2 class="text-lg font-medium text-gray-700" id="team2-name-mobile">Team 2</h2>
+          </div>
+          <p class="text-3xl font-bold text-gray-800" id="team2-score-mobile">0</p>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Desktop Layout -->
+    <div class="hidden md:grid md:grid-cols-3 md:gap-4">
       <!-- Team 1 Score -->
-      <div class="text-center md:text-left">
-        <div class="flex items-center justify-center md:justify-start gap-1">
+      <div class="text-left">
+        <div class="flex items-center justify-start gap-1">
           <h2 class="text-lg font-medium text-gray-700" id="team1-name">Team 1</h2>
           <div id="team1-wins" class="flex gap-1">
             <!-- Trophy icons will be added here by JS -->
           </div>
         </div>
-        <p class="text-3xl font-bold text-blue-600" id="team1-score">0</p>
+        <p class="text-3xl font-bold text-gray-800" id="team1-score">0</p>
       </div>
+      
+      <!-- New Element (center on desktop) -->
+      <div class="text-center">
+        <p class="text-base text-gray-600" id="hand-info">Hand 1</p>
+        <p class="text-lg font-medium text-gray-700" id="bid-info">Waiting for bid</p>
+      </div>
+      
       <!-- Team 2 Score -->
-      <div class="text-center md:text-right">
-        <div class="flex items-center justify-center md:justify-end gap-1">
+      <div class="text-right">
+        <div class="flex items-center justify-end gap-1">
           <div id="team2-wins" class="flex gap-1">
             <!-- Trophy icons will be added here by JS -->
           </div>
           <h2 class="text-lg font-medium text-gray-700" id="team2-name">Team 2</h2>
         </div>
-        <p class="text-3xl font-bold text-red-600" id="team2-score">0</p>
+        <p class="text-3xl font-bold text-gray-800" id="team2-score">0</p>
       </div>
     </div>
   </div>
@@ -193,23 +235,31 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   document.addEventListener('DOMContentLoaded', () => {
     const gameData = loadGameState();
     if (gameData) {
-      // Update team names and scores as before
+      // Update team names for both mobile and desktop layouts
       const team1Name = document.getElementById('team1-name');
       const team2Name = document.getElementById('team2-name');
+      const team1NameMobile = document.getElementById('team1-name-mobile');
+      const team2NameMobile = document.getElementById('team2-name-mobile');
+      
       if (team1Name) team1Name.textContent = gameData.teams[0];
       if (team2Name) team2Name.textContent = gameData.teams[1];
+      if (team1NameMobile) team1NameMobile.textContent = gameData.teams[0];
+      if (team2NameMobile) team2NameMobile.textContent = gameData.teams[1];
       
       // Add series trophies if in series mode
       if (gameData.isSeries && gameData.seriesScores) {
         const team1Wins = document.getElementById('team1-wins');
         const team2Wins = document.getElementById('team2-wins');
+        const team1WinsMobile = document.getElementById('team1-wins-mobile');
+        const team2WinsMobile = document.getElementById('team2-wins-mobile');
         
-        if (team1Wins) {
-          team1Wins.innerHTML = '🏆'.repeat(gameData.seriesScores[0]);
-        }
-        if (team2Wins) {
-          team2Wins.innerHTML = '🏆'.repeat(gameData.seriesScores[1]);
-        }
+        const team1TrophyHTML = '🏆'.repeat(gameData.seriesScores[0]);
+        const team2TrophyHTML = '🏆'.repeat(gameData.seriesScores[1]);
+        
+        if (team1Wins) team1Wins.innerHTML = team1TrophyHTML;
+        if (team2Wins) team2Wins.innerHTML = team2TrophyHTML;
+        if (team1WinsMobile) team1WinsMobile.innerHTML = team1TrophyHTML;
+        if (team2WinsMobile) team2WinsMobile.innerHTML = team2TrophyHTML;
       }
       
       startGameplay(gameData);
