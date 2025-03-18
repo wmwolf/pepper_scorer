@@ -191,8 +191,8 @@ function setupPlayerButtons(gameManager: GameManager, updateUI: () => void) {
 function setupTrumpButtons(gameManager: GameManager, updateUI: () => void) {
     document.querySelectorAll('.btn-trump').forEach(button => {
         button.addEventListener('click', (e) => {
-            const target = e.target as HTMLButtonElement;
-            const suit = target.dataset.suit;
+            const button = e.currentTarget as HTMLButtonElement; // Use currentTarget instead of target
+            const suit = button.dataset.suit;
             if (suit) {
                 gameManager.addHandPart(suit);
                 processPepperRound(gameManager, updateUI);
