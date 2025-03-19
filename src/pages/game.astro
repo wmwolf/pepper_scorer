@@ -860,7 +860,38 @@ import VictoryCelebration from '../components/victory-celebration.astro';
     animation: confetti-fall var(--fall-duration) ease-in forwards;
   }
 </style>
-
+<script>
+  document.getElementById('victory-history-btn')?.addEventListener('click', () => {
+      // Dispatch a custom event to handle statistics display
+      const viewHistoryEvent = new CustomEvent('view-game-history', {
+        detail: {
+          winningTeam: winningTeam
+        }
+      });
+      document.dispatchEvent(viewHistoryEvent);
+      
+      // Remove the victory modal
+      victoryElement.remove();
+      
+      // Show end game controls
+      const endGameControls = document.getElementById('end-game-controls');
+      if (endGameControls) {
+        endGameControls.classList.remove('hidden');
+      }
+      
+      // Scroll to history/stats section
+      const historySection = document.getElementById('game-history-section');
+      if (historySection) {
+        historySection.scrollIntoView({ behavior: 'smooth' });
+        
+        // Highlight the section briefly
+        historySection.classList.add('ring-4', 'ring-blue-400');
+        setTimeout(() => {
+          historySection.classList.remove('ring-4', 'ring-blue-400');
+        }, 2000);
+      }
+    });
+</script>
 <script>
   import { loadGameState, startGameplay } from '../lib/game';
   

@@ -309,72 +309,33 @@ const hasSeriesAwards = seriesAwards && seriesAwards.length > 0;
       }
     });
     
-    document.getElementById('view-history-btn')?.addEventListener('click', () => {
-      // Get elements
-      const historySection = document.getElementById('game-history-section');
-      const statsContainer = document.getElementById('game-statistics-container');
-      const endGameControls = document.getElementById('end-game-controls');
-      
-      // Close the modal and completely remove it from the DOM
-      const modal = document.getElementById('victory-modal');
-      if (modal) {
-        modal.style.display = 'none';
-        modal.parentNode.removeChild(modal);
-      }
-      
-      // Also clear the container that holds the victory celebration
-      const container = document.getElementById('victory-celebration-container');
-      if (container) container.innerHTML = '';
-      
-      // Generate and show statistics if container exists
-      if (statsContainer) {
-        statsContainer.classList.remove('hidden');
-        
-        // If statistics haven't been generated yet, generate them now
-        if (!statsContainer.innerHTML.trim()) {
-          // Get game data from localStorage
-          const gameData = JSON.parse(localStorage.getItem('currentGame') || '{}');
-          if (gameData) {
-            const winnerIndex = gameData.teams.indexOf(winningTeam);
-            
-            if (winnerIndex !== -1) {
-              // Use dynamic import to load the statistics module
-              import('../lib/statistics-util.ts').then(statsModule => {
-                try {
-                  const statsHTML = statsModule.generateStatisticsHTML(
-                    gameData.hands,
-                    gameData.players,
-                    gameData.teams,
-                    [gameData.scores[0] || 0, gameData.scores[1] || 0],
-                    winnerIndex
-                  );
-                  statsContainer.innerHTML = statsHTML;
-                } catch (err) {
-                  console.error('Error generating statistics:', err);
-                  statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Error generating statistics</div>';
-                }
-              }).catch(err => {
-                console.error('Error loading statistics module:', err);
-                statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Failed to load statistics module</div>';
-              });
-            }
-          }
+    document.getElementById('victory-history-btn')?.addEventListener('click', () => {
+      // Dispatch a custom event to handle statistics display
+      const viewHistoryEvent = new CustomEvent('view-game-history', {
+        detail: {
+          winningTeam: winningTeam
         }
-      }
+      });
+      document.dispatchEvent(viewHistoryEvent);
+      
+      // Remove the victory modal
+      victoryElement.remove();
       
       // Show end game controls
+      const endGameControls = document.getElementById('end-game-controls');
       if (endGameControls) {
         endGameControls.classList.remove('hidden');
       }
       
-      // Scroll to history section
+      // Scroll to history/stats section
+      const historySection = document.getElementById('game-history-section');
       if (historySection) {
         historySection.scrollIntoView({ behavior: 'smooth' });
         
-        // Highlight the history section briefly
-        historySection.classList.add('ring-4', 'ring-blue-400', 'ring-opacity-75');
+        // Highlight the section briefly
+        historySection.classList.add('ring-4', 'ring-blue-400');
         setTimeout(() => {
-          historySection.classList.remove('ring-4', 'ring-blue-400', 'ring-opacity-75');
+          historySection.classList.remove('ring-4', 'ring-blue-400');
         }, 2000);
       }
     });

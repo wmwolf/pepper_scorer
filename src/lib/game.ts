@@ -978,9 +978,15 @@ function createConfettiEffect() {
   
   // Simplified fallback victory celebration when awards system fails
   function fallbackVictoryCelebration(gameManager: GameManager) {
-    const winnerIndex = gameManager.getWinner() || 0;
-    const winningTeam = gameManager.state.teams[winnerIndex] || 'Winner';
-    const [score1, score2] = gameManager.getScores();
+    // Ensure we have a valid winner index
+    const winnerIndex = typeof gameManager.getWinner === 'function' ? 
+    gameManager.getWinner() : 
+    (gameManager.state.scores[0] > gameManager.state.scores[1] ? 0 : 1);
+
+    const winningTeam = winnerIndex !== null ? (gameManager.state.teams[winnerIndex] || 'Winner') : 'Winner';
+    const [score1, score2] = typeof gameManager.getScores === 'function' ? 
+    gameManager.getScores() : 
+    gameManager.state.scores || [0, 0];
     
     // Create victory overlay element
     const victoryElement = document.createElement('div');
@@ -1109,52 +1115,32 @@ function createConfettiEffect() {
     });
     
     document.getElementById('victory-history-btn')?.addEventListener('click', () => {
+      // Dispatch a custom event to handle statistics display
+      const viewHistoryEvent = new CustomEvent('view-game-history', {
+        detail: {
+          winningTeam: winningTeam
+        }
+      });
+      document.dispatchEvent(viewHistoryEvent);
+      
+      // Remove the victory modal
       victoryElement.remove();
       
-      // First, ensure statistics are generated if they haven't been yet
-      const statsContainer = document.getElementById('game-statistics-container');
-      if (statsContainer) {
-        // Make sure the container is visible
-        statsContainer.classList.remove('hidden');
+      // Show end game controls
+      const endGameControls = document.getElementById('end-game-controls');
+      if (endGameControls) {
+        endGameControls.classList.remove('hidden');
+      }
+      
+      // Scroll to history/stats section
+      const historySection = document.getElementById('game-history-section');
+      if (historySection) {
+        historySection.scrollIntoView({ behavior: 'smooth' });
         
-        // If statistics haven't been generated yet (container is empty),
-        // generate them now
-        if (!statsContainer.innerHTML.trim()) {
-          const winnerIndex = gameManager.getWinner();
-          if (winnerIndex !== null) {
-            // Use dynamic import to load the statistics module
-            import('../lib/statistics-util.ts').then(module => {
-              try {
-                const statsHTML = module.generateStatisticsHTML(
-                  gameManager.state.hands,
-                  gameManager.state.players,
-                  gameManager.state.teams,
-                  gameManager.getScores(),
-                  winnerIndex
-                );
-                statsContainer.innerHTML = statsHTML;
-              } catch (err) {
-                console.error('Error generating statistics:', err);
-                statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Error generating statistics</div>';
-              }
-            }).catch(err => {
-              console.error('Error loading statistics module:', err);
-              statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Failed to load statistics module</div>';
-            });
-          }
-        }
-        
-        // Show end game controls
-        const endGameControls = document.getElementById('end-game-controls');
-        if (endGameControls) {
-          endGameControls.classList.remove('hidden');
-        }
-        
-        // Scroll to statistics first
-        statsContainer.scrollIntoView({ behavior: 'smooth' });
-        statsContainer.classList.add('ring-4', 'ring-blue-400');
+        // Highlight the section briefly
+        historySection.classList.add('ring-4', 'ring-blue-400');
         setTimeout(() => {
-          statsContainer.classList.remove('ring-4', 'ring-blue-400');
+          historySection.classList.remove('ring-4', 'ring-blue-400');
         }, 2000);
       }
     });
