@@ -425,7 +425,7 @@ import VictoryCelebration from '../components/victory-celebration.astro';
                       <h3 class="text-xl font-bold">${award.name}</h3>
                       <span class="text-xs px-2 py-1 bg-white/20 rounded-full">${badgeText}</span>
                     </div>
-                    <p class="text-white/90 text-sm mt-1">${award.description}</p>
+                    <p class="text-white/90 text-sm mt-1 text-left">${award.description}</p>
                   </div>
                   
                   <div class="${cardStyle.bodyBg} p-4 flex-1">
@@ -456,8 +456,8 @@ import VictoryCelebration from '../components/victory-celebration.astro';
     
     // Create full victory celebration HTML
     const victoryHTML = `
-      <div id="victory-modal" class="fixed inset-0 bg-gray-900 bg-opacity-90 z-50 flex items-center justify-center overflow-y-auto py-8">
-        <div class="max-w-5xl w-full mx-4 text-center bg-gray-800 rounded-lg shadow-2xl p-6">
+      <div id="victory-modal" class="fixed inset-0 bg-gray-900 bg-opacity-90 z-50 block overflow-y-auto">
+        <div class="max-w-5xl w-full mx-auto my-8 text-center bg-gray-800 rounded-lg shadow-2xl p-6">
           <!-- Trophy Icon -->
           <div class="mb-6">
             <span class="text-6xl inline-block animate-bounce">🏆</span>
@@ -636,9 +636,16 @@ import VictoryCelebration from '../components/victory-celebration.astro';
       const statsContainer = document.getElementById('game-statistics-container');
       const endGameControls = document.getElementById('end-game-controls');
       
-      // Hide victory modal
+      // Completely remove the victory modal
       const modal = document.getElementById('victory-modal');
-      if (modal) modal.style.display = 'none';
+      if (modal) {
+        modal.style.display = 'none';
+        modal.parentNode.removeChild(modal);
+      }
+      
+      // Also remove the container that holds the modal
+      const victoryContainer = document.getElementById('victory-celebration-container');
+      if (victoryContainer) victoryContainer.innerHTML = '';
       
       // Generate and show statistics if not already visible
       if (statsContainer) {

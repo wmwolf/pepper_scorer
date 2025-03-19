@@ -95,10 +95,10 @@ const hasSeriesAwards = seriesAwards && seriesAwards.length > 0;
 
 <div 
   id="victory-modal" 
-  class="fixed inset-0 bg-gray-900 bg-opacity-90 z-50 flex items-center justify-center overflow-y-auto py-8"
+  class="fixed inset-0 bg-gray-900 bg-opacity-90 z-50 block overflow-y-auto"
   style="display: block"
 >
-  <div class="max-w-5xl w-full mx-4 text-center bg-gray-800 rounded-lg shadow-2xl p-6">
+  <div class="min-h-fit max-w-5xl w-full mx-auto my-8 text-center bg-gray-800 rounded-lg shadow-2xl p-6">
     <!-- Trophy Icon -->
     <div class="mb-6">
       <span class="text-6xl inline-block animate-bounce">🏆</span>
@@ -134,7 +134,7 @@ const hasSeriesAwards = seriesAwards && seriesAwards.length > 0;
     {hasGameAwards && (
       <div class="mb-8">
         <h3 class="text-2xl font-semibold text-white mb-4">Game Awards</h3>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 justify-items-center mx-auto max-w-5xl">
           {gameAwards.map((award) => (
             <AwardCard
               id={award.id}
@@ -153,21 +153,23 @@ const hasSeriesAwards = seriesAwards && seriesAwards.length > 0;
     
     <!-- Series Awards Section (only shown for completed series) -->
     {hasSeriesAwards && (
-      <div class="mb-8">
-        <h3 class="text-2xl font-semibold text-white mb-4">Series Awards</h3>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {seriesAwards.map((award) => (
-            <AwardCard
-              id={award.id}
-              name={award.name}
-              description={award.description}
-              technicalDefinition={award.technicalDefinition}
-              type={award.type}
-              scope={award.scope}
-              icon={award.icon}
-              winner={award.winner}
-            />
-          ))}
+      <div class="mb-8 w-full flex justify-center">
+        <div class="w-full">
+          <h3 class="text-2xl font-semibold text-white mb-4">Series Awards</h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-8 w-full">
+            {seriesAwards.map((award) => (
+              <AwardCard
+                id={award.id}
+                name={award.name}
+                description={award.description}
+                technicalDefinition={award.technicalDefinition}
+                type={award.type}
+                scope={award.scope}
+                icon={award.icon}
+                winner={award.winner}
+              />
+            ))}
+          </div>
         </div>
       </div>
     )}
@@ -313,9 +315,16 @@ const hasSeriesAwards = seriesAwards && seriesAwards.length > 0;
       const statsContainer = document.getElementById('game-statistics-container');
       const endGameControls = document.getElementById('end-game-controls');
       
-      // Close the modal
+      // Close the modal and completely remove it from the DOM
       const modal = document.getElementById('victory-modal');
-      if (modal) modal.style.display = 'none';
+      if (modal) {
+        modal.style.display = 'none';
+        modal.parentNode.removeChild(modal);
+      }
+      
+      // Also clear the container that holds the victory celebration
+      const container = document.getElementById('victory-celebration-container');
+      if (container) container.innerHTML = '';
       
       // Generate and show statistics if container exists
       if (statsContainer) {
