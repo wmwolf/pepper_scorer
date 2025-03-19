@@ -51,42 +51,61 @@ const style = isDubious ? {
 const badgeText = scope === 'game' ? 'Game Award' : 'Series Award';
 ---
 
-<div class={`award-card rounded-lg overflow-hidden shadow-md border ${style.borderColor} transition-transform hover:shadow-lg hover:-translate-y-1 max-w-md flex flex-col h-full`}>
-  <!-- Card Header -->
-  <div class={`${style.headerBg} px-4 py-3 text-white relative`}>
-    <div class="flex justify-between items-center">
-      <h3 class="text-xl font-bold">{name}</h3>
-      <span class="text-xs px-2 py-1 bg-white/20 rounded-full">{badgeText}</span>
-    </div>
-    <p class="text-white/90 text-sm mt-1">{description}</p>
-  </div>
-  
-  <!-- Card Body -->
-  <div class={`${style.bodyBg} p-4 flex-1`}>
-    <!-- Icon -->
-    <div class="flex mb-3">
-      <div class={`${style.iconBg} h-10 w-10 rounded-full flex items-center justify-center text-white shrink-0`}>
-        <Icon name={icon} class="h-5 w-5" />
+<div class="card-wrapper">
+  <div class={`award-card rounded-lg overflow-hidden shadow-md border ${style.borderColor} transition-transform hover:shadow-lg hover:-translate-y-1 flex flex-col`}>
+    <!-- Card Header -->
+    <div class={`${style.headerBg} px-4 py-3 text-white relative`}>
+      <div class="flex justify-between items-center">
+        <h3 class="text-xl font-bold">{name}</h3>
+        <span class="text-xs px-2 py-1 bg-white/20 rounded-full">{badgeText}</span>
       </div>
-      
-      <!-- Winner (if provided) -->
-      {winner && (
-        <div class="ml-3">
-          <p class="text-gray-500 text-sm">Awarded to</p>
-          <p class="font-semibold text-gray-900">{winner}</p>
-        </div>
-      )}
+      <p class="text-white/90 text-sm mt-1 !text-left">{description}</p>
     </div>
     
-    <!-- Technical Definition (smaller text) -->
-    <p class="text-xs text-gray-600 mt-2">
-      <span class="font-medium text-gray-700">Criteria:</span> {technicalDefinition}
-    </p>
+    <!-- Card Body -->
+    <div class={`${style.bodyBg} p-4 flex-1`}>
+      <!-- Icon -->
+      <div class="flex mb-3">
+        <div class={`${style.iconBg} h-10 w-10 rounded-full flex items-center justify-center text-white shrink-0`}>
+          <Icon name={icon} class="h-5 w-5" />
+        </div>
+        
+        <!-- Winner (if provided) -->
+        {winner && (
+          <div class="ml-3">
+            <p class="text-gray-500 text-sm">Awarded to</p>
+            <p class="font-semibold text-gray-900">{winner}</p>
+          </div>
+        )}
+      </div>
+      
+      <!-- Technical Definition (smaller text) -->
+      <p class="text-xs text-gray-600 mt-2 !text-left">
+        <span class="font-medium text-gray-700">Criteria:</span> {technicalDefinition}
+      </p>
+    </div>
   </div>
 </div>
 
 <style>
+  .card-wrapper {
+    display: flex;
+    width: 100%;
+  }
+  
   .award-card {
     width: 100%;
+    max-width: 320px;
+  }
+  
+  /* Force left alignment for description and criteria text */
+  .desc-text, .criteria-text {
+    text-align: left !important;
+  }
+
+  /* Override any parent text-center that might be cascading */
+  :global(.text-center) .desc-text,
+  :global(.text-center) .criteria-text {
+    text-align: left !important;
   }
 </style>
