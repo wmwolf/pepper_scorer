@@ -1,0 +1,55 @@
+---
+// src/components/CardPatternBackground.astro
+import { getPath } from '../lib/path-utils';
+
+interface Props {
+  opacity?: number;        // Overlay opacity (0-1)
+  overlayColor?: string;   // Color of the overlay (CSS color)
+  height?: string;         // Height of the container
+  rounded?: boolean;       // Whether to add rounded corners
+  className?: string;      // Additional CSS classes
+}
+
+const {
+  opacity = 0.9,
+  overlayColor = "white",
+  height = "100%",
+  rounded = false,
+  className = ""
+} = Astro.props;
+
+// Calculate the CSS variables
+const overlayStyle = `rgba(${overlayColor === "white" ? "255,255,255" : "0,0,50"}, ${opacity})`;
+const roundedClass = rounded ? "rounded-lg overflow-hidden" : "";
+
+// Get the correct path to the image
+const imagePath = getPath('card_suits.jpg');
+---
+
+<div class={`card-pattern-container relative ${roundedClass} ${className}`} style={`height: ${height}; background-image: url('${imagePath}');`}>
+  <slot />
+</div>
+
+<style define:vars={{ overlayStyle }}>
+  .card-pattern-container {
+    position: relative;
+    background-size: cover;
+    background-position: center;
+  }
+  
+  .card-pattern-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--overlayStyle);
+    z-index: 1;
+  }
+  
+  .card-pattern-container > :global(*) {
+    position: relative;
+    z-index: 2;
+  }
+</style>

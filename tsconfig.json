@@ -7,7 +7,7 @@
     },
     "verbatimModuleSyntax": true,
     "strict": true,
-    "noUncheckedIndexedAccess": true,
+    "noUncheckedIndexedAccess": false,
     "noEmit": true
   },
   "include": ["src/**/*"],

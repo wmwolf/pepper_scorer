@@ -1,0 +1,26 @@
+---
+import CardPatternBackground from './CardPatternBackground.astro';
+import { getPath } from '../lib/path-utils';
+---
+
+<header>
+  <CardPatternBackground opacity={0.75} overlayColor="blue" height="auto" className="shadow-md">
+    <nav class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex justify-between h-32 items-center">
+        <div class="flex-shrink-0">
+          <h1 class="text-2xl font-bold text-white">Pepper Scorer</h1>
+        </div>
+        <div class="hidden sm:block">
+          <div class="flex space-x-4">
+            <a href={getPath('')} class="px-3 py-2 rounded-md text-white hover:bg-blue-700">
+              New Game
+            </a>
+            <a href={getPath('/rules')} class="px-3 py-2 rounded-md text-white hover:bg-blue-700">
+              Rules
+            </a>
+          </div>
+        </div>
+      </div>
+    </nav>
+  </CardPatternBackground>
+</header>

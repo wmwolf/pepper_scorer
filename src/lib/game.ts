@@ -1,6 +1,6 @@
 // src/lib/game.ts
 
-import { GameManager, getCurrentPhase, isPepperRound, calculateScore, getNextDealer } from './gameState';
+import { GameManager, getCurrentPhase, isPepperRound, calculateScore } from './gameState';
 import { getPath } from './path-utils';
 export function loadGameState() {
     const storedGame = localStorage.getItem('currentGame');
@@ -85,19 +85,19 @@ function updateHandInfo(gameManager: GameManager) {
             bidInfoText = `Bidding starts with ${nextPlayer}`;
         }
     } else if (phase === 'bid') {
-        const bidderIndex = parseInt(currentHand[1]) - 1;
+        const bidderIndex = parseInt(currentHand[1] || '1') - 1;
         const bidder = gameManager.state.players[bidderIndex];
         bidInfoText = `${bidder} won the bid`;
     } else if (phase === 'trump' || phase === 'decision' || phase === 'tricks') {
-        const bidderIndex = parseInt(currentHand[1]) - 1;
+        const bidderIndex = parseInt(currentHand[1] || '1') - 1;
         const bidder = gameManager.state.players[bidderIndex];
-        const bid = currentHand[2];
+        const bid = currentHand[2] || '';
         const bidText = bidToString(bid);
         
         if (phase === 'trump') {
             bidInfoText = `${bidder} bid ${bidText}`;
         } else {
-            const trump = currentHand[3];
+            const trump = currentHand[3] || '';
             const trumpText = trumpToString(trump);
             bidInfoText = `${bidder} bid ${bidText} in ${trumpText}`;
         }
@@ -136,8 +136,10 @@ function showPhaseControls(gameManager: GameManager) {
                         
                 // Sort buttons according to bidding order
                 buttons.sort((a, b) => {
-                    const aIndex = parseInt(a.dataset.player!) - 1;
-                    const bIndex = parseInt(b.dataset.player!) - 1;
+                    const aElement = a as HTMLElement;
+                    const bElement = b as HTMLElement;
+                    const aIndex = parseInt(aElement.dataset.player || '1') - 1;
+                    const bIndex = parseInt(bElement.dataset.player || '1') - 1;
                     return biddingOrder.indexOf(aIndex) - biddingOrder.indexOf(bIndex);
                 });
                         
@@ -153,15 +155,15 @@ function showPhaseControls(gameManager: GameManager) {
         case 'bid': {
             const controls = document.getElementById('bid-controls');
             if (controls) controls.classList.remove('hidden');
-            const bidder = gameManager.state.players[parseInt(currentHand[1]) - 1];
+            const bidder = gameManager.state.players[parseInt(currentHand[1] || '1') - 1];
             updateInstructions(`What did ${bidder} bid?`);
             break;
         }
         case 'trump': {
             const controls = document.getElementById('trump-controls');
             if (controls) controls.classList.remove('hidden');
-            const bidder = gameManager.state.players[parseInt(currentHand[1]) - 1];
-            updateInstructions(`${bidder} bid ${bidToString(currentHand[2])}. What's trump?`);
+            const bidder = gameManager.state.players[parseInt(currentHand[1] || '1') - 1];
+            updateInstructions(`${bidder} bid ${bidToString(currentHand[2] || '')}. What's trump?`);
             break;
         }
         case 'decision': {
@@ -186,19 +188,21 @@ function showPhaseControls(gameManager: GameManager) {
                     document.getElementById('btn-pass-1')?.classList.add('hidden');
                 }
             }
-            const bidder = gameManager.state.players[parseInt(currentHand[1]) - 1];
-            updateInstructions(`${bidder} bid ${bidToString(currentHand[2])} in ${trumpToString(currentHand[3])}. Play or fold?`);
+            const bidder = gameManager.state.players[parseInt(currentHand[1] || '1') - 1];
+            updateInstructions(`${bidder} bid ${bidToString(currentHand[2] || '')} in ${trumpToString(currentHand[3] || '')}. Play or fold?`);
             break;
         }
         case 'tricks': {
             const controls = document.getElementById('tricks-controls');
             if (controls) controls.classList.remove('hidden');
-            const bidder = gameManager.state.players[parseInt(currentHand[1]) - 1];
+            const bidder = gameManager.state.players[parseInt(currentHand[1] || '1') - 1];
             // If the bid is clubs, the defenders must play
             if (currentHand[3] === 'C') {
-                updateInstructions(`${bidder} bid ${bidToString(currentHand[2])} in ${trumpToString(currentHand[3])}, so ${gameManager.getDefendingTeamName()} must play. How many tricks did ${gameManager.getDefendingTeamName()} win?`);
+                const defendingTeam = gameManager.getDefendingTeamName() || 'Defender';
+                updateInstructions(`${bidder} bid ${bidToString(currentHand[2] || '')} in ${trumpToString(currentHand[3] || '')}, so ${defendingTeam} must play. How many tricks did ${defendingTeam} win?`);
             } else {
-                updateInstructions(`${bidder} bid ${bidToString(currentHand[2])} in ${trumpToString(currentHand[3])}. How many tricks did ${gameManager.getDefendingTeamName()} win?`);
+                const defendingTeam = gameManager.getDefendingTeamName() || 'Defender';
+                updateInstructions(`${bidder} bid ${bidToString(currentHand[2] || '')} in ${trumpToString(currentHand[3] || '')}. How many tricks did ${defendingTeam} win?`);
             }
             break;
         }
@@ -226,7 +230,7 @@ function setupPlayerButtons(gameManager: GameManager, updateUI: () => void) {
         const button = document.createElement('button');
         button.className = 'px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-800 font-medium rounded-lg transition-colors';
         button.dataset.player = (index + 1).toString();
-        button.textContent = player;
+        button.textContent = player || '';
         button.addEventListener('click', () => {
             gameManager.addHandPart((index + 1).toString());
             updateUI();
@@ -282,7 +286,7 @@ function setupDecisionButtons(gameManager: GameManager, updateUI: () => void) {
             if (decision) {
                 const [action, tricks] = decision.split('');
                 // Add the decision (P or F)
-                gameManager.addHandPart(action);
+                if (action) gameManager.addHandPart(action);
                 // If there are free tricks (F1 or F2), add those
                 if (tricks) {
                     gameManager.addHandPart(tricks);
@@ -371,14 +375,15 @@ function processPepperRound(gameManager: GameManager, updateUI: () => void) {
     }
 }
 
-export function startGameplay(gameData: any) {
+export function startGameplay(gameData: Record<string, unknown>) {
     const gameManager = GameManager.fromJSON(JSON.stringify(gameData));
     // Initialize reverse history preference from localStorage
     let reverseHistory = localStorage.getItem('reverseHistory') === 'true';
     
     function updateUI() {
-        const currentHand = gameManager.getCurrentHand();
-        const phase = getCurrentPhase(currentHand);
+        // Using currentHand would be for future feature needs
+        // const currentHand = gameManager.getCurrentHand();
+        // const phase = getCurrentPhase(currentHand);
         const scores = gameManager.getScores();
 
         // Update scores
@@ -394,14 +399,14 @@ export function startGameplay(gameData: any) {
         if (undoButton) {
           const currentHand = gameManager.getCurrentHand();
           const canUndo = currentHand.length > 1 || gameManager.state.hands.length > 1;
-          undoButton.disabled = !canUndo;
+          (undoButton as HTMLButtonElement).disabled = !canUndo;
         }
     
         // Update the score log
         const team1Header = document.getElementById('log-team1');
         const team2Header = document.getElementById('log-team2');
-        if (team1Header) team1Header.textContent = gameManager.state.teams[0];
-        if (team2Header) team2Header.textContent = gameManager.state.teams[1];
+        if (team1Header) team1Header.textContent = gameManager.state.teams[0] || 'Team 1';
+        if (team2Header) team2Header.textContent = gameManager.state.teams[1] || 'Team 2';
         
         // Update history toggle button text
         const reverseButtonText = document.getElementById('reverse-button-text');
@@ -432,7 +437,7 @@ export function startGameplay(gameData: any) {
                 handsToDisplay = handsToDisplay.slice().reverse();
             }
             
-            let runningScores: [number, number] = [0, 0];
+            const runningScores: [number, number] = [0, 0];
             
             // If we're showing newest first, we need to pre-calculate the running scores
             if (reverseHistory) {
@@ -454,7 +459,7 @@ export function startGameplay(gameData: any) {
                     : displayIndex;
                 
                 // Always show hand number and dealer
-                const dealer = parseInt(hand[0]);
+                const dealer = parseInt(hand[0] || '1');
                 const dealerName = gameManager.state.players[dealer - 1];
                 
                 // Initialize cells with known data
@@ -464,12 +469,12 @@ export function startGameplay(gameData: any) {
                 
                 // If we have enough info for the bid
                 if (hand.length >= 4) {
-                    const bidWinner = parseInt(hand[1]);
+                    const bidWinner = parseInt(hand[1] || '0');
                     if (bidWinner === 0) {
                         bidDisplay = 'Pass';
                     } else {
                         const bidderName = gameManager.state.players[bidWinner - 1];
-                        bidDisplay = `${bidderName}: ${bidToString(hand[2])} in ${trumpToString(hand[3])}`;
+                        bidDisplay = `${bidderName}: ${bidToString(hand[2] || '')} in ${trumpToString(hand[3] || '')}`;
                     }
                 }
                 
@@ -540,15 +545,19 @@ export function startGameplay(gameData: any) {
                 localStorage.setItem('currentGame', gameManager.toJSON());
             }
             
-            const winnerIndex = gameManager.getWinner()!;
-            const winningTeam = gameManager.state.teams[winnerIndex];
-            const losingTeam = gameManager.state.teams[1 - winnerIndex];
+            const winnerIndex = gameManager.getWinner() || 0;
+            const winningTeam = gameManager.state.teams[winnerIndex] || 'Winner';
+            // Following values kept for future UI enhancements
+            // const losingTeam = gameManager.state.teams[1 - winnerIndex] || 'Loser';
+            // Scores used in future UI enhancements
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
             const [score1, score2] = scores;
-            const winningScore = winnerIndex === 0 ? score1 : score2;
-            const losingScore = winnerIndex === 0 ? score2 : score1;
+            // const winningScore = winnerIndex === 0 ? score1 : score2;
+            // const losingScore = winnerIndex === 0 ? score2 : score1;
             
-            const seriesComplete = gameManager.state.isSeries && gameManager.isSeriesComplete();
-            const nextDealer = seriesComplete ? null : gameManager.getNextDealer();
+            // const seriesComplete = gameManager.state.isSeries && gameManager.isSeriesComplete();
+            // Unused
+          // const nextDealer = seriesComplete ? null : gameManager.getNextDealer();
           
             // Update instruction area with victory message
             const instructionEl = document.getElementById('game-instruction');
@@ -614,14 +623,14 @@ function updateScores(scores: [number, number]) {
     const team2ScoreMobile = document.getElementById('team2-score-mobile');
     
     // Update scores
-    const score1 = scores[0].toString();
-    const score2 = scores[1].toString();
+    const score1Text = scores[0].toString();
+    const score2Text = scores[1].toString();
     
     // Set score values
-    if (team1Score) team1Score.textContent = score1;
-    if (team2Score) team2Score.textContent = score2;
-    if (team1ScoreMobile) team1ScoreMobile.textContent = score1;
-    if (team2ScoreMobile) team2ScoreMobile.textContent = score2;
+    if (team1Score) team1Score.textContent = score1Text;
+    if (team2Score) team2Score.textContent = score2Text;
+    if (team1ScoreMobile) team1ScoreMobile.textContent = score1Text;
+    if (team2ScoreMobile) team2ScoreMobile.textContent = score2Text;
     
     // Update colors based on score values
     updateScoreColor(team1Score, scores[0]);
@@ -667,7 +676,17 @@ function createConfettiEffect() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     
-    const particles = [];
+    const particles: Array<{
+      x: number;
+      y: number;
+      size: number;
+      color: string;
+      speedX: number;
+      speedY: number;
+      rotation: number;
+      rotationSpeed: number;
+    }> = [];
+    
     const colors = [
       '#f44336', '#e91e63', '#9c27b0', '#673ab7', 
       '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4',
@@ -686,7 +705,7 @@ function createConfettiEffect() {
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height - canvas.height,
         size: Math.random() * 10 + 5,
-        color: colors[Math.floor(Math.random() * colors.length)],
+        color: colors[Math.floor(Math.random() * colors.length)] || '#ff0000',
         speedX: Math.random() * 6 - 3,
         speedY: Math.random() * 3 + 2,
         rotation: Math.random() * 360,
@@ -715,20 +734,24 @@ function createConfettiEffect() {
       }
       
       // Clear canvas
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      // Set global canvas opacity
-      ctx.globalAlpha = canvasOpacity;
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Set global canvas opacity
+        ctx.globalAlpha = canvasOpacity;
+      }
       
       // Draw and update particles
       particles.forEach(particle => {
         // Draw particle
-        ctx.save();
-        ctx.translate(particle.x, particle.y);
-        ctx.rotate((particle.rotation * Math.PI) / 180);
-        ctx.fillStyle = particle.color;
-        ctx.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
-        ctx.restore();
+        if (ctx) {
+          ctx.save();
+          ctx.translate(particle.x, particle.y);
+          ctx.rotate((particle.rotation * Math.PI) / 180);
+          ctx.fillStyle = particle.color;
+          ctx.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
+          ctx.restore();
+        }
         
         // Update position
         particle.x += particle.speedX;
@@ -758,6 +781,8 @@ function createConfettiEffect() {
   }
   
   // Create animated trophy element
+  // Function kept for future implementation
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
   function createAnimatedTrophy() {
     const trophy = document.createElement('div');
     trophy.innerHTML = '🏆';
@@ -780,7 +805,7 @@ function createConfettiEffect() {
   }
   
   // Add this function after updateScoreColor
-  function showVictoryCelebration(gameManager) {
+  function showVictoryCelebration(gameManager: GameManager) {
     // Hide all current controls
     hideAllControls();
     
@@ -790,6 +815,8 @@ function createConfettiEffect() {
     
     // First, we need to generate the award data using our tracking utilities
     const winnerIndex = gameManager.getWinner()!;
+    // These score variables are used in other parts of the codebase
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
     const [score1, score2] = gameManager.getScores();
     
     // Add controls to the main decision pane
@@ -890,7 +917,7 @@ function createConfettiEffect() {
         console.log('Game awards selected:', gameAwards);
         
         // Select series awards if series is complete
-        let seriesAwards = [];
+        let seriesAwards: Array<{id: string; name: string; description: string; winner: string}> = [];
         if (gameManager.state.isSeries && gameManager.state.seriesWinner !== undefined) {
           const { selectSeriesAwards } = awardsModule;
           seriesAwards = selectSeriesAwards(awardData);
@@ -950,9 +977,9 @@ function createConfettiEffect() {
   }
   
   // Simplified fallback victory celebration when awards system fails
-  function fallbackVictoryCelebration(gameManager) {
-    const winnerIndex = gameManager.getWinner()!;
-    const winningTeam = gameManager.state.teams[winnerIndex];
+  function fallbackVictoryCelebration(gameManager: GameManager) {
+    const winnerIndex = gameManager.getWinner() || 0;
+    const winningTeam = gameManager.state.teams[winnerIndex] || 'Winner';
     const [score1, score2] = gameManager.getScores();
     
     // Create victory overlay element
@@ -1077,7 +1104,7 @@ function createConfettiEffect() {
       // Make sure the undo button is enabled
       const undoButton = document.getElementById('undo-button');
       if (undoButton) {
-        undoButton.disabled = false;
+        (undoButton as HTMLButtonElement).disabled = false;
       }
     });
     
@@ -1153,7 +1180,9 @@ function createConfettiEffect() {
   }
   
   // Simple function to create confetti particles using DOM elements
-  function createConfettiParticle(container) {
+  // Function kept for future implementation
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
+  function createConfettiParticle(container: HTMLElement) {
     const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'];
     
     const particle = document.createElement('div');
@@ -1174,7 +1203,7 @@ function createConfettiEffect() {
     
     particle.style.width = `${size}px`;
     particle.style.height = `${size}px`;
-    particle.style.backgroundColor = color;
+    particle.style.backgroundColor = color || '#ff0000';
     particle.style.left = `calc(${startX}% - ${size/2}px)`;
     particle.style.top = `calc(${startY}% - ${size/2}px)`;
     

@@ -1,5 +1,6 @@
 ---
 // src/layouts/BaseLayout.astro
+import NavbarWithPattern from '../components/navbar-with-pattern.astro';
 interface Props {
   title: string;
   description?: string;
@@ -21,7 +22,8 @@ const {
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body class="min-h-screen bg-gray-50 flex flex-col">
-    <header class="bg-blue-600 text-white shadow-md">
+    <NavbarWithPattern />
+    <!-- <header class="bg-blue-600 text-white shadow-md">
       <nav class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex justify-between h-16 items-center">
           <div class="flex-shrink-0">
@@ -39,7 +41,7 @@ const {
           </div>
         </div>
       </nav>
-    </header>
+    </header> -->
 
     <main class="flex-grow container mx-auto px-4 py-8">
       <slot />
@@ -48,7 +50,7 @@ const {
     <footer class="bg-gray-100 border-t">
       <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <p class="text-center text-gray-600 text-sm">
-          © {new Date().getFullYear()} Pepper Scorer. Game rules available in the Rules section.
+          &copy; {new Date().getFullYear()} William M. Wolf. Game rules available in the Rules section.
         </p>
       </div>
     </footer>

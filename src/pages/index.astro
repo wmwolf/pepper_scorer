@@ -8,22 +8,22 @@ import ResumeGameModal from '../components/resume-modal.astro';
   <div class="max-w-3xl mx-auto">
     <div class="bg-white shadow-sm rounded-lg p-6">
       <div class="space-y-6">
-        <h2 class="text-2xl font-bold text-gray-900 text-center">
-          Start a New Game
-        </h2>
         
-        <div class="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
-          <div class="flex">
-            <div class="ml-3">
-              <p class="text-sm text-blue-700">
-                Enter the names of the players in clockwise order, starting with the first dealer.
-              </p>
-            </div>
-          </div>
-        </div>
-
         <!-- Player Setup Form -->
         <div id="player-setup" class="space-y-6">
+          <h2 class="text-2xl font-bold text-gray-900 text-center">
+            Start a New Game
+          </h2>
+            <div class="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
+            <div class="flex">
+              <div class="ml-3">
+                <p class="text-sm text-blue-700">
+                  Enter the names of the players in clockwise order, starting with the first dealer.
+                </p>
+              </div>
+            </div>
+          </div>
+  
           <form id="player-form" class="space-y-4">
             <div class="space-y-4">
               {[1, 2, 3, 4].map(i => (
@@ -38,7 +38,7 @@ import ResumeGameModal from '../components/resume-modal.astro';
                     type="text"
                     id={`player-${i}`}
                     name={`player-${i}`}
-                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 py-3 px-4 text-base transition-all"
                     placeholder={`Enter player ${i} name`}
                     required
                   />
@@ -59,54 +59,50 @@ import ResumeGameModal from '../components/resume-modal.astro';
 
         <!-- Team Setup Form (initially hidden) -->
         <div id="team-setup" class="space-y-6 hidden">
-          <form id="team-form" class="space-y-4">
-            <div class="space-y-4">
+          <form id="team-form" class="space-y-6">
+            <h2 class="text-2xl font-bold text-gray-900 text-center">
+              Choose Team Names
+            </h2>
+              
+            <div class="space-y-6">
               {[1, 2].map(i => (
-                <div class="space-y-2">
+                <div class="space-y-3">
                   <label 
-                    class="block text-sm font-medium text-gray-700"
+                    class="block text-lg font-medium text-gray-800"
                     for={`team-${i}`}
                     id={`team-${i}-label`}
                   >
-                    Team {i}
+                    <!-- Will be filled by JS: "Player1 & Player3's Team" -->
                   </label>
                   <input
                     type="text"
                     id={`team-${i}`}
                     name={`team-${i}`}
-                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    placeholder={`Enter team ${i} name`}
+                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 py-3 px-4 text-base transition-all"
+                    placeholder="Enter team name"
                     required
                   />
                 </div>
               ))}
             </div>
 
-            <div class="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="series"
-                name="series"
-                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <label for="series" class="text-sm text-gray-700">
-                Play a series (best of three games)
-              </label>
-            </div>
+            <p class="text-sm text-gray-600 italic mt-2">
+              Note: You can always convert a single game into a series after the game is complete.
+            </p>
 
             <p id="team-error" class="text-red-600 text-sm hidden"></p>
 
-            <div class="flex space-x-4">
+            <div class="flex space-x-4 pt-2">
               <button
                 type="button"
                 id="back-to-players"
-                class="flex-1 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                class="flex-1 rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
               >
                 Back
               </button>
               <button
                 type="submit"
-                class="flex-1 rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                class="flex-1 rounded-md border border-transparent bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
               >
                 Start Game
               </button>
@@ -180,11 +176,11 @@ import ResumeGameModal from '../components/resume-modal.astro';
       return;
     }
 
-    // Update team labels
+    // Update team labels with player names using ampersand format
     document.getElementById('team-1-label')!.textContent = 
-      `${state.players[0]} and ${state.players[2]}'s Team`;
+      `${state.players[0]} & ${state.players[2]}'s Team`;
     document.getElementById('team-2-label')!.textContent = 
-      `${state.players[1]} and ${state.players[3]}'s Team`;
+      `${state.players[1]} & ${state.players[3]}'s Team`;
 
     // Show team setup
     playerSetup?.classList.add('hidden');
@@ -198,17 +194,17 @@ import ResumeGameModal from '../components/resume-modal.astro';
   });
 
   // Handle team form submission
-  teamForm?.addEventListener('submit', async (e) => {
+teamForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
   
-  // Get team names and series preference
+  // Get team names
   state.teams = [1, 2].map(i => {
     const input = document.getElementById(`team-${i}`) as HTMLInputElement;
     return input.value.trim();
   });
   
-  const seriesCheckbox = document.getElementById('series') as HTMLInputElement;
-  state.isSeries = seriesCheckbox.checked;
+  // Set series flag to false as we're removing the checkbox
+  state.isSeries = false;
 
   // Validate
   if (state.teams.some(name => !name)) {
@@ -221,12 +217,7 @@ import ResumeGameModal from '../components/resume-modal.astro';
 
   // Create game using GameManager
   const gameManager = new GameManager(state.players, state.teams);
-  if (state.isSeries) {
-    gameManager.state.isSeries = true;
-    gameManager.state.seriesScores = [0, 0];
-    gameManager.state.gameNumber = 1;
-  }
-
+  
   // Save to localStorage
   localStorage.setItem('currentGame', gameManager.toJSON());
 

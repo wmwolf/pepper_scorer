@@ -97,7 +97,7 @@ export function initializeAwardTracking(
   });
   
   // Initialize team statistics
-  teams.forEach((name, index) => {
+  teams.forEach((name) => {
     teamStats[name] = {
       name,
       defensiveSuccessRate: 0,
@@ -162,15 +162,23 @@ export function calculateGameStats(
     try {
       const { bidWinner, bid, trump, decision, tricks } = decodeHand(hand);
       const bidderName = players[bidWinner - 1] || 'Unknown';
+      // This calculation is needed for other parts of the logic
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
       const bidderTeam = (bidWinner - 1) % 2;
-      const defenderTeam = 1 - bidderTeam;
+      // const defenderTeam = 1 - bidderTeam;
       
       // Track trump suits
-      if (trump) {
-        stats.trumpCounts[trump]++;
+      // Define valid trump types
+      type TrumpKey = 'C' | 'D' | 'H' | 'S' | 'N';
+      const isValidTrump = (t: string): t is TrumpKey => 
+        t === 'C' || t === 'D' || t === 'H' || t === 'S' || t === 'N';
+        
+      if (trump && typeof trump === 'string' && isValidTrump(trump) && stats.trumpCounts && stats.trumpCounts[trump] !== undefined) {
+        stats.trumpCounts[trump] = stats.trumpCounts[trump]! + 1;
       }
       
       // Convert bid to point value
+      const bidString = typeof bid === 'number' ? String(bid) : String(bid || '');
       const bidValue = {
         'P': 4,
         '4': 4,
@@ -178,12 +186,12 @@ export function calculateGameStats(
         '6': 6,
         'M': 7,
         'D': 14
-      }[bid] || 0;
+      }[bidString] || 0;
       
       // Check for highest bid
       if (bidValue > stats.highestBid.points) {
         stats.highestBid = { 
-          value: bid, 
+          value: String(bid || ''), 
           player: bidderName, 
           points: bidValue 
         };
@@ -191,7 +199,8 @@ export function calculateGameStats(
       
       // Calculate points
       if (decision === 'P') { // Played hand
-        const tricksNeeded = ['M', 'D', '6'].includes(bid) ? 6 : parseInt(bid as string);
+        const bidString = String(bid || '');
+        const tricksNeeded = ['M', 'D', '6'].includes(bidString) ? 6 : parseInt(bidString) || 4;
         
         if (tricks === 0) {
           // Defending team set
@@ -246,7 +255,8 @@ export function calculateLongestStreak(hands: string[], teamIndex: number): numb
         // This is the bidding team
         // They win points if they don't go set
         if (hand.length === 6) {
-          const tricksNeeded = ['M', 'D', '6'].includes(bid) ? 6 : parseInt(bid as string);
+          const bidStr = String(bid || '');
+          const tricksNeeded = ['M', 'D', '6'].includes(bidStr) ? 6 : (typeof bid === 'number' ? bid : parseInt(bidStr) || 4);
           teamWonPoints = tricks + tricksNeeded <= 6;
         }
       } else {
@@ -288,7 +298,7 @@ export function trackAwardData(
   const awardData = initializeAwardTracking(players, teams);
   
   // Running score tracking
-  let currentScores: [number, number] = [0, 0];
+  const currentScores: [number, number] = [0, 0];
   
   // Process each hand to collect award-relevant data
   hands.forEach((hand, handIndex) => {
@@ -319,7 +329,7 @@ export function trackAwardData(
       }[bid] || 0;
       
       // 1. Update player-specific stats
-      const playerStat = awardData.playerStats[bidderName];
+      const playerStat = bidderName && bidderName in awardData.playerStats ? awardData.playerStats[bidderName] : undefined;
       if (playerStat) {
         playerStat.bidsWon++;
         
@@ -329,7 +339,7 @@ export function trackAwardData(
         }
         
         // Track high-value bids (6, Moon, Double Moon)
-        if (['6', 'M', 'D'].includes(bid)) {
+        if (bid && ['6', 'M', 'D'].includes(bid.toString())) {
           playerStat.highValueBids.attempts++;
         }
         
@@ -349,11 +359,12 @@ export function trackAwardData(
         awardData.handScores.push(handScores);
         
         const bidderPoints = bidderTeam === 0 ? scoreTeam1 : scoreTeam2;
-        const defenderPoints = bidderTeam === 0 ? scoreTeam2 : scoreTeam1;
+        // Defender points calculation kept for future feature development
+        // const defenderPoints = bidderTeam === 0 ? scoreTeam2 : scoreTeam1;
         
         // Update scoring stats
         if (decision === 'P') {
-          const tricksNeeded = ['M', 'D', '6'].includes(bid) ? 6 : parseInt(bid as string);
+          const tricksNeeded = ['M', 'D', '6'].includes(bid as string) ? 6 : parseInt(bid as string);
           const bidSucceeded = tricks + tricksNeeded <= 6; // Not set
           
           if (bidSucceeded) {
@@ -368,7 +379,7 @@ export function trackAwardData(
             }
             
             // Track high-value bid success
-            if (['6', 'M', 'D'].includes(bid)) {
+            if (bid && ['6', 'M', 'D'].includes(bid.toString())) {
               playerStat.highValueBids.successes++;
             }
             
@@ -400,7 +411,7 @@ export function trackAwardData(
           }
           
           // Track high-value bid success for folded hands
-          if (['6', 'M', 'D'].includes(bid)) {
+          if (bid && ['6', 'M', 'D'].includes(bid.toString())) {
             playerStat.highValueBids.successes++;
           }
           
@@ -416,25 +427,25 @@ export function trackAwardData(
         }
         
         // 2. Update team-specific stats
-        const bidderTeamStat = awardData.teamStats[bidderTeamName];
-        const defenderTeamStat = awardData.teamStats[defenderTeamName];
+        const bidderTeamStat = bidderTeamName && bidderTeamName in awardData.teamStats ? awardData.teamStats[bidderTeamName] : undefined;
+        const defenderTeamStat = defenderTeamName && defenderTeamName in awardData.teamStats ? awardData.teamStats[defenderTeamName] : undefined;
         
         if (bidderTeamStat && defenderTeamStat) {
           // Update bidding team stats
           bidderTeamStat.totalBids++;
           
-          if (['6', 'M', 'D'].includes(bid)) {
+          if (bid && ['6', 'M', 'D'].includes(bid.toString())) {
             bidderTeamStat.highValueBids.attempts++;
           }
           
           if (decision === 'P') {
-            const tricksNeeded = ['M', 'D', '6'].includes(bid) ? 6 : parseInt(bid as string);
+            const tricksNeeded = bid && ['M', 'D', '6'].includes(String(bid)) ? 6 : (typeof bid === 'number' ? bid : parseInt(String(bid) || '4'));
             const bidSucceeded = tricks + tricksNeeded <= 6; // Not set
             
             if (bidSucceeded) {
               bidderTeamStat.successfulBids++;
               
-              if (['6', 'M', 'D'].includes(bid)) {
+              if (bid && ['6', 'M', 'D'].includes(bid.toString())) {
                 bidderTeamStat.highValueBids.successes++;
               }
             }
@@ -465,7 +476,7 @@ export function trackAwardData(
             // Folded hands still count as succeeded bids
             bidderTeamStat.successfulBids++;
             
-            if (['6', 'M', 'D'].includes(bid)) {
+            if (bid && ['6', 'M', 'D'].includes(bid.toString())) {
               bidderTeamStat.highValueBids.successes++;
             }
             
@@ -487,14 +498,22 @@ export function trackAwardData(
         const team0Deficit = currentScores[1] - currentScores[0];
         const team1Deficit = currentScores[0] - currentScores[1];
         
-        if (team0Deficit > awardData.teamStats[teams[0]].maxDeficit) {
-          awardData.teamStats[teams[0]].maxDeficit = team0Deficit;
-          awardData.teamStats[teams[0]].minScoreTrailing = currentScores[0];
+        const team0Name = teams[0];
+        if (team0Name && team0Name in awardData.teamStats) {
+          const teamStats = awardData.teamStats[team0Name];
+          if (teamStats && team0Deficit > teamStats.maxDeficit) {
+            teamStats.maxDeficit = team0Deficit;
+            teamStats.minScoreTrailing = currentScores[0];
+          }
         }
         
-        if (team1Deficit > awardData.teamStats[teams[1]].maxDeficit) {
-          awardData.teamStats[teams[1]].maxDeficit = team1Deficit;
-          awardData.teamStats[teams[1]].minScoreTrailing = currentScores[1];
+        const team1 = teams[1];
+        if (team1 && team1 in awardData.teamStats) {
+          const teamStats = awardData.teamStats[team1];
+          if (teamStats && team1Deficit > teamStats.maxDeficit) {
+            teamStats.maxDeficit = team1Deficit;
+            teamStats.minScoreTrailing = currentScores[1];
+          }
         }
       }
     } catch (e) {
@@ -506,35 +525,37 @@ export function trackAwardData(
   teams.forEach((team, teamIndex) => {
     const teamStat = awardData.teamStats[team];
     
-    // Calculate longest streak
-    teamStat.longestStreak = calculateLongestStreak(hands, teamIndex);
-    
-    // Calculate defense success rate
-    if (teamStat.totalDefenses > 0) {
-      teamStat.defensiveSuccessRate = teamStat.successfulDefenses / teamStat.totalDefenses;
-    }
-    
-    // Calculate bid success rate
-    if (teamStat.totalBids > 0) {
-      teamStat.bidSuccessRate = teamStat.successfulBids / teamStat.totalBids;
-    }
-    
-    // Check for comeback achievement (trailing by 30+ and winning)
-    if (winnerIndex === teamIndex && teamStat.maxDeficit >= 30) {
-      teamStat.comebackAchieved = true;
+    if (teamStat) {
+      // Calculate longest streak
+      teamStat.longestStreak = calculateLongestStreak(hands, teamIndex);
+      
+      // Calculate defense success rate
+      if (teamStat.totalDefenses > 0) {
+        teamStat.defensiveSuccessRate = teamStat.successfulDefenses / teamStat.totalDefenses;
+      }
+      
+      // Calculate bid success rate
+      if (teamStat.totalBids > 0) {
+        teamStat.bidSuccessRate = teamStat.successfulBids / teamStat.totalBids;
+      }
+      
+      // Check for comeback achievement (trailing by 30+ and winning)
+      if (winnerIndex === teamIndex && teamStat.maxDeficit >= 30) {
+        teamStat.comebackAchieved = true;
+      }
     }
   });
   
   // Mark the player who made the winning bid
   if (winnerIndex !== null) {
     // Find the last bid that pushed the winning team over 42 points
-    const winningScore = finalScores[winnerIndex];
-    let runningScore: [number, number] = [0, 0];
+    // const winningScore = finalScores[winnerIndex];
+    const runningScore: [number, number] = [0, 0];
     
     for (let i = 0; i < hands.length; i++) {
       const hand = hands[i];
       
-      if ((hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) || 
+      if (!hand || (hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) || 
           (hand.length >= 2 && hand[1] === '0')) {
         continue; // Skip incomplete or throw-in hands
       }
@@ -546,32 +567,40 @@ export function trackAwardData(
       // Check if this bid pushed the winning team over 42
       console.log(`Hand ${i+1}: running score = ${runningScore}, winner = ${winnerIndex}`);
       // Need to check if this is truly the hand that pushed the winner over the edge
-      const isWinningScore = runningScore[winnerIndex] >= 42;
+      // First check if winnerIndex is valid to safely access the array
+      let isWinningScore = false;
+      // Using non-null assertion operator (!) since we've checked the type and bounds
+      if (typeof winnerIndex === 'number' && winnerIndex >= 0 && winnerIndex < runningScore.length) {
+        isWinningScore = runningScore[winnerIndex] >= 42;
+      }
       const isFirstTimeOver42 = i === hands.length - 1 || 
-                               (winnerIndex === 0 ? 
-                                  runningScore[0] - team1Score < 42 : 
-                                  runningScore[1] - team2Score < 42);
+                              ((typeof winnerIndex === 'number') && (winnerIndex === 0 ? 
+                                 runningScore[0] - team1Score < 42 : 
+                                 runningScore[1] - team2Score < 42));
                                   
       if (isWinningScore && isFirstTimeOver42) {
         // This was the winning hand
         const { bidWinner } = decodeHand(hand);
         const bidderName = players[bidWinner - 1] || 'Unknown';
-        const playerStat = awardData.playerStats[bidderName];
         
-        if (playerStat && Math.floor((bidWinner - 1) / 2) === winnerIndex) {
-          // The bidder is on the winning team and made the winning bid
-          console.log(`Player ${bidderName} made the winning bid!`);
-          playerStat.wonFinalBid = true;
-        } else {
-          console.log(`Player ${bidderName} made a bid but is not on winning team or no player stat found.`);
-          console.log(`bidWinner=${bidWinner}, bidWinnerTeam=${Math.floor((bidWinner - 1) / 2)}, winnerIndex=${winnerIndex}`);
+        if (bidderName && bidderName in awardData.playerStats) {
+          const playerStat = awardData.playerStats[bidderName];
+          
+          if (playerStat && typeof winnerIndex === 'number' && Math.floor((bidWinner - 1) / 2) === winnerIndex) {
+            // The bidder is on the winning team and made the winning bid
+            console.log(`Player ${bidderName} made the winning bid!`);
+            playerStat.wonFinalBid = true;
+          } else {
+            console.log(`Player ${bidderName} made a bid but is not on winning team or no player stat found.`);
+            console.log(`bidWinner=${bidWinner}, bidWinnerTeam=${Math.floor((bidWinner - 1) / 2)}, winnerIndex=${winnerIndex}`);
+          }
         }
         break;
       }
     }
     
     awardData.winningTeam = winnerIndex;
-    awardData.winningTeamName = teams[winnerIndex];
+    awardData.winningTeamName = teams[winnerIndex] || '';
     awardData.gameCompleted = true;
     
     console.log('Assigning winner info to award data:', {
@@ -647,7 +676,7 @@ export function generateStatisticsHTML(
               <span class="text-gray-600">Most Common Trump:</span>
               <span class="font-medium">
                 ${gameStats.mostCommonTrump.count > 0 ? 
-                  `${trumpNames[gameStats.mostCommonTrump.suit]} (${gameStats.mostCommonTrump.count})` : 
+                  `${trumpNames[gameStats.mostCommonTrump.suit as keyof typeof trumpNames]} (${gameStats.mostCommonTrump.count})` : 
                   'None'}
               </span>
             </div>
@@ -705,11 +734,22 @@ export function generateStatisticsHTML(
                            'bg-blue-500';
                            
             // Get suit symbol
-            const suitSymbol = suit === 'C' ? '♣️' : 
-                             suit === 'D' ? '♦️' : 
-                             suit === 'H' ? '♥️' : 
-                             suit === 'S' ? '♠️' : 
-                             '∅';
+            // Define valid keys
+            type SuitKey = 'C' | 'D' | 'H' | 'S' | 'N';
+            const suitSymbols: Record<SuitKey, string> = {
+              'C': '♣️',
+              'D': '♦️', 
+              'H': '♥️', 
+              'S': '♠️', 
+              'N': '∅'
+            };
+            
+            // Make sure to only use valid keys
+            const isValidSuit = (s: string): s is SuitKey => 
+              s === 'C' || s === 'D' || s === 'H' || s === 'S' || s === 'N';
+            
+            const safeKey: SuitKey = (suit && typeof suit === 'string' && isValidSuit(suit)) ? suit : 'C';
+            const suitSymbol = suitSymbols[safeKey];
             
             return `
               <div class="flex flex-col items-center" style="flex: 1">

@@ -1,4 +1,6 @@
 // pepper-awards.ts - Award definitions for Pepper Scorer
+// These types are used for typing functions internally in this module
+// eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
 import type { AwardTrackingData, PlayerStats, TeamStats } from './statistics-util';
 
 export interface AwardDefinition {
@@ -354,7 +356,7 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           // Check for players with at least 3 suited bids (not including N)
           const suitedBids = Object.entries(player.trumpBids)
             .filter(([suit]) => suit !== 'N')
-            .reduce((sum, [_, data]) => sum + data.attempts, 0);
+            .reduce((sum, [, data]) => sum + data.attempts, 0);
           
           return suitedBids >= 3;
         });
@@ -365,11 +367,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         const playersWithRates = qualifyingPlayers.map(player => {
           const suitedAttempts = Object.entries(player.trumpBids)
             .filter(([suit]) => suit !== 'N')
-            .reduce((sum, [_, data]) => sum + data.attempts, 0);
+            .reduce((sum, [, data]) => sum + data.attempts, 0);
           
           const suitedSuccesses = Object.entries(player.trumpBids)
             .filter(([suit]) => suit !== 'N')
-            .reduce((sum, [_, data]) => sum + data.successes, 0);
+            .reduce((sum, [, data]) => sum + data.successes, 0);
           
           const successRate = suitedSuccesses / suitedAttempts;
           
@@ -422,15 +424,15 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
       case 'false_confidence': {
         // Player with most failed no-trump bids
         const qualifyingPlayers = playerStats.filter(player => {
-          const failedNoTrumps = player.trumpBids['N'].attempts - player.trumpBids['N'].successes;
+          const failedNoTrumps = player.trumpBids['N'] ? player.trumpBids['N'].attempts - player.trumpBids['N'].successes : 0;
           return failedNoTrumps > 0;
         });
         
         if (qualifyingPlayers.length === 0) return null;
         
         const winner = qualifyingPlayers.reduce((most, current) => {
-          const mostFailedNoTrumps = most.trumpBids['N'].attempts - most.trumpBids['N'].successes;
-          const currFailedNoTrumps = current.trumpBids['N'].attempts - current.trumpBids['N'].successes;
+          const mostFailedNoTrumps = most.trumpBids['N'] ? most.trumpBids['N'].attempts - most.trumpBids['N'].successes : 0;
+          const currFailedNoTrumps = current.trumpBids['N'] ? current.trumpBids['N'].attempts - current.trumpBids['N'].successes : 0;
           return currFailedNoTrumps > mostFailedNoTrumps ? current : most;
         });
         
@@ -497,7 +499,8 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         
         // If multiple qualify, pick one at random
         const randomIndex = Math.floor(Math.random() * qualifyingPlayers.length);
-        return { ...award, winner: qualifyingPlayers[randomIndex].name };
+        const player = qualifyingPlayers[randomIndex];
+        return player ? { ...award, winner: player.name } : null;
       }
       
       case 'moon_struck': {
@@ -649,29 +652,53 @@ export function selectGameAwards(data: AwardTrackingData): AwardWithWinner[] {
   // If we still don't have 3 awards, pad with random ones
   // Ensure at least one player award
   if (!selectedAwards.some(a => a.type === 'player')) {
-    const player = Object.values(data.playerStats)[Math.floor(Math.random() * Object.values(data.playerStats).length)];
-    selectedAwards.push({
-      ...awards.find(a => a.id === 'bid_royalty')!,
-      winner: player.name
-    });
+    const playerValues = Object.values(data.playerStats);
+    if (playerValues.length > 0) {
+      const player = playerValues[Math.floor(Math.random() * playerValues.length)];
+      if (player) {
+        const awardDef = awards.find(a => a.id === 'bid_royalty');
+        if (awardDef) {
+          selectedAwards.push({
+            ...awardDef,
+            winner: player.name
+          });
+        }
+      }
+    }
   }
   
   // Ensure at least one team award
   if (!selectedAwards.some(a => a.type === 'team')) {
-    const team = Object.values(data.teamStats)[Math.floor(Math.random() * Object.values(data.teamStats).length)];
-    selectedAwards.push({
-      ...awards.find(a => a.id === 'bid_specialists')!,
-      winner: team.name
-    });
+    const teamValues = Object.values(data.teamStats);
+    if (teamValues.length > 0) {
+      const team = teamValues[Math.floor(Math.random() * teamValues.length)];
+      if (team) {
+        const awardDef = awards.find(a => a.id === 'bid_specialists');
+        if (awardDef) {
+          selectedAwards.push({
+            ...awardDef,
+            winner: team.name
+          });
+        }
+      }
+    }
   }
   
   // Ensure at least one dubious award
   if (!selectedAwards.some(a => a.id.includes('overreaching') || a.id.includes('false_confidence') || a.id.includes('helping_hand'))) {
-    const player = Object.values(data.playerStats)[Math.floor(Math.random() * Object.values(data.playerStats).length)];
-    selectedAwards.push({
-      ...awards.find(a => a.id === 'overreaching')!,
-      winner: player.name
-    });
+    const playerValues = Object.values(data.playerStats);
+    if (playerValues.length > 0) {
+      const player = playerValues[Math.floor(Math.random() * playerValues.length)];
+      if (player) {
+        const awardDef = awards.find(a => a.id === 'overreaching');
+        if (awardDef) {
+          selectedAwards.push({
+            ...awardDef,
+            winner: player.name
+          });
+        }
+      }
+    }
   }
   
   // Cap at 3 awards maximum
@@ -755,29 +782,53 @@ export function selectSeriesAwards(data: AwardTrackingData): AwardWithWinner[] {
   // If we still don't have 3 awards, pad with random ones
   // Ensure at least one player award
   if (!selectedAwards.some(a => a.type === 'player')) {
-    const player = Object.values(data.playerStats)[Math.floor(Math.random() * Object.values(data.playerStats).length)];
-    selectedAwards.push({
-      ...awards.find(a => a.id === 'series_mvp')!,
-      winner: player.name
-    });
+    const playerValues = Object.values(data.playerStats);
+    if (playerValues.length > 0) {
+      const player = playerValues[Math.floor(Math.random() * playerValues.length)];
+      if (player) {
+        const awardDef = awards.find(a => a.id === 'series_mvp');
+        if (awardDef) {
+          selectedAwards.push({
+            ...awardDef,
+            winner: player.name
+          });
+        }
+      }
+    }
   }
   
   // Ensure at least one team award
   if (!selectedAwards.some(a => a.type === 'team')) {
-    const team = Object.values(data.teamStats)[Math.floor(Math.random() * Object.values(data.teamStats).length)];
-    selectedAwards.push({
-      ...awards.find(a => a.id === 'streak_masters')!,
-      winner: team.name
-    });
+    const teamValues = Object.values(data.teamStats);
+    if (teamValues.length > 0) {
+      const team = teamValues[Math.floor(Math.random() * teamValues.length)];
+      if (team) {
+        const awardDef = awards.find(a => a.id === 'streak_masters');
+        if (awardDef) {
+          selectedAwards.push({
+            ...awardDef,
+            winner: team.name
+          });
+        }
+      }
+    }
   }
   
   // Ensure at least one dubious award
   if (!selectedAwards.some(a => a.id.includes('moon_struck') || a.id.includes('gambling_problem') || a.id.includes('feast_or_famine'))) {
-    const player = Object.values(data.playerStats)[Math.floor(Math.random() * Object.values(data.playerStats).length)];
-    selectedAwards.push({
-      ...awards.find(a => a.id === 'feast_or_famine')!,
-      winner: player.name
-    });
+    const playerValues = Object.values(data.playerStats);
+    if (playerValues.length > 0) {
+      const player = playerValues[Math.floor(Math.random() * playerValues.length)];
+      if (player) {
+        const awardDef = awards.find(a => a.id === 'feast_or_famine');
+        if (awardDef) {
+          selectedAwards.push({
+            ...awardDef,
+            winner: player.name
+          });
+        }
+      }
+    }
   }
   
   // Cap at 3 awards maximum

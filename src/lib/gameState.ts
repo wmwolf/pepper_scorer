@@ -22,10 +22,11 @@ interface GameSummary {
   endTime: number;
 }
 
-export interface GameManager {
+export interface IGameManager {
   state: GameState;
   getCurrentHand(): string;
   getScores(): [number, number];
+  // eslint-disable-next-line no-unused-vars
   addHandPart(part: string): void;
   undo(): void;
   hasWinner(): boolean;
@@ -36,6 +37,12 @@ export interface GameManager {
   getWinner(): number | null;
   completeGame(): void;
   startNextGame(): void;
+  getDefendingTeamName(): string | null;
+  // eslint-disable-next-line no-unused-vars
+  getHandClassification(handIndex: number): HandClassification;
+  isSeriesComplete(): boolean;
+  getNextDealer(): string;
+  convertToSeries(): void;
 }
 
 export type HandClassification = {
@@ -65,12 +72,12 @@ export function decodeHand(encoded: string): {
 } {
   const [dealer, bidWinner, bid, trump, decision, tricks] = encoded.split('');
   return {
-    dealer: parseInt(dealer),
-    bidWinner: parseInt(bidWinner),
-    bid: bid,
-    trump,
-    decision: decision as 'P' | 'F',
-    tricks: parseInt(tricks)
+    dealer: parseInt(dealer || '1'),
+    bidWinner: parseInt(bidWinner || '1'),
+    bid: bid as 'P' | 'M' | 'D' || '4',
+    trump: trump || 'N',
+    decision: (decision || 'P') as 'P' | 'F',
+    tricks: parseInt(tricks || '0')
   };
 }
 
@@ -78,6 +85,8 @@ export function decodeHand(encoded: string): {
 export function calculateScore(hand: string): [number, number] {
   const { bidWinner, bid, decision, tricks } = decodeHand(hand);
   if (bidWinner === 0) return [0, 0];  // Throw-in
+  
+  // Parse bid value with fallback defaults
   const bidValue = {
     'P': 4,
     '4': 4,
@@ -85,7 +94,8 @@ export function calculateScore(hand: string): [number, number] {
     '6': 6,
     'M': 7,
     'D': 14
-  }[bid];
+  }[bid.toString()] || 4; // Default to 4 if bid is undefined or not found
+  
   const biddingTeam = bidWinner % 2 === 1 ? 0 : 1;
   const scores: [number, number] = [0, 0];
 
@@ -147,8 +157,8 @@ export function getCurrentPhase(encoded: string): 'bidder' | 'bid' | 'trump' | '
 }
 
 // Game state management
-export class GameManager {
-  private state: GameState;
+export class GameManager implements IGameManager {
+  public state: GameState;
 
   constructor(players: string[], teams: string[]) {
     this.state = {
@@ -173,13 +183,13 @@ export class GameManager {
   public getDealer(): number {
     const currentHand = this.getCurrentHand();
     if (!currentHand) return 1;
-    return parseInt(currentHand[0]);
+    return parseInt(currentHand[0] || '1');
   }
 
   public getScores(): [number, number] {
     // Calculate scores from scratch by iterating through completed hands
     const scores: [number, number] = [0, 0];
-    this.state.hands.forEach((hand, index) => {
+    this.state.hands.forEach((hand) => {
       if (isHandComplete(hand)) {
         const [team1Score, team2Score] = calculateScore(hand);
         scores[0] += team1Score;
@@ -207,7 +217,7 @@ export class GameManager {
       
       if (!this.hasWinner()) {
         const lastHand = this.getCurrentHand();
-        const lastDealer = parseInt(lastHand[0]);
+        const lastDealer = parseInt(lastHand[0] || '1');
         const nextDealer = getNextDealer(lastDealer);
         // Start next hand with dealer already set
         this.state.hands.push(nextDealer.toString());
@@ -217,14 +227,14 @@ export class GameManager {
 
   public getBiddingTeam(): number | null {
     const currentHand = this.getCurrentHand();
-    if (!currentHand) return null;
+    if (!currentHand || !currentHand[1]) return null;
     return (parseInt(currentHand[1]) - 1) % 2;
   }
 
   public getBiddingTeamName(): string | null {
     const biddingTeam = this.getBiddingTeam();
     if (biddingTeam === null) return null;
-    return this.state.teams[biddingTeam];
+    return this.state.teams[biddingTeam] || null;
   }
 
   public getDefendingTeam(): number | null {
@@ -236,7 +246,7 @@ export class GameManager {
   public getDefendingTeamName(): string | null {
     const defendingTeam = this.getDefendingTeam();
     if (defendingTeam === null) return null;
-    return this.state.teams[defendingTeam];
+    return this.state.teams[defendingTeam] || null;
   }
 
   public undo(): void {
@@ -247,7 +257,7 @@ export class GameManager {
     if (!currentHand) {
       if (this.state.hands.length > 0) {
         // Remove last completed hand and adjust scores
-        const lastHand = this.state.hands.pop()!;
+        this.state.hands.pop()!;
         this.state.scores = this.getScores();
       } else {
         // At very start of game, navigate back to setup
@@ -270,12 +280,14 @@ export class GameManager {
         this.state.hands.pop();
         // Go back to previous hand's last phase
         const prevHand = this.state.hands[this.state.hands.length - 1];
-        // if previous hand was played, remove last character to go back to 
-        // tricks phase. If it was folded, go back to decision phase
-        if (prevHand[4] === 'P') {
-          this.state.hands[this.state.hands.length - 1] = prevHand.slice(0, -1);
-        } else {
-          this.state.hands[this.state.hands.length - 1] = prevHand.slice(0, -2);
+        if (prevHand) {
+          // if previous hand was played, remove last character to go back to 
+          // tricks phase. If it was folded, go back to decision phase
+          if (prevHand[4] === 'P') {
+            this.state.hands[this.state.hands.length - 1] = prevHand.slice(0, -1);
+          } else {
+            this.state.hands[this.state.hands.length - 1] = prevHand.slice(0, -2);
+          }
         }
 
         return;
@@ -288,11 +300,13 @@ export class GameManager {
         // Previous hand exists and should be complete
         if (this.state.hands.length > 0) {
           const prevHand = this.state.hands[this.state.hands.length - 1];
-          const [team1Score, team2Score] = calculateScore(prevHand);
-          this.state.scores[0] -= team1Score;
-          this.state.scores[1] -= team2Score;
-          // Remove last character to go back to tricks/decision phase
-          this.state.hands[this.state.hands.length - 1] = prevHand.slice(0, -1);
+          if (prevHand) {
+            const [team1Score, team2Score] = calculateScore(prevHand);
+            this.state.scores[0] -= team1Score;
+            this.state.scores[1] -= team2Score;
+            // Remove last character to go back to tricks/decision phase
+            this.state.hands[this.state.hands.length - 1] = prevHand.slice(0, -1);
+          }
         }
         return;
       }
@@ -318,12 +332,22 @@ export class GameManager {
       // If this was in series mode, we need to adjust the series score as well
       if (this.state.isSeries && this.state.seriesScores && this.state.completedGames) {
         // Get the winner that was recorded
-        const lastGame = this.state.completedGames[this.state.completedGames.length - 1];
-        if (lastGame) {
-          // Decrement the series score for that winner
-          this.state.seriesScores[lastGame.winner]--;
-          // Remove the game from completed games
-          this.state.completedGames.pop();
+        if (this.state.completedGames && this.state.completedGames.length > 0) {
+          const lastGame = this.state.completedGames[this.state.completedGames.length - 1];
+          if (lastGame && this.state.seriesScores) {
+            // Decrement the series score for that winner
+            if (this.state.seriesScores && lastGame && typeof lastGame.winner === 'number') {
+              if (lastGame.winner !== undefined && this.state.seriesScores !== undefined && 
+                typeof lastGame.winner === 'number' && lastGame.winner < this.state.seriesScores.length && 
+                this.state.seriesScores[lastGame.winner] !== undefined) {
+                if (this.state.seriesScores[lastGame.winner] !== undefined) {
+                  this.state.seriesScores[lastGame.winner] = this.state.seriesScores[lastGame.winner]! - 1;
+                }
+              }
+            }
+            // Remove the game from completed games
+            this.state.completedGames.pop();
+          }
         }
       }
     }
@@ -377,7 +401,7 @@ export class GameManager {
     }
     
     // For completed hands, determine bidding and defending teams
-    const bidWinner = parseInt(hand[1]);
+    const bidWinner = parseInt(hand[1] || '0');
     
     // Check if hand was folded or negotiated
     if (hand[4] === 'F') {
@@ -423,10 +447,14 @@ export class GameManager {
 
   public getNextDealer(): string {
     const currentGame = this.state.hands;
+    if (currentGame.length === 0) return this.state.players[0] || '';
+    
     const lastHand = currentGame[currentGame.length - 1];
-    const currentDealer = parseInt(lastHand[0]);
+    if (!lastHand) return this.state.players[0] || '';
+    
+    const currentDealer = parseInt(lastHand[0] || '1');
     const nextDealer = (currentDealer % 4) + 1;
-    return this.state.players[nextDealer - 1];
+    return this.state.players[nextDealer - 1] || '';
   }
 
   public completeGame(): void {
@@ -438,27 +466,34 @@ export class GameManager {
     this.state.isComplete = true;
 
     if (this.state.isSeries && this.state.seriesScores) {
-      // Update series score
-      this.state.seriesScores[winner]++;
+        // Update series score
+        if (this.state.seriesScores && typeof winner === 'number') {
+          if (winner !== undefined && this.state.seriesScores !== undefined &&
+              typeof winner === 'number' && winner < this.state.seriesScores.length &&
+              this.state.seriesScores[winner] !== undefined) {
+            this.state.seriesScores[winner]++;
+          }
+        }
 
-      // Save completed game summary
-      const gameSummary: GameSummary = {
-        winner,
-        finalScores: [...this.state.scores] as [number, number],
-        hands: [...this.state.hands],
-        startTime: this.state.startTime,
-        endTime: Date.now()
-      };
+        // Save completed game summary
+        const gameSummary: GameSummary = {
+          winner,
+          finalScores: [...this.state.scores] as [number, number],
+          hands: [...this.state.hands],
+          startTime: this.state.startTime,
+          endTime: Date.now()
+        };
 
-      this.state.completedGames = this.state.completedGames || [];
-      this.state.completedGames.push(gameSummary);
+        this.state.completedGames = this.state.completedGames || [];
+        this.state.completedGames.push(gameSummary);
 
-      // Check for series winner
-      if (this.state.seriesScores[winner] === 2) {
-        this.state.seriesWinner = winner;
+        // Check for series winner
+        if (this.state.seriesScores && typeof winner === 'number' && this.state.seriesScores[winner] === 2) {
+          this.state.seriesWinner = winner;
+        }
       }
     }
-  }
+  
 
   public convertToSeries(): void {
     if (this.state.isSeries) {
@@ -480,7 +515,9 @@ export class GameManager {
     // Convert to series
     this.state.isSeries = true;
     this.state.seriesScores = [0, 0];
-    this.state.seriesScores[winner] = 1;
+    if (this.state.seriesScores && typeof winner === 'number') {
+      this.state.seriesScores[winner] = 1;
+    }
     this.state.gameNumber = 1;
     this.state.completedGames = [gameSummary];
   }
