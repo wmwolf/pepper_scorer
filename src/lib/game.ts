@@ -937,9 +937,6 @@ function createConfettiEffect() {
         
         // Trigger confetti effect
         createConfettiEffect();
-        
-        // Add bouncing trophy
-        createAnimatedTrophy();
       } catch (err) {
         console.error('Error generating awards:', err);
         // Fall back to a simpler victory celebration if there's an error
@@ -1045,9 +1042,6 @@ function createConfettiEffect() {
     
     // Trigger confetti effect
     createConfettiEffect();
-    
-    // Add bouncing trophy
-    createAnimatedTrophy();
     
     // Add event listeners to buttons
     document.getElementById('edit-last-tricks-btn')?.addEventListener('click', () => {
