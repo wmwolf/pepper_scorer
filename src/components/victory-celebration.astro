@@ -1,26 +1,107 @@
 // src/components/victory-celebration.astro
 ---
+import AwardCard from './award-card.astro';
+import type { AwardWithWinner } from '../lib/pepper-awards';
+
 interface Props {
   winningTeam: string;
   finalScores: [number, number];
   teamNames: [string, string];
   isSeries: boolean;
   seriesScores?: [number, number];
+  gameAwards?: AwardWithWinner[];
+  seriesAwards?: AwardWithWinner[];
 }
 
-const { winningTeam, finalScores, teamNames, isSeries, seriesScores = [0, 0] } = Astro.props;
+const { 
+  winningTeam, 
+  finalScores: finalScoresRaw, 
+  teamNames: teamNamesRaw, 
+  isSeries: isSeriesRaw, 
+  seriesScores: seriesScoresRaw,
+  gameAwards: gameAwardsRaw,
+  seriesAwards: seriesAwardsRaw
+} = Astro.props;
+
+// Parse values that might be passed as strings through attributes
+const finalScores = typeof finalScoresRaw === 'string' 
+  ? JSON.parse(finalScoresRaw) as [number, number] 
+  : finalScoresRaw as [number, number];
+
+const teamNames = typeof teamNamesRaw === 'string' 
+  ? JSON.parse(teamNamesRaw) as [string, string] 
+  : teamNamesRaw as [string, string];
+
+const isSeries = typeof isSeriesRaw === 'string' 
+  ? isSeriesRaw === 'true' 
+  : Boolean(isSeriesRaw);
+
+const seriesScores = seriesScoresRaw
+  ? (typeof seriesScoresRaw === 'string' 
+      ? JSON.parse(seriesScoresRaw) as [number, number] 
+      : seriesScoresRaw as [number, number])
+  : [0, 0];
+
+// Parse award arrays which might be encoded JSON strings
+console.log('Victory component - parsing awards. gameAwardsRaw:', gameAwardsRaw);
+console.log('seriesAwardsRaw:', seriesAwardsRaw);
+
+// Handle gameAwards with error handling
+let gameAwards = [];
+try {
+  if (gameAwardsRaw) {
+    if (typeof gameAwardsRaw === 'string') {
+      // Handle possibly encoded JSON string
+      const decoded = decodeURIComponent(gameAwardsRaw);
+      console.log('Decoded game awards string:', decoded);
+      gameAwards = JSON.parse(decoded);
+    } else {
+      // Handle direct object
+      gameAwards = Array.isArray(gameAwardsRaw) ? gameAwardsRaw : [];
+    }
+  }
+} catch (error) {
+  console.error('Error parsing game awards:', error);
+}
+
+// Handle seriesAwards with error handling
+let seriesAwards = [];
+try {
+  if (seriesAwardsRaw) {
+    if (typeof seriesAwardsRaw === 'string') {
+      // Handle possibly encoded JSON string
+      const decoded = decodeURIComponent(seriesAwardsRaw);
+      console.log('Decoded series awards string:', decoded);
+      seriesAwards = JSON.parse(decoded);
+    } else {
+      // Handle direct object
+      seriesAwards = Array.isArray(seriesAwardsRaw) ? seriesAwardsRaw : [];
+    }
+  }
+} catch (error) {
+  console.error('Error parsing series awards:', error);
+}
+
+console.log('Parsed game awards:', gameAwards);
+console.log('Parsed series awards:', seriesAwards);
+
 const winnerIndex = teamNames.indexOf(winningTeam);
 const loserIndex = winnerIndex === 0 ? 1 : 0;
+
+// Determine if we have awards to show
+const hasGameAwards = gameAwards && gameAwards.length > 0;
+const hasSeriesAwards = seriesAwards && seriesAwards.length > 0;
 ---
 
-<div id="victory-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-80 z-50 flex items-center justify-center opacity-0 pointer-events-none transition-opacity duration-500">
-  <div class="max-w-2xl w-full mx-4 text-center">
-    <!-- Trophy and Confetti Canvas Container -->
-    <div class="relative mb-6">
-      <canvas id="confetti-canvas" class="absolute inset-0 w-full h-full"></canvas>
-      <div class="py-8">
-        <span class="text-6xl">🏆</span>
-      </div>
+<div 
+  id="victory-modal" 
+  class="fixed inset-0 bg-gray-900 bg-opacity-90 z-50 flex items-center justify-center overflow-y-auto py-8"
+  style="display: block"
+>
+  <div class="max-w-5xl w-full mx-4 text-center bg-gray-800 rounded-lg shadow-2xl p-6">
+    <!-- Trophy Icon -->
+    <div class="mb-6">
+      <span class="text-6xl inline-block animate-bounce">🏆</span>
     </div>
     
     <!-- Victory Announcement -->
@@ -36,7 +117,7 @@ const loserIndex = winnerIndex === 0 ? 1 : 0;
     )}
     
     <!-- Final Scores -->
-    <div class="bg-white bg-opacity-10 rounded-lg p-6 backdrop-blur-sm mb-8">
+    <div class="bg-gray-700 rounded-lg p-6 mb-8">
       <div class="grid grid-cols-2 gap-8">
         {teamNames.map((team, i) => (
           <div class={`space-y-2 ${i === winnerIndex ? 'text-yellow-300' : 'text-white'}`}>
@@ -49,8 +130,57 @@ const loserIndex = winnerIndex === 0 ? 1 : 0;
       </div>
     </div>
     
+    <!-- Game Awards Section -->
+    {hasGameAwards && (
+      <div class="mb-8">
+        <h3 class="text-2xl font-semibold text-white mb-4">Game Awards</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {gameAwards.map((award) => (
+            <AwardCard
+              id={award.id}
+              name={award.name}
+              description={award.description}
+              technicalDefinition={award.technicalDefinition}
+              type={award.type}
+              scope={award.scope}
+              icon={award.icon}
+              winner={award.winner}
+            />
+          ))}
+        </div>
+      </div>
+    )}
+    
+    <!-- Series Awards Section (only shown for completed series) -->
+    {hasSeriesAwards && (
+      <div class="mb-8">
+        <h3 class="text-2xl font-semibold text-white mb-4">Series Awards</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {seriesAwards.map((award) => (
+            <AwardCard
+              id={award.id}
+              name={award.name}
+              description={award.description}
+              technicalDefinition={award.technicalDefinition}
+              type={award.type}
+              scope={award.scope}
+              icon={award.icon}
+              winner={award.winner}
+            />
+          ))}
+        </div>
+      </div>
+    )}
+    
     <!-- Buttons -->
-    <div class="flex flex-col sm:flex-row justify-center gap-4">
+    <div class="flex flex-col sm:flex-row justify-center gap-4 mt-8">
+      <button 
+        id="edit-last-tricks-btn"
+        class="px-6 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
+      >
+        Edit Last Tricks
+      </button>
+      
       <button 
         id="view-history-btn"
         class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -88,54 +218,147 @@ const loserIndex = winnerIndex === 0 ? 1 : 0;
   import confetti from 'canvas-confetti';
   import { getPath } from '../lib/path-utils';
   
-  // Show the victory overlay when component is loaded
-  document.addEventListener('DOMContentLoaded', () => {
-    const overlay = document.getElementById('victory-overlay');
+  function createConfetti() {
+    // Create a canvas for the confetti
+    const canvas = document.createElement('canvas');
+    canvas.style.position = 'fixed';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.pointerEvents = 'none';
+    canvas.style.zIndex = '1000';
+    document.body.appendChild(canvas);
     
-    // Short delay to ensure DOM is fully rendered
+    const myConfetti = confetti.create(canvas, {
+      resize: true,
+      useWorker: true
+    });
+    
+    // Initial burst
+    myConfetti({
+      particleCount: 100,
+      spread: 160,
+      origin: { y: 0.6 }
+    });
+    
+    // Side bursts after delay
     setTimeout(() => {
-      if (overlay) {
-        overlay.classList.remove('opacity-0', 'pointer-events-none');
+      myConfetti({
+        particleCount: 50,
+        angle: 60,
+        spread: 80,
+        origin: { x: 0 }
+      });
+      
+      myConfetti({
+        particleCount: 50,
+        angle: 120,
+        spread: 80,
+        origin: { x: 1 }
+      });
+    }, 750);
+    
+    // Remove canvas after animation finishes
+    setTimeout(() => {
+      canvas.remove();
+    }, 5000);
+  }
+  
+  // Create confetti when component is loaded
+  createConfetti();
+  
+  // Setup event handlers for buttons
+  function setupEventHandlers() {
+    document.getElementById('edit-last-tricks-btn')?.addEventListener('click', () => {
+      // Get the game data from localStorage
+      const gameData = JSON.parse(localStorage.getItem('currentGame') || '{}');
+      if (gameData) {
+        const gameManager = window.GameManager.fromJSON(JSON.stringify(gameData));
+        
+        // Remove the victory modal
+        const modal = document.getElementById('victory-modal');
+        if (modal) modal.style.display = 'none';
+        
+        // Get the current hand before undoing
+        const currentHand = gameManager.getCurrentHand();
+        
+        // For most victory cases, we want to go back to the tricks entry phase
+        // This happens when a hand was just completed with tricks
+        if (currentHand.length === 6 && currentHand[5] !== undefined) {
+          // The last action was entering tricks - undo just that part
+          gameManager.state.hands[gameManager.state.hands.length - 1] = currentHand.slice(0, -1);
+        } else {
+          // Otherwise use the standard undo logic
+          gameManager.undo();
+        }
+        
+        // Always reset the completion flag
+        gameManager.state.isComplete = false;
+        
+        // Recompute scores
+        gameManager.state.scores = gameManager.getScores();
+        
+        // Save the updated game state
+        localStorage.setItem('currentGame', gameManager.toJSON());
+        
+        // Reload the page to show the updated game state
+        window.location.reload();
+      }
+    });
+    
+    document.getElementById('view-history-btn')?.addEventListener('click', () => {
+      // Get elements
+      const historySection = document.getElementById('game-history-section');
+      const statsContainer = document.getElementById('game-statistics-container');
+      const endGameControls = document.getElementById('end-game-controls');
+      
+      // Close the modal
+      const modal = document.getElementById('victory-modal');
+      if (modal) modal.style.display = 'none';
+      
+      // Generate and show statistics if container exists
+      if (statsContainer) {
+        statsContainer.classList.remove('hidden');
+        
+        // If statistics haven't been generated yet, generate them now
+        if (!statsContainer.innerHTML.trim()) {
+          // Get game data from localStorage
+          const gameData = JSON.parse(localStorage.getItem('currentGame') || '{}');
+          if (gameData) {
+            const winnerIndex = gameData.teams.indexOf(winningTeam);
+            
+            if (winnerIndex !== -1) {
+              // Use dynamic import to load the statistics module
+              import('../lib/statistics-util.ts').then(statsModule => {
+                try {
+                  const statsHTML = statsModule.generateStatisticsHTML(
+                    gameData.hands,
+                    gameData.players,
+                    gameData.teams,
+                    [gameData.scores[0] || 0, gameData.scores[1] || 0],
+                    winnerIndex
+                  );
+                  statsContainer.innerHTML = statsHTML;
+                } catch (err) {
+                  console.error('Error generating statistics:', err);
+                  statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Error generating statistics</div>';
+                }
+              }).catch(err => {
+                console.error('Error loading statistics module:', err);
+                statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Failed to load statistics module</div>';
+              });
+            }
+          }
+        }
       }
       
-      // Fire confetti
-      const canvas = document.getElementById('confetti-canvas') as HTMLCanvasElement;
-      if (canvas) {
-        const myConfetti = confetti.create(canvas, {
-          resize: true,
-          useWorker: true
-        });
-        
-        // Initial confetti burst
-        myConfetti({
-          particleCount: 100,
-          spread: 160,
-          origin: { y: 0.6 }
-        });
-        
-        // Second burst after a delay
-        setTimeout(() => {
-          myConfetti({
-            particleCount: 50,
-            angle: 60,
-            spread: 80,
-            origin: { x: 0 }
-          });
-          
-          myConfetti({
-            particleCount: 50,
-            angle: 120,
-            spread: 80,
-            origin: { x: 1 }
-          });
-        }, 750);
+      // Show end game controls
+      if (endGameControls) {
+        endGameControls.classList.remove('hidden');
       }
-    }, 300);
-    
-    // Event handlers for buttons
-    document.getElementById('view-history-btn')?.addEventListener('click', () => {
-      // Scroll to game history section
-      const historySection = document.getElementById('game-history-section');
+      
+      // Scroll to history section
       if (historySection) {
         historySection.scrollIntoView({ behavior: 'smooth' });
         
@@ -144,12 +367,6 @@ const loserIndex = winnerIndex === 0 ? 1 : 0;
         setTimeout(() => {
           historySection.classList.remove('ring-4', 'ring-blue-400', 'ring-opacity-75');
         }, 2000);
-      }
-      
-      // Hide the overlay with a fade out
-      const overlay = document.getElementById('victory-overlay');
-      if (overlay) {
-        overlay.classList.add('opacity-0', 'pointer-events-none');
       }
     });
     
@@ -174,5 +391,9 @@ const loserIndex = winnerIndex === 0 ? 1 : 0;
       localStorage.removeItem('currentGame');
       window.location.href = getPath('');
     });
-  });
+  }
+  
+  // Setup handlers as soon as possible and on DOM ready
+  setupEventHandlers();
+  document.addEventListener('DOMContentLoaded', setupEventHandlers);
 </script>

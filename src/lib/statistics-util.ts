@@ -1,5 +1,5 @@
 // src/lib/statistics-util.ts
-import { decodeHand } from './gameState';
+import { decodeHand, calculateScore } from './gameState';
 
 // Trump suit names
 const trumpNames = {
@@ -21,10 +21,116 @@ export interface GameStats {
   trumpCounts: Record<string, number>;
 }
 
+// Enhanced player statistics for awards
+export interface PlayerStats {
+  name: string;
+  team: number;
+  bidsWon: number;
+  bidsSucceeded: number;
+  bidsFailed: number;
+  // Award-specific tracking
+  trumpBids: Record<string, { attempts: number; successes: number }>;
+  highValueBids: { attempts: number; successes: number };  // 6, Moon, Double Moon
+  noTrumpBids: { attempts: number; successes: number };
+  failedBidValues: number[];  // Track values of failed bids
+  pepperRoundBids: { attempts: number; successes: number; opponents_set: number };
+  netPoints: number;  // For Series MVP - successful bid points minus failed bid points
+  pointsPerBid: number[]; // For feast or famine - track variance
+  wonFinalBid: boolean; // Did this player make the bid that won the game
+}
+
+// Enhanced team statistics for awards
+export interface TeamStats {
+  name: string;
+  defensiveSuccessRate: number; // Percentage of successful defenses
+  totalDefenses: number;
+  successfulDefenses: number;
+  bidSuccessRate: number; // Percentage of successful bids
+  totalBids: number;
+  successfulBids: number;
+  highValueBids: { attempts: number; successes: number }; // 6, Moon, Double Moon
+  pointsAllowedToOpponents: number;
+  maxDeficit: number; // Maximum point deficit faced
+  minScoreTrailing: number; // Minimum score while trailing
+  comebackAchieved: boolean; // Did this team overcome a 30+ point deficit
+  longestStreak: number; // Longest streak of scoring hands
+}
+
+// Award data tracking
+export interface AwardTrackingData {
+  playerStats: Record<string, PlayerStats>;
+  teamStats: Record<string, TeamStats>;
+  pointsHistory: Array<[number, number]>; // History of scores to track deficits
+  handScores: Array<[number, number]>; // Individual hand scores
+  winningTeam: number | null;
+  winningTeamName: string;
+  gameCompleted: boolean;
+}
+
+export function initializeAwardTracking(
+  players: string[],
+  teams: string[]
+): AwardTrackingData {
+  const playerStats: Record<string, PlayerStats> = {};
+  const teamStats: Record<string, TeamStats> = {};
+  
+  // Initialize player statistics
+  players.forEach((name, index) => {
+    const team = Math.floor(index / 2);
+    playerStats[name] = {
+      name,
+      team,
+      bidsWon: 0,
+      bidsSucceeded: 0,
+      bidsFailed: 0,
+      trumpBids: { 'C': { attempts: 0, successes: 0 }, 'D': { attempts: 0, successes: 0 }, 
+                  'H': { attempts: 0, successes: 0 }, 'S': { attempts: 0, successes: 0 }, 
+                  'N': { attempts: 0, successes: 0 } },
+      highValueBids: { attempts: 0, successes: 0 },
+      noTrumpBids: { attempts: 0, successes: 0 },
+      failedBidValues: [],
+      pepperRoundBids: { attempts: 0, successes: 0, opponents_set: 0 },
+      netPoints: 0,
+      pointsPerBid: [],
+      wonFinalBid: false
+    };
+  });
+  
+  // Initialize team statistics
+  teams.forEach((name, index) => {
+    teamStats[name] = {
+      name,
+      defensiveSuccessRate: 0,
+      totalDefenses: 0,
+      successfulDefenses: 0,
+      bidSuccessRate: 0,
+      totalBids: 0,
+      successfulBids: 0,
+      highValueBids: { attempts: 0, successes: 0 },
+      pointsAllowedToOpponents: 0,
+      maxDeficit: 0,
+      minScoreTrailing: 0,
+      comebackAchieved: false,
+      longestStreak: 0
+    };
+  });
+  
+  return {
+    playerStats,
+    teamStats,
+    pointsHistory: [[0, 0]],
+    handScores: [],
+    winningTeam: null,
+    winningTeamName: '',
+    gameCompleted: false
+  };
+}
+
 export function calculateGameStats(
   hands: string[], 
   players: string[]
 ): GameStats {
+  console.log('calculateGameStats called with hands:', hands);
   // Initialize statistics
   const stats: GameStats = {
     totalHands: 0,
@@ -163,6 +269,319 @@ export function calculateLongestStreak(hands: string[], teamIndex: number): numb
   });
   
   return longestStreak;
+}
+
+export function trackAwardData(
+  hands: string[],
+  players: string[],
+  teams: string[],
+  finalScores: [number, number],
+  winnerIndex: number | null
+): AwardTrackingData {
+  console.log('trackAwardData called with:');
+  console.log('- hands:', hands);
+  console.log('- players:', players);
+  console.log('- teams:', teams);
+  console.log('- scores:', finalScores);
+  console.log('- winner:', winnerIndex);
+  // Initialize award tracking data
+  const awardData = initializeAwardTracking(players, teams);
+  
+  // Running score tracking
+  let currentScores: [number, number] = [0, 0];
+  
+  // Process each hand to collect award-relevant data
+  hands.forEach((hand, handIndex) => {
+    // Skip incomplete or throw-in hands
+    if ((hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) || 
+        (hand.length >= 2 && hand[1] === '0')) {
+      return;
+    }
+    
+    try {
+      const { bidWinner, bid, trump, decision, tricks } = decodeHand(hand);
+      const bidderIndex = bidWinner - 1;
+      const bidderName = players[bidderIndex] || 'Unknown';
+      const bidderTeam = bidderIndex % 2;
+      const defenderTeam = 1 - bidderTeam;
+      const bidderTeamName = teams[bidderTeam];
+      const defenderTeamName = teams[defenderTeam];
+      const inPepperRound = handIndex < 4;
+      
+      // Convert bid to point value
+      const bidValue = {
+        'P': 4,
+        '4': 4,
+        '5': 5,
+        '6': 6,
+        'M': 7,
+        'D': 14
+      }[bid] || 0;
+      
+      // 1. Update player-specific stats
+      const playerStat = awardData.playerStats[bidderName];
+      if (playerStat) {
+        playerStat.bidsWon++;
+        
+        // Track trump usage
+        if (trump && playerStat.trumpBids[trump]) {
+          playerStat.trumpBids[trump].attempts++;
+        }
+        
+        // Track high-value bids (6, Moon, Double Moon)
+        if (['6', 'M', 'D'].includes(bid)) {
+          playerStat.highValueBids.attempts++;
+        }
+        
+        // Track no-trump bids
+        if (trump === 'N') {
+          playerStat.noTrumpBids.attempts++;
+        }
+        
+        // Track pepper round bids
+        if (inPepperRound) {
+          playerStat.pepperRoundBids.attempts++;
+        }
+        
+        // Calculate hand outcome
+        const [scoreTeam1, scoreTeam2] = calculateScore(hand);
+        const handScores: [number, number] = [scoreTeam1, scoreTeam2];
+        awardData.handScores.push(handScores);
+        
+        const bidderPoints = bidderTeam === 0 ? scoreTeam1 : scoreTeam2;
+        const defenderPoints = bidderTeam === 0 ? scoreTeam2 : scoreTeam1;
+        
+        // Update scoring stats
+        if (decision === 'P') {
+          const tricksNeeded = ['M', 'D', '6'].includes(bid) ? 6 : parseInt(bid as string);
+          const bidSucceeded = tricks + tricksNeeded <= 6; // Not set
+          
+          if (bidSucceeded) {
+            // Bid was successful
+            playerStat.bidsSucceeded++;
+            playerStat.netPoints += bidValue;
+            playerStat.pointsPerBid.push(bidValue);
+            
+            // Track trump success
+            if (trump && playerStat.trumpBids[trump]) {
+              playerStat.trumpBids[trump].successes++;
+            }
+            
+            // Track high-value bid success
+            if (['6', 'M', 'D'].includes(bid)) {
+              playerStat.highValueBids.successes++;
+            }
+            
+            // Track no-trump success
+            if (trump === 'N') {
+              playerStat.noTrumpBids.successes++;
+            }
+            
+            // Track pepper round success
+            if (inPepperRound) {
+              playerStat.pepperRoundBids.successes++;
+            }
+          } else {
+            // Bid failed
+            playerStat.bidsFailed++;
+            playerStat.failedBidValues.push(bidValue);
+            playerStat.netPoints -= bidValue;
+            playerStat.pointsPerBid.push(-bidValue);
+          }
+        } else if (decision === 'F') {
+          // Folded hands still count as succeeded bids
+          playerStat.bidsSucceeded++;
+          playerStat.netPoints += bidValue;
+          playerStat.pointsPerBid.push(bidValue);
+          
+          // Track trump success for folded hands
+          if (trump && playerStat.trumpBids[trump]) {
+            playerStat.trumpBids[trump].successes++;
+          }
+          
+          // Track high-value bid success for folded hands
+          if (['6', 'M', 'D'].includes(bid)) {
+            playerStat.highValueBids.successes++;
+          }
+          
+          // Track no-trump success for folded hands
+          if (trump === 'N') {
+            playerStat.noTrumpBids.successes++;
+          }
+          
+          // Track pepper round success for folded hands
+          if (inPepperRound) {
+            playerStat.pepperRoundBids.successes++;
+          }
+        }
+        
+        // 2. Update team-specific stats
+        const bidderTeamStat = awardData.teamStats[bidderTeamName];
+        const defenderTeamStat = awardData.teamStats[defenderTeamName];
+        
+        if (bidderTeamStat && defenderTeamStat) {
+          // Update bidding team stats
+          bidderTeamStat.totalBids++;
+          
+          if (['6', 'M', 'D'].includes(bid)) {
+            bidderTeamStat.highValueBids.attempts++;
+          }
+          
+          if (decision === 'P') {
+            const tricksNeeded = ['M', 'D', '6'].includes(bid) ? 6 : parseInt(bid as string);
+            const bidSucceeded = tricks + tricksNeeded <= 6; // Not set
+            
+            if (bidSucceeded) {
+              bidderTeamStat.successfulBids++;
+              
+              if (['6', 'M', 'D'].includes(bid)) {
+                bidderTeamStat.highValueBids.successes++;
+              }
+            }
+            
+            // Track if defenders successfully set the bidders
+            if (!bidSucceeded) {
+              defenderTeamStat.successfulDefenses++;
+              
+              // For pepper round tracking
+              if (inPepperRound) {
+                // Check all players on defending team for opponent set counting
+                players.forEach((defenderName, idx) => {
+                  if (Math.floor(idx / 2) === defenderTeam) {
+                    const defenderStat = awardData.playerStats[defenderName];
+                    if (defenderStat) {
+                      defenderStat.pepperRoundBids.opponents_set++;
+                    }
+                  }
+                });
+              }
+            }
+            
+            defenderTeamStat.totalDefenses++;
+            
+            // Track points allowed to opponents (for "Helping Hand" award)
+            defenderTeamStat.pointsAllowedToOpponents += Math.max(0, bidderPoints);
+          } else if (decision === 'F') {
+            // Folded hands still count as succeeded bids
+            bidderTeamStat.successfulBids++;
+            
+            if (['6', 'M', 'D'].includes(bid)) {
+              bidderTeamStat.highValueBids.successes++;
+            }
+            
+            // Defending team also gained points in negotiation
+            if (tricks > 0) {
+              defenderTeamStat.successfulDefenses++;
+            }
+            
+            defenderTeamStat.totalDefenses++;
+          }
+        }
+        
+        // 3. Update score history
+        currentScores[0] += handScores[0];
+        currentScores[1] += handScores[1];
+        awardData.pointsHistory.push([...currentScores]);
+        
+        // Check for deficit and comeback
+        const team0Deficit = currentScores[1] - currentScores[0];
+        const team1Deficit = currentScores[0] - currentScores[1];
+        
+        if (team0Deficit > awardData.teamStats[teams[0]].maxDeficit) {
+          awardData.teamStats[teams[0]].maxDeficit = team0Deficit;
+          awardData.teamStats[teams[0]].minScoreTrailing = currentScores[0];
+        }
+        
+        if (team1Deficit > awardData.teamStats[teams[1]].maxDeficit) {
+          awardData.teamStats[teams[1]].maxDeficit = team1Deficit;
+          awardData.teamStats[teams[1]].minScoreTrailing = currentScores[1];
+        }
+      }
+    } catch (e) {
+      console.error('Error processing hand for awards:', hand, e);
+    }
+  });
+  
+  // Calculate streaks and success rates
+  teams.forEach((team, teamIndex) => {
+    const teamStat = awardData.teamStats[team];
+    
+    // Calculate longest streak
+    teamStat.longestStreak = calculateLongestStreak(hands, teamIndex);
+    
+    // Calculate defense success rate
+    if (teamStat.totalDefenses > 0) {
+      teamStat.defensiveSuccessRate = teamStat.successfulDefenses / teamStat.totalDefenses;
+    }
+    
+    // Calculate bid success rate
+    if (teamStat.totalBids > 0) {
+      teamStat.bidSuccessRate = teamStat.successfulBids / teamStat.totalBids;
+    }
+    
+    // Check for comeback achievement (trailing by 30+ and winning)
+    if (winnerIndex === teamIndex && teamStat.maxDeficit >= 30) {
+      teamStat.comebackAchieved = true;
+    }
+  });
+  
+  // Mark the player who made the winning bid
+  if (winnerIndex !== null) {
+    // Find the last bid that pushed the winning team over 42 points
+    const winningScore = finalScores[winnerIndex];
+    let runningScore: [number, number] = [0, 0];
+    
+    for (let i = 0; i < hands.length; i++) {
+      const hand = hands[i];
+      
+      if ((hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) || 
+          (hand.length >= 2 && hand[1] === '0')) {
+        continue; // Skip incomplete or throw-in hands
+      }
+      
+      const [team1Score, team2Score] = calculateScore(hand);
+      runningScore[0] += team1Score;
+      runningScore[1] += team2Score;
+      
+      // Check if this bid pushed the winning team over 42
+      console.log(`Hand ${i+1}: running score = ${runningScore}, winner = ${winnerIndex}`);
+      // Need to check if this is truly the hand that pushed the winner over the edge
+      const isWinningScore = runningScore[winnerIndex] >= 42;
+      const isFirstTimeOver42 = i === hands.length - 1 || 
+                               (winnerIndex === 0 ? 
+                                  runningScore[0] - team1Score < 42 : 
+                                  runningScore[1] - team2Score < 42);
+                                  
+      if (isWinningScore && isFirstTimeOver42) {
+        // This was the winning hand
+        const { bidWinner } = decodeHand(hand);
+        const bidderName = players[bidWinner - 1] || 'Unknown';
+        const playerStat = awardData.playerStats[bidderName];
+        
+        if (playerStat && Math.floor((bidWinner - 1) / 2) === winnerIndex) {
+          // The bidder is on the winning team and made the winning bid
+          console.log(`Player ${bidderName} made the winning bid!`);
+          playerStat.wonFinalBid = true;
+        } else {
+          console.log(`Player ${bidderName} made a bid but is not on winning team or no player stat found.`);
+          console.log(`bidWinner=${bidWinner}, bidWinnerTeam=${Math.floor((bidWinner - 1) / 2)}, winnerIndex=${winnerIndex}`);
+        }
+        break;
+      }
+    }
+    
+    awardData.winningTeam = winnerIndex;
+    awardData.winningTeamName = teams[winnerIndex];
+    awardData.gameCompleted = true;
+    
+    console.log('Assigning winner info to award data:', {
+      winningTeam: awardData.winningTeam,
+      winningTeamName: awardData.winningTeamName,
+      completedStatus: awardData.gameCompleted
+    });
+  }
+  
+  return awardData;
 }
 
 // Function to generate game statistics HTML

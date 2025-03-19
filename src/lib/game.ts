@@ -784,14 +784,12 @@ function createConfettiEffect() {
     // Hide all current controls
     hideAllControls();
     
-    // First, remove any existing victory overlay to prevent duplicates
-    const existingOverlay = document.getElementById('dynamic-victory-overlay');
-    if (existingOverlay) {
-      existingOverlay.remove();
-    }
+    // This function has been updated to use the VictoryCelebration component
+    // Instead of generating the HTML directly, we'll use the custom event to
+    // display the component that we set up in the game.astro file.
     
+    // First, we need to generate the award data using our tracking utilities
     const winnerIndex = gameManager.getWinner()!;
-    const winningTeam = gameManager.state.teams[winnerIndex];
     const [score1, score2] = gameManager.getScores();
     
     // Add controls to the main decision pane
@@ -801,7 +799,7 @@ function createConfettiEffect() {
         <h3 class="text-lg font-medium text-gray-900 mb-4">Game Results</h3>
         <div class="mb-4 p-4 bg-blue-50 rounded-lg text-center">
           <div class="text-2xl font-semibold mb-2">
-            <span class="text-blue-600">${winningTeam}</span> Wins!
+            <span class="text-blue-600">${gameManager.state.teams[winnerIndex]}</span> Wins!
           </div>
           ${gameManager.state.isSeries && gameManager.state.seriesScores ? 
             `<div class="text-lg text-gray-700">Series Score: ${gameManager.state.seriesScores[0]}-${gameManager.state.seriesScores[1]}</div>` : 
@@ -856,6 +854,110 @@ function createConfettiEffect() {
       });
     }
     
+    // Now we'll use our award system to find and render awards
+    Promise.all([
+      import('../lib/statistics-util.ts'),
+      import('../lib/pepper-awards.ts')
+    ]).then(async ([statsModule, awardsModule]) => {
+      try {
+        console.log('Generating awards - hands:', gameManager.state.hands);
+        console.log('Players:', gameManager.state.players);
+        console.log('Teams:', gameManager.state.teams);
+        console.log('Scores:', gameManager.getScores());
+        console.log('Winner index:', winnerIndex);
+        
+        // Generate award data - explicitly access properties to avoid namespace issues
+        const { trackAwardData } = statsModule;
+        // Make sure we have a valid winnerIndex before proceeding
+        if (winnerIndex === null || winnerIndex === undefined) {
+          console.error('No winner index available, cannot generate awards');
+          throw new Error('No winner index available');
+        }
+        
+        const awardData = trackAwardData(
+          gameManager.state.hands,
+          gameManager.state.players,
+          gameManager.state.teams,
+          gameManager.getScores(),
+          winnerIndex
+        );
+        
+        console.log('Award data generated:', awardData);
+        
+        // Select awards for the game - explicitly access properties to avoid namespace issues
+        const { selectGameAwards } = awardsModule;
+        const gameAwards = selectGameAwards(awardData);
+        console.log('Game awards selected:', gameAwards);
+        
+        // Select series awards if series is complete
+        let seriesAwards = [];
+        if (gameManager.state.isSeries && gameManager.state.seriesWinner !== undefined) {
+          const { selectSeriesAwards } = awardsModule;
+          seriesAwards = selectSeriesAwards(awardData);
+          console.log('Series awards selected:', seriesAwards);
+        }
+        
+        // Define the props to pass to the victory celebration component
+        const victoryProps = {
+          winningTeam: gameManager.state.teams[winnerIndex],
+          finalScores: gameManager.getScores(),
+          teamNames: gameManager.state.teams,
+          isSeries: gameManager.state.isSeries || false,
+          seriesScores: gameManager.state.seriesScores,
+          gameAwards: gameAwards,
+          seriesAwards: seriesAwards
+        };
+        console.log('Victory props:', victoryProps);
+        
+        // Render the component into the victory container
+        const victoryContainer = document.getElementById('victory-celebration-container');
+        if (victoryContainer) {
+          // Render component by using a custom event with props data
+          console.log('Dispatching render-victory-celebration event with props:', victoryProps);
+          // Ensure awards are properly serializable before adding to event
+          const serializedProps = {
+            ...victoryProps,
+            gameAwards: victoryProps.gameAwards || [],
+            seriesAwards: victoryProps.seriesAwards || []
+          };
+          document.dispatchEvent(new CustomEvent('render-victory-celebration', { 
+            detail: serializedProps 
+          }));
+        } else {
+          // Create a container for the victory celebration component
+          const container = document.createElement('div');
+          container.id = 'victory-celebration-container';
+          document.body.appendChild(container);
+          
+          // Dispatch event after container is created
+          document.dispatchEvent(new CustomEvent('render-victory-celebration', { 
+            detail: victoryProps 
+          }));
+        }
+        
+        // Trigger confetti effect
+        createConfettiEffect();
+        
+        // Add bouncing trophy
+        createAnimatedTrophy();
+      } catch (err) {
+        console.error('Error generating awards:', err);
+        // Fall back to a simpler victory celebration if there's an error
+        fallbackVictoryCelebration(gameManager);
+      }
+    }).catch(err => {
+      console.error('Error loading modules:', err);
+      // Fall back to a simpler victory celebration if there's an error
+      fallbackVictoryCelebration(gameManager);
+    });
+  }
+  
+  // Simplified fallback victory celebration when awards system fails
+  function fallbackVictoryCelebration(gameManager) {
+    const winnerIndex = gameManager.getWinner()!;
+    const winningTeam = gameManager.state.teams[winnerIndex];
+    const [score1, score2] = gameManager.getScores();
+    
     // Create victory overlay element
     const victoryElement = document.createElement('div');
     victoryElement.id = 'dynamic-victory-overlay';
@@ -898,7 +1000,7 @@ function createConfettiEffect() {
         
         <div class="flex flex-col sm:flex-row justify-center gap-4">
           <button 
-            id="victory-undo-btn"
+            id="edit-last-tricks-btn"
             class="px-6 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
           >
             Edit Last Tricks
@@ -947,67 +1049,8 @@ function createConfettiEffect() {
     // Add bouncing trophy
     createAnimatedTrophy();
     
-    // Create end-game floating control panel (for after victory modal is dismissed)
-    const createPostVictoryControls = () => {
-      // Check if they already exist
-      if (document.getElementById('post-victory-controls')) return;
-      
-      const controlPanel = document.createElement('div');
-      controlPanel.id = 'post-victory-controls';
-      controlPanel.className = 'fixed bottom-4 right-4 bg-white bg-opacity-90 rounded-lg shadow-lg p-4 z-30 transition-all duration-300';
-      
-      const buttonClass = 'px-4 py-2 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 mr-2';
-      
-      controlPanel.innerHTML = `
-        <div class="flex flex-wrap gap-2 justify-end">
-          ${!gameManager.state.isSeries ? `
-            <button 
-              id="post-victory-series-btn"
-              class="${buttonClass} bg-green-600 text-white hover:bg-green-700"
-            >
-              Make it a Series
-            </button>
-          ` : `
-            <button 
-              id="post-victory-new-series-btn"
-              class="${buttonClass} bg-purple-600 text-white hover:bg-purple-700"
-            >
-              New Series
-            </button>
-          `}
-          
-          <button 
-            id="post-victory-new-game-btn" 
-            class="${buttonClass} bg-gray-600 text-white hover:bg-gray-700"
-          >
-            New Game
-          </button>
-        </div>
-      `;
-      
-      document.body.appendChild(controlPanel);
-      
-      // Add event listeners to the post-victory buttons
-      document.getElementById('post-victory-series-btn')?.addEventListener('click', () => {
-        gameManager.convertToSeries();
-        gameManager.startNextGame();
-        localStorage.setItem('currentGame', gameManager.toJSON());
-        window.location.reload();
-      });
-      
-      document.getElementById('post-victory-new-series-btn')?.addEventListener('click', () => {
-        localStorage.removeItem('currentGame');
-        window.location.href = getPath('');
-      });
-      
-      document.getElementById('post-victory-new-game-btn')?.addEventListener('click', () => {
-        localStorage.removeItem('currentGame');
-        window.location.href = getPath('');
-      });
-    };
-
     // Add event listeners to buttons
-    document.getElementById('victory-undo-btn')?.addEventListener('click', () => {
+    document.getElementById('edit-last-tricks-btn')?.addEventListener('click', () => {
       // Remove the victory modal
       victoryElement.remove();
       

@@ -1,0 +1,92 @@
+---
+// src/components/AwardCard.astro
+// Display component for Pepper awards
+import { Icon } from 'astro-icon/components';
+
+interface Props {
+  id: string;
+  name: string;
+  description: string;
+  technicalDefinition: string;
+  type: 'team' | 'player';
+  scope: 'game' | 'series';
+  icon: string;
+  winner?: string; // Name of the player or team who won the award
+}
+
+const { id, name, description, technicalDefinition, type, scope, icon, winner } = Astro.props;
+
+// Define styling based on award type
+const cardStyles = {
+  team: {
+    headerBg: 'bg-blue-600',
+    bodyBg: 'bg-blue-50',
+    borderColor: 'border-blue-200',
+    iconBg: 'bg-blue-500'
+  },
+  player: {
+    headerBg: 'bg-purple-600',
+    bodyBg: 'bg-purple-50',
+    borderColor: 'border-purple-200',
+    iconBg: 'bg-purple-500'
+  }
+};
+
+// Use different styling for dubious awards (identified by presence in the ID)
+const isDubious = id.includes('overreaching') || 
+                  id.includes('false_confidence') || 
+                  id.includes('helping_hand') || 
+                  id.includes('moon_struck') || 
+                  id.includes('gambling_problem') || 
+                  id.includes('feast_or_famine');
+
+const style = isDubious ? {
+  headerBg: 'bg-amber-600',
+  bodyBg: 'bg-amber-50',
+  borderColor: 'border-amber-200',
+  iconBg: 'bg-amber-500'
+} : cardStyles[type];
+
+// Badge text based on scope
+const badgeText = scope === 'game' ? 'Game Award' : 'Series Award';
+---
+
+<div class={`award-card rounded-lg overflow-hidden shadow-md border ${style.borderColor} transition-transform hover:shadow-lg hover:-translate-y-1 max-w-md flex flex-col h-full`}>
+  <!-- Card Header -->
+  <div class={`${style.headerBg} px-4 py-3 text-white relative`}>
+    <div class="flex justify-between items-center">
+      <h3 class="text-xl font-bold">{name}</h3>
+      <span class="text-xs px-2 py-1 bg-white/20 rounded-full">{badgeText}</span>
+    </div>
+    <p class="text-white/90 text-sm mt-1">{description}</p>
+  </div>
+  
+  <!-- Card Body -->
+  <div class={`${style.bodyBg} p-4 flex-1`}>
+    <!-- Icon -->
+    <div class="flex mb-3">
+      <div class={`${style.iconBg} h-10 w-10 rounded-full flex items-center justify-center text-white shrink-0`}>
+        <Icon name={icon} class="h-5 w-5" />
+      </div>
+      
+      <!-- Winner (if provided) -->
+      {winner && (
+        <div class="ml-3">
+          <p class="text-gray-500 text-sm">Awarded to</p>
+          <p class="font-semibold text-gray-900">{winner}</p>
+        </div>
+      )}
+    </div>
+    
+    <!-- Technical Definition (smaller text) -->
+    <p class="text-xs text-gray-600 mt-2">
+      <span class="font-medium text-gray-700">Criteria:</span> {technicalDefinition}
+    </p>
+  </div>
+</div>
+
+<style>
+  .award-card {
+    width: 100%;
+  }
+</style>

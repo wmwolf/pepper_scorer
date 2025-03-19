@@ -2,6 +2,7 @@
 // src/pages/game.astro
 import BaseLayout from '../layouts/BaseLayout.astro';
 import GameStatistics from '../components/game-statistics.astro';
+import VictoryCelebration from '../components/victory-celebration.astro';
 ---
 
 <BaseLayout title="Current Game">
@@ -204,8 +205,592 @@ import GameStatistics from '../components/game-statistics.astro';
     <div id="game-statistics-container" class="mt-8 hidden">
       <!-- Game Statistics will be inserted here by JS -->
     </div>
+    
+    <!-- This is a container for the victory celebration component -->
+    <div id="victory-celebration-container"></div>
   </div>
 </BaseLayout>
+
+<script>
+  // Handle the custom event for rendering the victory celebration component
+  document.addEventListener('render-victory-celebration', (event) => {
+    const container = document.getElementById('victory-celebration-container');
+    if (!container) return;
+    
+    // Extract props from the event detail
+    const props = event.detail;
+    console.log('Received render-victory-celebration event with props:', props);
+    
+    // Clear the container
+    container.innerHTML = '';
+    
+    // Sanitize JSON for attributes
+    const safeStringify = (obj) => {
+      try {
+        return JSON.stringify(obj).replace(/"/g, '&quot;');
+      } catch (e) {
+        console.error('Error stringifying object:', e);
+        return '[]';
+      }
+    };
+    
+    // Safely encode awards if they exist
+    let gameAwardsAttr = '';
+    let seriesAwardsAttr = '';
+    
+    try {
+      if (props.gameAwards && props.gameAwards.length) {
+        const awardsJson = safeStringify(props.gameAwards);
+        gameAwardsAttr = `game-awards="${encodeURIComponent(awardsJson)}"`;
+      }
+    } catch (e) {
+      console.error('Error encoding game awards:', e);
+    }
+    
+    try {
+      if (props.seriesAwards && props.seriesAwards.length) {
+        const awardsJson = safeStringify(props.seriesAwards);
+        seriesAwardsAttr = `series-awards="${encodeURIComponent(awardsJson)}"`;
+      }
+    } catch (e) {
+      console.error('Error encoding series awards:', e);
+    }
+    
+    // Create a manual HTML version of the victory modal directly
+    // This bypasses issues with custom element registration
+    const winnerIndex = props.teamNames.indexOf(props.winningTeam);
+    const loserIndex = winnerIndex === 0 ? 1 : 0;
+    
+    // Generate awards HTML - using proper styling for award cards and icons
+    let gameAwardsHTML = '';
+    if (props.gameAwards && props.gameAwards.length > 0) {
+      gameAwardsHTML = `
+        <div class="mb-8">
+          <h3 class="text-2xl font-semibold text-white mb-4">Game Awards</h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            ${props.gameAwards.map(award => {
+              // Define styling based on award type
+              const isDubious = award.id.includes('overreaching') || 
+                award.id.includes('false_confidence') || 
+                award.id.includes('helping_hand') || 
+                award.id.includes('moon_struck') || 
+                award.id.includes('gambling_problem') || 
+                award.id.includes('feast_or_famine');
+              
+              const cardStyle = isDubious ? {
+                headerBg: 'bg-amber-600',
+                bodyBg: 'bg-amber-50',
+                borderColor: 'border-amber-200',
+                iconBg: 'bg-amber-500'
+              } : award.type === 'player' ? {
+                headerBg: 'bg-purple-600',
+                bodyBg: 'bg-purple-50',
+                borderColor: 'border-purple-200',
+                iconBg: 'bg-purple-500'
+              } : {
+                headerBg: 'bg-blue-600',
+                bodyBg: 'bg-blue-50',
+                borderColor: 'border-blue-200',
+                iconBg: 'bg-blue-500'
+              };
+              
+              // Map icon names to emoji
+              const iconMap = {
+                'shield': '🛡️',
+                'check-circle': '✅',
+                'trophy': '🏆',
+                'trending-up': '📈',
+                'clock': '⏱️',
+                'zap': '⚡',
+                'star': '⭐',
+                'heart': '❤️',
+                'alert-triangle': '⚠️',
+                'target': '🎯',
+                'award': '🏅',
+                'thumbs-up': '👍',
+                'music': '🎵',
+                'dice': '🎲',
+                'meh': '😐',
+                'frown': '😔',
+                'smile': '😊',
+                'moon': '🌙',
+                'sun': '☀️'
+              };
+              
+              const iconEmoji = iconMap[award.icon] || '🏆'; // Default to trophy if icon not found
+              
+              // Badge text based on scope
+              const badgeText = award.scope === 'game' ? 'Game Award' : 'Series Award';
+              
+              return `
+                <div class="award-card rounded-lg overflow-hidden shadow-md border ${cardStyle.borderColor} transition-transform hover:shadow-lg max-w-md flex flex-col h-full">
+                  <div class="${cardStyle.headerBg} px-4 py-3 text-white relative">
+                    <div class="flex justify-between items-center">
+                      <h3 class="text-xl font-bold">${award.name}</h3>
+                      <span class="text-xs px-2 py-1 bg-white/20 rounded-full">${badgeText}</span>
+                    </div>
+                    <p class="text-white/90 text-sm mt-1">${award.description}</p>
+                  </div>
+                  
+                  <div class="${cardStyle.bodyBg} p-4 flex-1">
+                    <div class="flex mb-3">
+                      <div class="${cardStyle.iconBg} h-10 w-10 rounded-full flex items-center justify-center text-white shrink-0">
+                        ${iconEmoji}
+                      </div>
+                      
+                      ${award.winner ? `
+                        <div class="ml-3">
+                          <p class="text-gray-500 text-sm">Awarded to</p>
+                          <p class="font-semibold text-gray-900">${award.winner}</p>
+                        </div>
+                      ` : ''}
+                    </div>
+                    
+                    <p class="text-xs text-gray-600 mt-2">
+                      <span class="font-medium text-gray-700">Criteria:</span> ${award.technicalDefinition}
+                    </p>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    let seriesAwardsHTML = '';
+    if (props.seriesAwards && props.seriesAwards.length > 0) {
+      seriesAwardsHTML = `
+        <div class="mb-8">
+          <h3 class="text-2xl font-semibold text-white mb-4">Series Awards</h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            ${props.seriesAwards.map(award => {
+              // Define styling based on award type
+              const isDubious = award.id.includes('overreaching') || 
+                award.id.includes('false_confidence') || 
+                award.id.includes('helping_hand') || 
+                award.id.includes('moon_struck') || 
+                award.id.includes('gambling_problem') || 
+                award.id.includes('feast_or_famine');
+              
+              const cardStyle = isDubious ? {
+                headerBg: 'bg-amber-600',
+                bodyBg: 'bg-amber-50',
+                borderColor: 'border-amber-200',
+                iconBg: 'bg-amber-500'
+              } : award.type === 'player' ? {
+                headerBg: 'bg-purple-600',
+                bodyBg: 'bg-purple-50',
+                borderColor: 'border-purple-200',
+                iconBg: 'bg-purple-500'
+              } : {
+                headerBg: 'bg-blue-600',
+                bodyBg: 'bg-blue-50',
+                borderColor: 'border-blue-200',
+                iconBg: 'bg-blue-500'
+              };
+              
+              // Map icon names to emoji
+              const iconMap = {
+                'shield': '🛡️',
+                'check-circle': '✅',
+                'trophy': '🏆',
+                'trending-up': '📈',
+                'clock': '⏱️',
+                'zap': '⚡',
+                'star': '⭐',
+                'heart': '❤️',
+                'alert-triangle': '⚠️',
+                'target': '🎯',
+                'award': '🏅',
+                'thumbs-up': '👍',
+                'music': '🎵',
+                'dice': '🎲',
+                'meh': '😐',
+                'frown': '😔',
+                'smile': '😊',
+                'moon': '🌙',
+                'sun': '☀️'
+              };
+              
+              const iconEmoji = iconMap[award.icon] || '🏆'; // Default to trophy if icon not found
+              
+              // Badge text based on scope
+              const badgeText = award.scope === 'game' ? 'Game Award' : 'Series Award';
+              
+              return `
+                <div class="award-card rounded-lg overflow-hidden shadow-md border ${cardStyle.borderColor} transition-transform hover:shadow-lg max-w-md flex flex-col h-full">
+                  <div class="${cardStyle.headerBg} px-4 py-3 text-white relative">
+                    <div class="flex justify-between items-center">
+                      <h3 class="text-xl font-bold">${award.name}</h3>
+                      <span class="text-xs px-2 py-1 bg-white/20 rounded-full">${badgeText}</span>
+                    </div>
+                    <p class="text-white/90 text-sm mt-1">${award.description}</p>
+                  </div>
+                  
+                  <div class="${cardStyle.bodyBg} p-4 flex-1">
+                    <div class="flex mb-3">
+                      <div class="${cardStyle.iconBg} h-10 w-10 rounded-full flex items-center justify-center text-white shrink-0">
+                        ${iconEmoji}
+                      </div>
+                      
+                      ${award.winner ? `
+                        <div class="ml-3">
+                          <p class="text-gray-500 text-sm">Awarded to</p>
+                          <p class="font-semibold text-gray-900">${award.winner}</p>
+                        </div>
+                      ` : ''}
+                    </div>
+                    
+                    <p class="text-xs text-gray-600 mt-2">
+                      <span class="font-medium text-gray-700">Criteria:</span> ${award.technicalDefinition}
+                    </p>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+    
+    // Create full victory celebration HTML
+    const victoryHTML = `
+      <div id="victory-modal" class="fixed inset-0 bg-gray-900 bg-opacity-90 z-50 flex items-center justify-center overflow-y-auto py-8">
+        <div class="max-w-5xl w-full mx-4 text-center bg-gray-800 rounded-lg shadow-2xl p-6">
+          <!-- Trophy Icon -->
+          <div class="mb-6">
+            <span class="text-6xl inline-block animate-bounce">🏆</span>
+          </div>
+          
+          <!-- Victory Announcement -->
+          <h2 class="text-4xl font-bold text-white mb-3">
+            <span class="text-yellow-300">${props.winningTeam}</span> Wins!
+          </h2>
+          
+          <!-- Series or Game Indicator -->
+          ${props.isSeries ? `
+            <p class="text-xl text-blue-300 mb-6">
+              Final Series Score: ${props.seriesScores[winnerIndex]}-${props.seriesScores[loserIndex]}
+            </p>
+          ` : ''}
+          
+          <!-- Final Scores -->
+          <div class="bg-gray-700 rounded-lg p-6 mb-8">
+            <div class="grid grid-cols-2 gap-8">
+              ${props.teamNames.map((team, i) => `
+                <div class="space-y-2 ${i === winnerIndex ? 'text-yellow-300' : 'text-white'}">
+                  <h3 class="text-xl font-semibold">${team}</h3>
+                  <p class="text-5xl font-bold ${i === winnerIndex ? 'animate-pulse' : ''}">
+                    ${props.finalScores[i]}
+                  </p>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- Game Awards Section -->
+          ${gameAwardsHTML}
+          
+          <!-- Series Awards Section -->
+          ${seriesAwardsHTML}
+          
+          <!-- Buttons -->
+          <div class="flex flex-col sm:flex-row justify-center gap-4 mt-8">
+            <button 
+              id="edit-last-tricks-btn"
+              class="px-6 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
+            >
+              Edit Last Tricks
+            </button>
+            
+            <button 
+              id="view-history-btn"
+              class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              View Game History
+            </button>
+            
+            ${!props.isSeries ? `
+              <button 
+                id="make-series-btn"
+                class="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              >
+                Make it a Series!
+              </button>
+            ` : `
+              <button 
+                id="new-series-btn"
+                class="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+              >
+                New Series
+              </button>
+            `}
+            
+            <button 
+              id="new-game-btn" 
+              class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              New Game
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // Insert into the DOM
+    container.innerHTML = victoryHTML;
+    
+    // Now we need to add event handlers for the buttons we just created
+    console.log('Victory celebration added to DOM - setting up button handlers');
+    
+    // Add confetti effect
+    const createConfetti = () => {
+      const canvas = document.createElement('canvas');
+      canvas.style.position = 'fixed';
+      canvas.style.top = '0';
+      canvas.style.left = '0';
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      canvas.style.pointerEvents = 'none';
+      canvas.style.zIndex = '1000';
+      document.body.appendChild(canvas);
+
+      const myConfetti = confetti.create(canvas, {
+        resize: true,
+        useWorker: true
+      });
+
+      // Initial burst
+      myConfetti({
+        particleCount: 100,
+        spread: 160,
+        origin: { y: 0.6 }
+      });
+
+      // Side bursts after delay
+      setTimeout(() => {
+        myConfetti({
+          particleCount: 50,
+          angle: 60,
+          spread: 80,
+          origin: { x: 0 }
+        });
+
+        myConfetti({
+          particleCount: 50,
+          angle: 120,
+          spread: 80,
+          origin: { x: 1 }
+        });
+      }, 750);
+    };
+
+    // Create confetti immediately
+    import('canvas-confetti').then(confettiModule => {
+      window.confetti = confettiModule.default;
+      createConfetti();
+    });
+    
+    // Set up event handlers
+    document.getElementById('edit-last-tricks-btn')?.addEventListener('click', () => {
+      // Get the game data from localStorage
+      const gameData = JSON.parse(localStorage.getItem('currentGame') || '{}');
+      if (gameData) {
+        const gameManager = window.GameManager.fromJSON(JSON.stringify(gameData));
+        
+        // Remove the victory modal
+        const modal = document.getElementById('victory-modal');
+        if (modal) modal.style.display = 'none';
+        
+        // Get the current hand before undoing
+        const currentHand = gameManager.getCurrentHand();
+        
+        // For most victory cases, we want to go back to the tricks entry phase
+        // This happens when a hand was just completed with tricks
+        if (currentHand.length === 6 && currentHand[5] !== undefined) {
+          // The last action was entering tricks - undo just that part
+          gameManager.state.hands[gameManager.state.hands.length - 1] = currentHand.slice(0, -1);
+        } else {
+          // Otherwise use the standard undo logic
+          gameManager.undo();
+        }
+        
+        // Always reset the completion flag
+        gameManager.state.isComplete = false;
+        
+        // Recompute scores
+        gameManager.state.scores = gameManager.getScores();
+        
+        // Save the updated game state
+        localStorage.setItem('currentGame', gameManager.toJSON());
+        
+        // Reload the page to show the updated game state
+        window.location.reload();
+      }
+    });
+    
+    document.getElementById('view-history-btn')?.addEventListener('click', () => {
+      // Show statistics and scroll to game history section
+      const historySection = document.getElementById('game-history-section');
+      const statsContainer = document.getElementById('game-statistics-container');
+      const endGameControls = document.getElementById('end-game-controls');
+      
+      // Hide victory modal
+      const modal = document.getElementById('victory-modal');
+      if (modal) modal.style.display = 'none';
+      
+      // Generate and show statistics if not already visible
+      if (statsContainer) {
+        statsContainer.classList.remove('hidden');
+        
+        // If statistics haven't been generated yet, generate them now
+        if (!statsContainer.innerHTML.trim()) {
+          try {
+            // Get game data from localStorage
+            const gameData = JSON.parse(localStorage.getItem('currentGame') || '{}');
+            if (gameData) {
+              const winnerIndex = gameData.teams.indexOf(props.winningTeam);
+              
+              if (winnerIndex !== -1) {
+                // Use dynamic import to load the statistics module
+                import('../lib/statistics-util.ts').then(statsModule => {
+                  try {
+                    const statsHTML = statsModule.generateStatisticsHTML(
+                      gameData.hands,
+                      gameData.players,
+                      gameData.teams,
+                      [gameData.scores[0] || 0, gameData.scores[1] || 0],
+                      winnerIndex
+                    );
+                    statsContainer.innerHTML = statsHTML;
+                  } catch (err) {
+                    console.error('Error generating statistics:', err);
+                    statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Error generating statistics</div>';
+                  }
+                }).catch(err => {
+                  console.error('Error loading statistics module:', err);
+                  statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Failed to load statistics module</div>';
+                });
+              } else {
+                statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Could not determine winning team</div>';
+              }
+            }
+          } catch (error) {
+            console.error('Error generating statistics:', error);
+            statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Error generating statistics</div>';
+          }
+        }
+      }
+      
+      // Show end game controls
+      if (endGameControls) {
+        endGameControls.classList.remove('hidden');
+        
+        // Add controls to the end-game-controls div
+        const gameData = JSON.parse(localStorage.getItem('currentGame') || '{}');
+        if (gameData) {
+          const isSeries = gameData.isSeries || false;
+          
+          endGameControls.innerHTML = `
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Game Results</h3>
+            <div class="mb-4 p-4 bg-blue-50 rounded-lg text-center">
+              <div class="text-2xl font-semibold mb-2">
+                <span class="text-blue-600">${props.winningTeam}</span> Wins!
+              </div>
+              ${isSeries && gameData.seriesScores ? 
+                `<div class="text-lg text-gray-700">Series Score: ${gameData.seriesScores[0]}-${gameData.seriesScores[1]}</div>` : 
+                ''}
+            </div>
+            <div class="flex flex-wrap gap-4">
+              ${!isSeries ? `
+                <button 
+                  id="post-victory-series-btn"
+                  class="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  Make it a Series
+                </button>
+              ` : `
+                <button 
+                  id="post-victory-new-series-btn"
+                  class="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  Next Game
+                </button>
+              `}
+              
+              ${!isSeries ? `
+                <button 
+                  id="post-victory-new-game-btn" 
+                  class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                >
+                  New Game
+                </button>
+              ` : ''}
+            </div>
+          `;
+          
+          // Add event listeners for the new buttons
+          document.getElementById('post-victory-series-btn')?.addEventListener('click', () => {
+            if (gameData) {
+              const gameManager = window.GameManager.fromJSON(JSON.stringify(gameData));
+              gameManager.convertToSeries();
+              gameManager.startNextGame();
+              localStorage.setItem('currentGame', gameManager.toJSON());
+              window.location.reload();
+            }
+          });
+          
+          document.getElementById('post-victory-new-series-btn')?.addEventListener('click', () => {
+            if (gameData) {
+              const gameManager = window.GameManager.fromJSON(JSON.stringify(gameData));
+              gameManager.startNextGame();
+              localStorage.setItem('currentGame', gameManager.toJSON());
+              window.location.reload();
+            }
+          });
+          
+          document.getElementById('post-victory-new-game-btn')?.addEventListener('click', () => {
+            localStorage.removeItem('currentGame');
+            window.location.href = '';
+          });
+        }
+      }
+      
+      // Scroll to history section
+      if (historySection) {
+        historySection.scrollIntoView({ behavior: 'smooth' });
+        
+        // Highlight briefly
+        historySection.classList.add('ring-4', 'ring-blue-400', 'ring-opacity-75');
+        setTimeout(() => {
+          historySection.classList.remove('ring-4', 'ring-blue-400', 'ring-opacity-75');
+        }, 2000);
+      }
+    });
+    
+    document.getElementById('make-series-btn')?.addEventListener('click', () => {
+      const gameData = JSON.parse(localStorage.getItem('currentGame') || '{}');
+      if (gameData) {
+        const gameManager = window.GameManager.fromJSON(JSON.stringify(gameData));
+        gameManager.convertToSeries();
+        gameManager.startNextGame();
+        localStorage.setItem('currentGame', gameManager.toJSON());
+        window.location.reload();
+      }
+    });
+    
+    document.getElementById('new-series-btn')?.addEventListener('click', () => {
+      localStorage.removeItem('currentGame');
+      window.location.href = '';
+    });
+    
+    document.getElementById('new-game-btn')?.addEventListener('click', () => {
+      localStorage.removeItem('currentGame');
+      window.location.href = '';
+    });
+  });
+</script>
 
 <style>
   /* Base button styles */
@@ -307,35 +892,106 @@ import GameStatistics from '../components/game-statistics.astro';
       
       const gameManager = startGameplay(gameData);
       
-      // Check if game is complete to generate statistics (keep hidden until needed)
+      // Check if game is complete to generate statistics and awards
       if (gameManager.isGameComplete()) {
         const statsContainer = document.getElementById('game-statistics-container');
-        if (statsContainer) {
-          // Generate statistics HTML
-          const winnerIndex = gameManager.getWinner();
-          if (winnerIndex !== null) {
-            // Import statistics utility but don't show yet - this will be shown when needed
-            import('../lib/statistics-util.ts').then(module => {
-              try {
-                const statsHTML = module.generateStatisticsHTML(
-                  gameManager.state.hands,
-                  gameManager.state.players,
-                  gameManager.state.teams,
-                  gameManager.getScores(),
-                  winnerIndex
-                );
-                
-                statsContainer.innerHTML = statsHTML;
-                // Note: We keep this hidden until the user clicks "View Game History"
-              } catch (err) {
-                console.error('Error generating statistics:', err);
-                statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Error loading game statistics</div>';
+        const winnerIndex = gameManager.getWinner();
+        
+        if (statsContainer && winnerIndex !== null) {
+          // Import modules for statistics and awards
+          Promise.all([
+            import('../lib/statistics-util.ts'),
+            import('../lib/pepper-awards.ts')
+          ]).then(async ([statsModule, awardsModule]) => {
+            try {
+              // Generate statistics
+              const { generateStatisticsHTML } = statsModule;
+              const statsHTML = generateStatisticsHTML(
+                gameManager.state.hands,
+                gameManager.state.players,
+                gameManager.state.teams,
+                gameManager.getScores(),
+                winnerIndex
+              );
+              
+              statsContainer.innerHTML = statsHTML;
+              
+              console.log('Game page - generating award data');
+              console.log('Hands:', gameManager.state.hands);
+              console.log('Players:', gameManager.state.players);
+              console.log('Teams:', gameManager.state.teams);
+              
+              // Track award data - explicitly access properties to avoid namespace issues
+              const { trackAwardData } = statsModule;
+              
+              // Make sure we have a valid winnerIndex before proceeding
+              if (winnerIndex === null || winnerIndex === undefined) {
+                console.error('No winner index available, cannot generate awards');
+                throw new Error('No winner index available');
               }
-            }).catch(err => {
-              console.error('Error loading statistics module:', err);
-              statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Failed to load statistics module</div>';
-            });
-          }
+              
+              const awardData = trackAwardData(
+                gameManager.state.hands,
+                gameManager.state.players,
+                gameManager.state.teams,
+                gameManager.getScores(),
+                winnerIndex
+              );
+              
+              console.log('Award data generated:', awardData);
+              
+              // Select awards for this game - explicitly access properties to avoid namespace issues
+              const { selectGameAwards } = awardsModule;
+              const gameAwards = selectGameAwards(awardData);
+              console.log('Game awards selected:', gameAwards);
+              
+              // Select series awards if series is complete
+              let seriesAwards = [];
+              if (gameManager.state.isSeries && gameManager.state.seriesWinner !== undefined) {
+                const { selectSeriesAwards } = awardsModule;
+                seriesAwards = selectSeriesAwards(awardData);
+                console.log('Series awards selected:', seriesAwards);
+              }
+              
+              // Create the victory celebration component with awards
+              document.body.insertAdjacentHTML('beforeend', `
+                <div id="victory-celebration-container"></div>
+              `);
+              
+              // Render the victory celebration
+              const victoryContainer = document.getElementById('victory-celebration-container');
+              if (victoryContainer) {
+                // Define the props to pass to the component
+                const props = {
+                  winningTeam: gameManager.state.teams[winnerIndex],
+                  finalScores: gameManager.getScores(),
+                  teamNames: gameManager.state.teams,
+                  isSeries: gameManager.state.isSeries || false,
+                  seriesScores: gameManager.state.seriesScores,
+                  gameAwards: gameAwards,
+                  seriesAwards: seriesAwards
+                };
+                
+                // We'll use a custom event to render the victory celebration
+                // This allows us to dynamically render the component with its props
+                // Ensure awards are properly serializable
+                const serializedProps = {
+                  ...props,
+                  gameAwards: props.gameAwards || [],
+                  seriesAwards: props.seriesAwards || []
+                };
+                console.log('Dispatching render-victory-celebration event with props:', serializedProps);
+                const event = new CustomEvent('render-victory-celebration', { detail: serializedProps });
+                document.dispatchEvent(event);
+              }
+            } catch (err) {
+              console.error('Error generating statistics and awards:', err);
+              statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Error loading game statistics</div>';
+            }
+          }).catch(err => {
+            console.error('Error loading modules:', err);
+            statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Failed to load required modules</div>';
+          });
         }
       }
     }
