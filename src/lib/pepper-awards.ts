@@ -28,7 +28,7 @@ export const gameAwards: AwardDefinition[] = [
     id: 'defensive_fortress',
     name: 'Defensive Fortress',
     description: 'Masters of stopping opponents in their tracks',
-    technicalDefinition: 'Team with highest ratio of defending hands where they either set the bidders or successfully negotiated for tricks. Minimum 3 defending hands required.',
+    technicalDefinition: 'Team that set the bidding team the most times when the opponents bid. Minimum 4 successful sets required.',
     type: 'team',
     scope: 'game',
     important: false,
@@ -261,15 +261,39 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
     
     switch (id) {
       case 'defensive_fortress': {
-        // Team with highest defense success rate (minimum 3 defenses)
-        const qualifyingTeams = teamStats.filter(team => team.totalDefenses >= 3);
+        // Count how many times each team set the bidding team
+        // We're looking at the times when the opponent team bid and went set
+        
+        // Get team objects
+        const teamArray = Object.values(data.teamStats);
+        if (teamArray.length < 2) return null;
+        
+        // For each team, count how many times they set the opponents
+        teamArray.forEach(team => {
+          // Find the opponent team
+          const opponentTeam = teamArray.find(t => t.name !== team.name);
+          if (!opponentTeam) return;
+          
+          // Sets against opponents = opponent's failed bids
+          team.setsAgainstOpponents = opponentTeam.totalBids - opponentTeam.successfulBids;
+        });
+        
+        // Find teams that meet the threshold (4+ sets)
+        const qualifyingTeams = teamArray.filter(team => team.setsAgainstOpponents >= 4);
         if (qualifyingTeams.length === 0) return null;
         
+        // Find the team with the most sets
         const winner = qualifyingTeams.reduce((best, current) => 
-          current.defensiveSuccessRate > best.defensiveSuccessRate ? current : best
+          current.setsAgainstOpponents > best.setsAgainstOpponents ? current : best, qualifyingTeams[0]
         );
         
-        if (winner.defensiveSuccessRate === 0) return null;
+        // Check for a tie
+        const secondBest = qualifyingTeams.find(team => 
+          team !== winner && team.setsAgainstOpponents === winner.setsAgainstOpponents
+        );
+        
+        // If there's a tie, return null (no award)
+        if (secondBest) return null;
         
         return { ...award, winner: winner.name };
       }
