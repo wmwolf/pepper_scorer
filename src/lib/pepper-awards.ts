@@ -2,6 +2,7 @@
 // These types are used for typing functions internally in this module
 // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
 import type { AwardTrackingData, PlayerStats, TeamStats } from './statistics-util';
+import { decodeHand, calculateScore } from './gameState';
 
 export interface AwardDefinition {
   id: string;               // Unique identifier
@@ -279,17 +280,17 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         });
         
         // Find teams that meet the threshold (4+ sets)
-        const qualifyingTeams = teamArray.filter(team => team.setsAgainstOpponents >= 4);
+        const qualifyingTeams = teamArray.filter(team => (team.setsAgainstOpponents || 0) >= 4);
         if (qualifyingTeams.length === 0) return null;
         
         // Find the team with the most sets
         const winner = qualifyingTeams.reduce((best, current) => 
-          current.setsAgainstOpponents > best.setsAgainstOpponents ? current : best, qualifyingTeams[0]
+          (current.setsAgainstOpponents || 0) > (best.setsAgainstOpponents || 0) ? current : best, qualifyingTeams[0]
         );
         
         // Check for a tie
         const secondBest = qualifyingTeams.find(team => 
-          team !== winner && team.setsAgainstOpponents === winner.setsAgainstOpponents
+          team !== winner && (team.setsAgainstOpponents || 0) === (winner.setsAgainstOpponents || 0)
         );
         
         // If there's a tie, return null (no award)

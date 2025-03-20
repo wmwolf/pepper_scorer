@@ -54,6 +54,7 @@ export interface TeamStats {
   minScoreTrailing: number; // Minimum score while trailing
   comebackAchieved: boolean; // Did this team overcome a 30+ point deficit
   longestStreak: number; // Longest streak of scoring hands
+  setsAgainstOpponents?: number; // How many times they set the opponents
 }
 
 // Award data tracking
@@ -62,6 +63,7 @@ export interface AwardTrackingData {
   teamStats: Record<string, TeamStats>;
   pointsHistory: Array<[number, number]>; // History of scores to track deficits
   handScores: Array<[number, number]>; // Individual hand scores
+  hands: string[]; // Raw hand encodings
   winningTeam: number | null;
   winningTeamName: string;
   gameCompleted: boolean;
@@ -120,6 +122,7 @@ export function initializeAwardTracking(
     teamStats,
     pointsHistory: [[0, 0]],
     handScores: [],
+    hands: [],
     winningTeam: null,
     winningTeamName: '',
     gameCompleted: false
@@ -296,6 +299,9 @@ export function trackAwardData(
   console.log('- winner:', winnerIndex);
   // Initialize award tracking data
   const awardData = initializeAwardTracking(players, teams);
+  
+  // Store the original hands data
+  awardData.hands = [...hands];
   
   // Running score tracking
   const currentScores: [number, number] = [0, 0];
