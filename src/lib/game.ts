@@ -804,14 +804,11 @@ function createConfettiEffect() {
     }, 5000);
   }
   
-  // Add this function after updateScoreColor
+  // Function to create and display the victory celebration
+  // This creates dynamic HTML content at runtime since Astro components can't be used here
   function showVictoryCelebration(gameManager: GameManager) {
     // Hide all current controls
     hideAllControls();
-    
-    // This function has been updated to use the VictoryCelebration component
-    // Instead of generating the HTML directly, we'll use the custom event to
-    // display the component that we set up in the game.astro file.
     
     // First, we need to generate the award data using our tracking utilities
     const winnerIndex = gameManager.getWinner()!;
@@ -840,23 +837,28 @@ function createConfettiEffect() {
             >
               Make it a Series
             </button>
-          ` : `
+          ` : !gameManager.isSeriesComplete() ? `
             <button 
               id="post-victory-new-series-btn"
-              class="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              class="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
             >
               Next Game
             </button>
+          ` : `
+            <button 
+              id="post-victory-start-new-series-btn"
+              class="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              Start New Series
+            </button>
           `}
           
-          ${!gameManager.state.isSeries ? `
-            <button 
-              id="post-victory-new-game-btn" 
-              class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
-            >
-              New Game
-            </button>
-          ` : ''}
+          <button 
+            id="post-victory-new-game-btn" 
+            class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+          >
+            New Game
+          </button>
         </div>
       `;
       
@@ -872,6 +874,29 @@ function createConfettiEffect() {
         // In series mode, this is "Next Game"
         gameManager.startNextGame();
         localStorage.setItem('currentGame', gameManager.toJSON());
+        window.location.reload();
+      });
+      
+      document.getElementById('post-victory-start-new-series-btn')?.addEventListener('click', () => {
+        // At the end of a series, create a new series with the same players and teams
+        const players = [...gameManager.state.players];
+        const teams = [...gameManager.state.teams];
+        
+        // Rotate dealer to the next player
+        const lastDealerIndex = parseInt(gameManager.getCurrentHand()[0] || '1') - 1;
+        const nextDealerIndex = (lastDealerIndex + 1) % 4;
+        
+        // Create a new game manager with the same players but new state
+        const newGameManager = new GameManager(players, teams);
+        // Start with the next dealer
+        newGameManager.addHandPart((nextDealerIndex + 1).toString());
+        
+        // Convert to series immediately
+        newGameManager.state.isSeries = true;
+        newGameManager.state.seriesScores = [0, 0];
+        newGameManager.state.gameNumber = 1;
+        
+        localStorage.setItem('currentGame', newGameManager.toJSON());
         window.location.reload();
       });
       
@@ -917,72 +942,39 @@ function createConfettiEffect() {
         console.log('Game awards selected:', gameAwards);
         
         // Select series awards if series is complete
-        let seriesAwards: Array<{id: string; name: string; description: string; winner: string}> = [];
+        let seriesAwards: Array<{id: string; name: string; description: string; technicalDefinition: string; type: string; scope: string; icon: string; winner: string}> = [];
         if (gameManager.state.isSeries && gameManager.state.seriesWinner !== undefined) {
           const { selectSeriesAwards } = awardsModule;
           seriesAwards = selectSeriesAwards(awardData);
           console.log('Series awards selected:', seriesAwards);
         }
         
-        // Define the props to pass to the victory celebration component
-        const victoryProps = {
-          winningTeam: gameManager.state.teams[winnerIndex],
-          finalScores: gameManager.getScores(),
-          teamNames: gameManager.state.teams,
-          isSeries: gameManager.state.isSeries || false,
-          seriesScores: gameManager.state.seriesScores,
-          gameAwards: gameAwards,
-          seriesAwards: seriesAwards
-        };
-        console.log('Victory props:', victoryProps);
-        
-        // Render the component into the victory container
-        const victoryContainer = document.getElementById('victory-celebration-container');
-        if (victoryContainer) {
-          // Render component by using a custom event with props data
-          console.log('Dispatching render-victory-celebration event with props:', victoryProps);
-          // Ensure awards are properly serializable before adding to event
-          const serializedProps = {
-            ...victoryProps,
-            gameAwards: victoryProps.gameAwards || [],
-            seriesAwards: victoryProps.seriesAwards || []
-          };
-          document.dispatchEvent(new CustomEvent('render-victory-celebration', { 
-            detail: serializedProps 
-          }));
-        } else {
-          // Create a container for the victory celebration component
-          const container = document.createElement('div');
-          container.id = 'victory-celebration-container';
-          document.body.appendChild(container);
-          
-          // Dispatch event after container is created
-          document.dispatchEvent(new CustomEvent('render-victory-celebration', { 
-            detail: victoryProps 
-          }));
-        }
+        // Create victory celebration with awards
+        createVictoryCelebration(gameManager, winnerIndex, gameAwards, seriesAwards);
         
         // Trigger confetti effect
         createConfettiEffect();
       } catch (err) {
         console.error('Error generating awards:', err);
-        // Fall back to a simpler victory celebration if there's an error
-        fallbackVictoryCelebration(gameManager);
+        // If there's an error with award generation, just create a basic victory celebration
+        createVictoryCelebration(gameManager, winnerIndex);
       }
     }).catch(err => {
       console.error('Error loading modules:', err);
-      // Fall back to a simpler victory celebration if there's an error
-      fallbackVictoryCelebration(gameManager);
+      // If there's an error loading modules, just create a basic victory celebration
+      createVictoryCelebration(gameManager, winnerIndex);
     });
   }
   
-  // Simplified fallback victory celebration when awards system fails
-  function fallbackVictoryCelebration(gameManager: GameManager) {
+  // Function to create and display the victory celebration with dynamic HTML
+  // This is needed because Astro components can only be rendered at build time
+  function createVictoryCelebration(
+    gameManager: GameManager, 
+    winnerIndex: number, 
+    gameAwards: Array<{id: string; name: string; description: string; technicalDefinition: string; type: string; scope: string; icon: string; winner: string}> = [],
+    seriesAwards: Array<{id: string; name: string; description: string; technicalDefinition: string; type: string; scope: string; icon: string; winner: string}> = []
+  ) {
     // Ensure we have a valid winner index
-    const winnerIndex = typeof gameManager.getWinner === 'function' ? 
-    gameManager.getWinner() : 
-    (gameManager.state.scores[0] > gameManager.state.scores[1] ? 0 : 1);
-
     const winningTeam = winnerIndex !== null ? (gameManager.state.teams[winnerIndex] || 'Winner') : 'Winner';
     const [score1, score2] = typeof gameManager.getScores === 'function' ? 
     gameManager.getScores() : 
@@ -991,16 +983,42 @@ function createConfettiEffect() {
     // Create victory overlay element
     const victoryElement = document.createElement('div');
     victoryElement.id = 'dynamic-victory-overlay';
-    victoryElement.className = 'fixed inset-0 bg-gray-900 bg-opacity-80 z-50 flex items-center justify-center transition-opacity duration-500';
+    victoryElement.className = 'fixed inset-0 bg-gray-900 bg-opacity-80 z-50 flex items-start justify-center overflow-y-auto transition-opacity duration-500';
     
     // Prepare the series data if applicable
     const seriesScoresHtml = gameManager.state.isSeries && gameManager.state.seriesScores 
       ? `<p class="text-xl text-blue-300 mb-6">Series Score: ${gameManager.state.seriesScores[0]}-${gameManager.state.seriesScores[1]}</p>` 
       : '';
     
+    // Generate game awards HTML if we have any
+    let gameAwardsHTML = '';
+    if (gameAwards && gameAwards.length > 0) {
+      gameAwardsHTML = `
+        <div class="mb-8">
+          <h3 class="text-2xl font-semibold text-white mb-4">Game Awards</h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            ${gameAwards.map(award => generateAwardCardHTML(award)).join('')}
+          </div>
+        </div>
+      `;
+    }
+    
+    // Generate series awards HTML if we have any
+    let seriesAwardsHTML = '';
+    if (seriesAwards && seriesAwards.length > 0) {
+      seriesAwardsHTML = `
+        <div class="mb-8">
+          <h3 class="text-2xl font-semibold text-white mb-4">Series Awards</h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            ${seriesAwards.map(award => generateAwardCardHTML(award)).join('')}
+          </div>
+        </div>
+      `;
+    }
+    
     // Generate HTML content
     victoryElement.innerHTML = `
-      <div class="max-w-2xl w-full mx-4 text-center">
+      <div class="max-w-2xl w-full mx-4 text-center py-12">
         <div class="py-8">
           <span class="text-6xl animate-bounce inline-block">🏆</span>
         </div>
@@ -1028,7 +1046,11 @@ function createConfettiEffect() {
           </div>
         </div>
         
-        <div class="flex flex-col sm:flex-row justify-center gap-4">
+        ${gameAwardsHTML}
+        
+        ${seriesAwardsHTML}
+        
+        <div class="flex flex-col sm:flex-row justify-center gap-4 mb-8">
           <button 
             id="edit-last-tricks-btn"
             class="px-6 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
@@ -1050,31 +1072,33 @@ function createConfettiEffect() {
             >
               Make it a Series!
             </button>
-          ` : `
+          ` : !gameManager.isSeriesComplete() ? `
             <button 
               id="victory-new-series-btn"
               class="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
             >
               Next Game
             </button>
+          ` : `
+            <button 
+              id="victory-start-new-series-btn"
+              class="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              Start New Series
+            </button>
           `}
           
-          ${!gameManager.state.isSeries ? `
-            <button 
-              id="victory-new-game-btn" 
-              class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
-            >
-              New Game
-            </button>
-          ` : ''}
+          <button 
+            id="victory-new-game-btn" 
+            class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+          >
+            New Game
+          </button>
         </div>
       </div>
     `;
     
     document.body.appendChild(victoryElement);
-    
-    // Trigger confetti effect
-    createConfettiEffect();
     
     // Add event listeners to buttons
     document.getElementById('edit-last-tricks-btn')?.addEventListener('click', () => {
@@ -1115,14 +1139,6 @@ function createConfettiEffect() {
     });
     
     document.getElementById('victory-history-btn')?.addEventListener('click', () => {
-      // Dispatch a custom event to handle statistics display
-      const viewHistoryEvent = new CustomEvent('view-game-history', {
-        detail: {
-          winningTeam: winningTeam
-        }
-      });
-      document.dispatchEvent(viewHistoryEvent);
-      
       // Remove the victory modal
       victoryElement.remove();
       
@@ -1132,16 +1148,56 @@ function createConfettiEffect() {
         endGameControls.classList.remove('hidden');
       }
       
-      // Scroll to history/stats section
-      const historySection = document.getElementById('game-history-section');
-      if (historySection) {
-        historySection.scrollIntoView({ behavior: 'smooth' });
+      // Generate and display statistics
+      const statsContainer = document.getElementById('game-statistics-container');
+      if (statsContainer) {
+        statsContainer.classList.remove('hidden');
         
-        // Highlight the section briefly
-        historySection.classList.add('ring-4', 'ring-blue-400');
-        setTimeout(() => {
-          historySection.classList.remove('ring-4', 'ring-blue-400');
-        }, 2000);
+        // Always regenerate statistics when the button is clicked
+        try {
+          // Dynamically import the statistics utility
+          import('../lib/statistics-util.ts')
+            .then(statsModule => {
+              // Ensure we have a valid winnerIndex
+              const safeWinnerIndex = gameManager.getWinner() || 0;
+              
+              try {
+                const statsHTML = statsModule.generateStatisticsHTML(
+                  gameManager.state.hands,
+                  gameManager.state.players,
+                  gameManager.state.teams,
+                  gameManager.getScores(),
+                  safeWinnerIndex
+                );
+                statsContainer.innerHTML = statsHTML;
+                
+                // Ensure the stats container is visible
+                statsContainer.classList.remove('hidden');
+                
+                // Scroll to history/stats section after stats are generated
+                const historySection = document.getElementById('game-history-section');
+                if (historySection) {
+                  historySection.scrollIntoView({ behavior: 'smooth' });
+                  
+                  // Highlight the section briefly
+                  historySection.classList.add('ring-4', 'ring-blue-400');
+                  setTimeout(() => {
+                    historySection.classList.remove('ring-4', 'ring-blue-400');
+                  }, 2000);
+                }
+              } catch (err) {
+                console.error('Error generating statistics:', err);
+                statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Error generating statistics</div>';
+              }
+            })
+            .catch(err => {
+              console.error('Error loading statistics module:', err);
+              statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Failed to load statistics module</div>';
+            });
+        } catch (error) {
+          console.error('Error generating statistics:', error);
+          statsContainer.innerHTML = '<div class="p-4 bg-red-50 text-red-600 rounded">Error generating statistics</div>';
+        }
       }
     });
     
@@ -1159,10 +1215,142 @@ function createConfettiEffect() {
       window.location.reload();
     });
     
+    document.getElementById('victory-start-new-series-btn')?.addEventListener('click', () => {
+      // At the end of a series, create a new series with the same players and teams
+      const players = [...gameManager.state.players];
+      const teams = [...gameManager.state.teams];
+      
+      // Rotate dealer to the next player
+      const lastDealerIndex = parseInt(gameManager.getCurrentHand()[0] || '1') - 1;
+      const nextDealerIndex = (lastDealerIndex + 1) % 4;
+      
+      // Create a new game manager with the same players but new state
+      const newGameManager = new GameManager(players, teams);
+      // Start with the next dealer
+      newGameManager.addHandPart((nextDealerIndex + 1).toString());
+      
+      // Convert to series immediately
+      newGameManager.state.isSeries = true;
+      newGameManager.state.seriesScores = [0, 0];
+      newGameManager.state.gameNumber = 1;
+      
+      localStorage.setItem('currentGame', newGameManager.toJSON());
+      window.location.reload();
+    });
+    
     document.getElementById('victory-new-game-btn')?.addEventListener('click', () => {
       localStorage.removeItem('currentGame');
       window.location.href = getPath('');
     });
+  }
+  
+  // Helper function to generate HTML for award cards
+  function generateAwardCardHTML(award: {
+    id: string;
+    name: string;
+    description: string;
+    technicalDefinition: string;
+    type: string;
+    scope: string;
+    icon: string;
+    winner: string;
+  }) {
+    // Define styling based on award type
+    const isDubious = award.id.includes('overreaching') || 
+                    award.id.includes('false_confidence') || 
+                    award.id.includes('helping_hand') || 
+                    award.id.includes('moon_struck') || 
+                    award.id.includes('gambling_problem') || 
+                    award.id.includes('feast_or_famine');
+    
+    const cardStyle = isDubious ? {
+      headerBg: 'bg-amber-600',
+      bodyBg: 'bg-amber-50',
+      borderColor: 'border-amber-200',
+      iconBg: 'bg-amber-500'
+    } : award.type === 'player' ? {
+      headerBg: 'bg-purple-600',
+      bodyBg: 'bg-purple-50',
+      borderColor: 'border-purple-200',
+      iconBg: 'bg-purple-500'
+    } : {
+      headerBg: 'bg-blue-600',
+      bodyBg: 'bg-blue-50',
+      borderColor: 'border-blue-200',
+      iconBg: 'bg-blue-500'
+    };
+    
+    // Map icon names to emoji
+    const iconMap: Record<string, string> = {
+      'shield': '🛡️',
+      'check-circle': '✅',
+      'trophy': '🏆',
+      'trending-up': '📈',
+      'clock': '⏱️',
+      'crown': '👑',
+      'sceptre': '🪄',
+      'chili-hot': '🌶️',
+      'hand-grabbing': '🫴',
+      'thumbs-down': '👎',
+      'hand': '✋',
+      'shield-check': '🛡️',
+      'zap': '⚡',
+      'star': '⭐',
+      'heart': '❤️',
+      'alert-triangle': '⚠️',
+      'target': '🎯',
+      'award': '🏅',
+      'medal': '🥇',
+      'flame': '🔥',
+      'spade': '♠️',
+      'thumbs-up': '👍',
+      'music': '🎵',
+      'dice': '🎲',
+      'dice-5': '🎲',
+      'meh': '😐',
+      'frown': '😔',
+      'smile': '😊',
+      'moon': '🌙',
+      'sun': '☀️',
+      'scale': '⚖️',
+      'clock-rewind': '⏪'
+    };
+    
+    const iconEmoji = iconMap[award.icon] || '🏆'; // Default to trophy if icon not found
+    
+    // Badge text based on scope
+    const badgeText = award.scope === 'game' ? 'Game Award' : 'Series Award';
+    
+    return `
+      <div class="award-card rounded-lg overflow-hidden shadow-md border ${cardStyle.borderColor} transition-transform hover:shadow-lg max-w-md flex flex-col h-full">
+        <div class="${cardStyle.headerBg} px-4 py-3 text-white relative">
+          <div class="flex justify-between items-center">
+            <h3 class="text-xl font-bold">${award.name}</h3>
+            <span class="text-xs px-2 py-1 bg-white/20 rounded-full">${badgeText}</span>
+          </div>
+          <p class="text-white/90 text-sm mt-1 text-left">${award.description}</p>
+        </div>
+        
+        <div class="${cardStyle.bodyBg} p-4 flex-1">
+          <div class="flex mb-3">
+            <div class="${cardStyle.iconBg} h-10 w-10 rounded-full flex items-center justify-center text-white shrink-0">
+              ${iconEmoji}
+            </div>
+            
+            ${award.winner ? `
+              <div class="ml-3">
+                <p class="text-gray-500 text-sm">Awarded to</p>
+                <p class="font-semibold text-gray-900">${award.winner}</p>
+              </div>
+            ` : ''}
+          </div>
+          
+          <p class="text-xs text-gray-600 mt-2 text-left">
+            <span class="font-medium text-gray-700">Criteria:</span> ${award.technicalDefinition}
+          </p>
+        </div>
+      </div>
+    `;
   }
   
   // Simple function to create confetti particles using DOM elements
