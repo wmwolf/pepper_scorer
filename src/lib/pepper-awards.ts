@@ -37,8 +37,8 @@ export const gameAwards: AwardDefinition[] = [
   {
     id: 'bid_specialists',
     name: 'Bid Specialists',
-    description: 'Consistently delivered on their promises',
-    technicalDefinition: 'Team with highest success percentage on bids (min. 3 bids required).',
+    description: 'Masters of calculated risk, rarely overreaching',
+    technicalDefinition: 'Team that made at least 4 bids (excluding pepper round) with a success rate above 87.5% - at most 1 set per 8 bids. The ultimate demonstration of knowing when to bid and when to pass.',
     type: 'team',
     scope: 'game',
     important: false,
@@ -92,7 +92,7 @@ export const gameAwards: AwardDefinition[] = [
     id: 'overreaching',
     name: 'Overreaching',
     description: 'Eyes bigger than their hand',
-    technicalDefinition: 'Player with highest average bid value in failed bids (4=4, 5=5, 6=6, M=7, D=14). Minimum 2 failed bids required.',
+    technicalDefinition: 'Player with highest average bid value in failed bids. Minimum 2 failed bids required.',
     type: 'player',
     scope: 'game',
     important: false,
@@ -111,8 +111,8 @@ export const gameAwards: AwardDefinition[] = [
   {
     id: 'helping_hand',
     name: 'Helping Hand',
-    description: 'Extraordinarily generous to opponents',
-    technicalDefinition: 'Team that allowed opponents to score the most points in a single game.',
+    description: 'Extraordinarily generous at the negotiating table',
+    technicalDefinition: 'Team that gave away the most points in negotiations (minimum 5 points). These diplomats believe in keeping opponents happy - one free trick at a time.',
     type: 'team',
     scope: 'game',
     important: false,
@@ -299,17 +299,54 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
       }
       
       case 'bid_specialists': {
-        // Team with highest bid success rate (min 3 bids)
-        const qualifyingTeams = teamStats.filter(team => team.totalBids >= 3);
-        if (qualifyingTeams.length === 0) return null;
+        // Team with highest bid success rate (min 4 non-pepper bids, success rate > 87.5%)
+        const teamsWithRatios = teamStats.map(team => {
+          // Count non-pepper bids and sets
+          let nonPepperBids = 0;
+          let nonPepperSets = 0;
+          
+          // We need to analyze hand by hand to exclude pepper rounds
+          data.hands.forEach((hand, handIndex) => {
+            // Skip pepper rounds (first four hands)
+            if (handIndex < 4 || hand.length < 6) return;
+            
+            try {
+              const { bidWinner } = decodeHand(hand);
+              const bidderTeamIndex = (bidWinner - 1) % 2;
+              const teamIndex = Object.values(data.teamStats).indexOf(team);
+              
+              // Only count bids made by this team
+              if (bidderTeamIndex === teamIndex) {
+                nonPepperBids++;
+                
+                // Check if bid was successful (not set)
+                const [score1, score2] = calculateScore(hand);
+                const teamScore = teamIndex === 0 ? score1 : score2;
+                if (teamScore < 0) {
+                  nonPepperSets++;
+                }
+              }
+            } catch (e) {
+              console.error('Error processing hand for bid specialists:', hand, e);
+            }
+          });
+          
+          const successRatio = nonPepperBids > 0 ? 1 - (nonPepperSets / nonPepperBids) : 0;
+          return { team, nonPepperBids, successRatio };
+        });
         
-        const winner = qualifyingTeams.reduce((best, current) => 
-          current.bidSuccessRate > best.bidSuccessRate ? current : best
+        // Filter to only teams meeting the criteria
+        const qualifyingTeams = teamsWithRatios.filter(item => 
+          item.nonPepperBids >= 4 && item.successRatio > 0.875
         );
         
-        if (winner.bidSuccessRate === 0) return null;
+        if (qualifyingTeams.length === 0) return null;
         
-        return { ...award, winner: winner.name };
+        // Sort by success ratio (highest first)
+        qualifyingTeams.sort((a, b) => b.successRatio - a.successRatio);
+        
+        // Return the team with the highest success ratio
+        return { ...award, winner: qualifyingTeams[0].team.name };
       }
       
       case 'remember_the_time': {
@@ -319,14 +356,46 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
       }
       
       case 'helping_hand': {
-        // Team that allowed most points to opponents
-        const winner = teamStats.reduce((most, current) => 
-          current.pointsAllowedToOpponents > most.pointsAllowedToOpponents ? current : most
+        // Team that gave away the most points in negotiations
+        const teamsWithNegotiations = teamStats.map(team => {
+          let pointsGivenInNegotiations = 0;
+          
+          // Analyze hands to count points given in negotiations
+          data.hands.forEach(hand => {
+            if (hand.length < 6) return;
+            
+            try {
+              const { bidWinner, decision, tricks } = decodeHand(hand);
+              // Only count hands where this team was bidding and negotiated
+              const bidderTeamIndex = (bidWinner - 1) % 2;
+              const teamIndex = Object.values(data.teamStats).indexOf(team);
+              
+              if (bidderTeamIndex === teamIndex && decision === 'F' && tricks > 0) {
+                // This was a negotiation where the team gave away tricks
+                pointsGivenInNegotiations += tricks;
+              }
+            } catch (e) {
+              console.error('Error processing hand for helping hand:', hand, e);
+            }
+          });
+          
+          return { team, pointsGivenInNegotiations };
+        });
+        
+        // Filter to teams meeting minimum threshold
+        const qualifyingTeams = teamsWithNegotiations.filter(item => 
+          item.pointsGivenInNegotiations >= 5
         );
         
-        if (winner.pointsAllowedToOpponents === 0) return null;
+        if (qualifyingTeams.length === 0) return null;
         
-        return { ...award, winner: winner.name };
+        // Find team that gave away the most points
+        const winner = qualifyingTeams.reduce((most, current) => 
+          current.pointsGivenInNegotiations > most.pointsGivenInNegotiations ? current : most, 
+          qualifyingTeams[0]
+        );
+        
+        return { ...award, winner: winner.team.name };
       }
       
       case 'bid_bullies': {
