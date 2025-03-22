@@ -1095,7 +1095,18 @@ function createConfettiEffect() {
             New Game
           </button>
         </div>
-      </div>
+        
+        <!-- Support Development -->
+        <div class="mt-8 pt-8 border-t border-gray-300 text-center">
+          <h4 class="text-lg font-semibold text-gray-200 mb-4">Enjoyed the scoring experience?</h4>
+          <div id="bmc-container" class="flex justify-center">
+            <a href="https://buymeacoffee.com/billwolf" target="_blank" rel="noopener noreferrer" 
+            class="inline-flex items-center gap-2 px-8 py-4 bg-yellow-400 text-black font-bold rounded-lg hover:bg-yellow-300 transform hover:scale-105 transition-all shadow-lg">
+              <span class="text-2xl">🍕</span> 
+              <span>Buy me a piece of pizza</span>
+            </a>
+          </div>
+        </div>
     `;
     
     document.body.appendChild(victoryElement);
