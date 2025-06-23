@@ -3,6 +3,40 @@
 import { GameManager, getCurrentPhase, isPepperRound, calculateScore } from './gameState';
 import { getPath } from './path-utils';
 export function loadGameState() {
+    // Check for debug game first
+    const debugGame = localStorage.getItem('debugGame');
+    if (debugGame) {
+        localStorage.removeItem('debugGame'); // Use once
+        console.log('🔧 Loading debug game...');
+        const debugData = JSON.parse(debugGame);
+        
+        // Create a new GameManager and reconstruct the game state properly
+        const gameManager = new GameManager(debugData.players, debugData.teams);
+        
+        // Add each hand one by one to properly calculate scores and maintain state consistency
+        debugData.hands.forEach((hand: string) => {
+            // For complete hands, add all parts at once
+            if (hand.length >= 6 || hand[1] === '0') {
+                gameManager.state.hands.push(hand);
+            } else {
+                // For incomplete hands, just set as the current hand
+                gameManager.state.hands.push(hand);
+            }
+        });
+        
+        // Recalculate scores from scratch
+        gameManager.state.scores = gameManager.getScores();
+        
+        // Mark as complete if it qualifies and trigger completion logic
+        if (gameManager.isGameComplete()) {
+            gameManager.completeGame();
+        }
+        
+        console.log('🔧 Debug game state reconstructed:', gameManager.state);
+        return gameManager.state;
+    }
+    
+    // Original logic for normal games
     const storedGame = localStorage.getItem('currentGame');
     if (!storedGame) {
         window.location.href = getPath(''); // Redirect to home
@@ -611,6 +645,36 @@ export function startGameplay(gameData: Record<string, unknown>) {
     
     setupEventListeners();
     updateUI();
+    
+    // Debug functions for browser console
+    if (typeof window !== 'undefined') {
+      (window as any).exportGame = () => {
+        const gameData = {
+          players: gameManager.state.players,
+          teams: gameManager.state.teams,
+          hands: gameManager.state.hands
+        };
+        console.log('=== GAME EXPORT ===');
+        console.log(JSON.stringify(gameData, null, 2));
+        console.log('=== END EXPORT ===');
+        console.log('To import: importGame(' + JSON.stringify(gameData) + ')');
+        return gameData;
+      };
+      
+      (window as any).importGame = (gameData: any) => {
+        console.log('Importing game data:', gameData);
+        localStorage.setItem('debugGame', JSON.stringify(gameData));
+        console.log('Debug game loaded. Reloading page...');
+        window.location.reload();
+      };
+      
+      (window as any).clearDebugGame = () => {
+        localStorage.removeItem('debugGame');
+        console.log('Debug game cleared');
+      };
+      
+      console.log('🔧 Debug functions available: exportGame(), importGame(data), clearDebugGame()');
+    }
     
     return gameManager;
 }

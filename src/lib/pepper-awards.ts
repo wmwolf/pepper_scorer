@@ -2,7 +2,7 @@
 // These types are used for typing functions internally in this module
 // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
 import type { AwardTrackingData, PlayerStats, TeamStats } from './statistics-util';
-import { decodeHand, calculateScore } from './gameState';
+import { decodeHand, calculateScore, isPepperRound } from './gameState';
 
 export interface AwardDefinition {
   id: string;               // Unique identifier
@@ -263,20 +263,47 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
     switch (id) {
       case 'defensive_fortress': {
         // Count how many times each team set the bidding team
-        // We're looking at the times when the opponent team bid and went set
+        // A team gets credit for setting opponents when they successfully defend
         
-        // Get team objects
         const teamArray = Object.values(data.teamStats);
         if (teamArray.length < 2) return null;
         
-        // For each team, count how many times they set the opponents
-        teamArray.forEach(team => {
-          // Find the opponent team
-          const opponentTeam = teamArray.find(t => t.name !== team.name);
-          if (!opponentTeam) return;
+        // Calculate sets against opponents by analyzing actual hands
+        teamArray.forEach((team, teamIndex) => {
+          let setsAgainstOpponents = 0;
           
-          // Sets against opponents = opponent's failed bids
-          team.setsAgainstOpponents = opponentTeam.totalBids - opponentTeam.successfulBids;
+          // Look through each hand to count when this team set the bidders
+          data.hands.forEach(hand => {
+            if (hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) {
+              return; // Skip incomplete hands
+            }
+            
+            // Skip throw-in hands
+            if (hand.length >= 2 && hand[1] === '0') {
+              return;
+            }
+            
+            try {
+              const { bidWinner } = decodeHand(hand);
+              const bidderTeam = (bidWinner - 1) % 2;
+              const defendingTeam = 1 - bidderTeam;
+              
+              // Check if this team was defending and set the bidders
+              if (defendingTeam === teamIndex) {
+                const [score1, score2] = calculateScore(hand);
+                const bidderScore = bidderTeam === 0 ? score1 : score2;
+                
+                // If bidder score is negative, they were set by defenders
+                if (bidderScore < 0) {
+                  setsAgainstOpponents++;
+                }
+              }
+            } catch (e) {
+              console.error('Error processing hand for defensive fortress:', hand, e);
+            }
+          });
+          
+          team.setsAgainstOpponents = setsAgainstOpponents;
         });
         
         // Find teams that meet the threshold (4+ sets)
@@ -301,7 +328,7 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
       
       case 'bid_specialists': {
         // Team with highest bid success rate (min 4 non-pepper bids, success rate > 87.5%)
-        const teamsWithRatios = teamStats.map(team => {
+        const teamsWithRatios = teamStats.map((team, teamIndex) => {
           // Count non-pepper bids and sets
           let nonPepperBids = 0;
           let nonPepperSets = 0;
@@ -309,12 +336,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           // We need to analyze hand by hand to exclude pepper rounds
           data.hands.forEach((hand, handIndex) => {
             // Skip pepper rounds (first four hands)
-            if (handIndex < 4 || hand.length < 6) return;
+            if (isPepperRound(handIndex) || hand.length < 6) return;
             
             try {
               const { bidWinner } = decodeHand(hand);
               const bidderTeamIndex = (bidWinner - 1) % 2;
-              const teamIndex = Object.values(data.teamStats).indexOf(team);
               
               // Only count bids made by this team
               if (bidderTeamIndex === teamIndex) {
@@ -534,11 +560,10 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
       }
       
       case 'series_mvp': {
-        // Player with highest net points
-        const qualifyingPlayers = playerStats.filter(player => player.netPoints > 0);
-        if (qualifyingPlayers.length === 0) return null;
+        // Player with highest net points (even if all are negative)
+        if (playerStats.length === 0) return null;
         
-        const winner = qualifyingPlayers.reduce((best, current) => 
+        const winner = playerStats.reduce((best, current) => 
           current.netPoints > best.netPoints ? current : best
         );
         
@@ -743,57 +768,38 @@ export function selectGameAwards(data: AwardTrackingData): AwardWithWinner[] {
     }
   }
   
-  // If we still don't have 3 awards, pad with random ones
-  // Ensure at least one player award
+  // Only add fallback awards if they would be meaningful
+  // Add basic participation awards only if someone actually qualifies
+  
+  // Try to add Bid Royalty (most bids won) if no player awards yet
   if (!selectedAwards.some(a => a.type === 'player')) {
-    const playerValues = Object.values(data.playerStats);
-    if (playerValues.length > 0) {
-      const player = playerValues[Math.floor(Math.random() * playerValues.length)];
-      if (player) {
-        const awardDef = awards.find(a => a.id === 'bid_royalty');
-        if (awardDef) {
-          selectedAwards.push({
-            ...awardDef,
-            winner: player.name
-          });
-        }
+    const bidRoyaltyAward = awards.find(a => a.id === 'bid_royalty');
+    if (bidRoyaltyAward) {
+      const result = evaluateAward(bidRoyaltyAward, data);
+      if (result && result.winner) {
+        selectedAwards.push(result);
       }
     }
   }
   
-  // Ensure at least one team award
+  // Try to add basic team award if no team awards yet  
   if (!selectedAwards.some(a => a.type === 'team')) {
-    const teamValues = Object.values(data.teamStats);
-    if (teamValues.length > 0) {
-      const team = teamValues[Math.floor(Math.random() * teamValues.length)];
-      if (team) {
-        const awardDef = awards.find(a => a.id === 'bid_specialists');
-        if (awardDef) {
-          selectedAwards.push({
-            ...awardDef,
-            winner: team.name
-          });
+    // Try defensive success rate or streak awards as fallbacks
+    const fallbackTeamAwards = ['streak_masters', 'defensive_specialists'];
+    for (const awardId of fallbackTeamAwards) {
+      const awardDef = awards.find(a => a.id === awardId);
+      if (awardDef) {
+        const result = evaluateAward(awardDef, data);
+        if (result && result.winner) {
+          selectedAwards.push(result);
+          break;
         }
       }
     }
   }
   
-  // Ensure at least one dubious award
-  if (!selectedAwards.some(a => a.id.includes('overreaching') || a.id.includes('false_confidence') || a.id.includes('helping_hand'))) {
-    const playerValues = Object.values(data.playerStats);
-    if (playerValues.length > 0) {
-      const player = playerValues[Math.floor(Math.random() * playerValues.length)];
-      if (player) {
-        const awardDef = awards.find(a => a.id === 'overreaching');
-        if (awardDef) {
-          selectedAwards.push({
-            ...awardDef,
-            winner: player.name
-          });
-        }
-      }
-    }
-  }
+  // Don't force dubious awards if no one actually qualifies
+  // It's better to have fewer meaningful awards than meaningless ones
   
   // Cap at 3 awards maximum
   return selectedAwards.slice(0, 3);
@@ -873,57 +879,37 @@ export function selectSeriesAwards(data: AwardTrackingData): AwardWithWinner[] {
     }
   }
   
-  // If we still don't have 3 awards, pad with random ones
-  // Ensure at least one player award
+  // Only add fallback awards if they would be meaningful
+  // Add basic participation awards only if someone actually qualifies
+  
+  // Try to add Series MVP if no player awards yet
   if (!selectedAwards.some(a => a.type === 'player')) {
-    const playerValues = Object.values(data.playerStats);
-    if (playerValues.length > 0) {
-      const player = playerValues[Math.floor(Math.random() * playerValues.length)];
-      if (player) {
-        const awardDef = awards.find(a => a.id === 'series_mvp');
-        if (awardDef) {
-          selectedAwards.push({
-            ...awardDef,
-            winner: player.name
-          });
-        }
+    const seriesMvpAward = awards.find(a => a.id === 'series_mvp');
+    if (seriesMvpAward) {
+      const result = evaluateAward(seriesMvpAward, data);
+      if (result && result.winner) {
+        selectedAwards.push(result);
       }
     }
   }
   
-  // Ensure at least one team award
+  // Try to add basic team award if no team awards yet  
   if (!selectedAwards.some(a => a.type === 'team')) {
-    const teamValues = Object.values(data.teamStats);
-    if (teamValues.length > 0) {
-      const team = teamValues[Math.floor(Math.random() * teamValues.length)];
-      if (team) {
-        const awardDef = awards.find(a => a.id === 'streak_masters');
-        if (awardDef) {
-          selectedAwards.push({
-            ...awardDef,
-            winner: team.name
-          });
+    const fallbackTeamAwards = ['streak_masters', 'defensive_specialists'];
+    for (const awardId of fallbackTeamAwards) {
+      const awardDef = awards.find(a => a.id === awardId);
+      if (awardDef) {
+        const result = evaluateAward(awardDef, data);
+        if (result && result.winner) {
+          selectedAwards.push(result);
+          break;
         }
       }
     }
   }
   
-  // Ensure at least one dubious award
-  if (!selectedAwards.some(a => a.id.includes('moon_struck') || a.id.includes('gambling_problem') || a.id.includes('feast_or_famine'))) {
-    const playerValues = Object.values(data.playerStats);
-    if (playerValues.length > 0) {
-      const player = playerValues[Math.floor(Math.random() * playerValues.length)];
-      if (player) {
-        const awardDef = awards.find(a => a.id === 'feast_or_famine');
-        if (awardDef) {
-          selectedAwards.push({
-            ...awardDef,
-            winner: player.name
-          });
-        }
-      }
-    }
-  }
+  // Don't force dubious awards if no one actually qualifies
+  // It's better to have fewer meaningful awards than meaningless ones
   
   // Cap at 3 awards maximum
   return selectedAwards.slice(0, 3);
