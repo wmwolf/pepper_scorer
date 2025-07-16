@@ -236,49 +236,55 @@ export function calculateGameStats(
 
 export function calculateLongestStreak(hands: string[], teamIndex: number): number {
   let currentStreak = 0;
-  let longestStreak = 0;
+  const streaks: number[] = [];
   
-  hands.forEach(hand => {
+  hands.forEach((hand, index) => {
+    // Skip incomplete hands
     if (hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) {
-      return; // Skip incomplete hands
+      return;
     }
     
     // For throw-in hands, no points are scored - reset streak
     if (hand.length >= 2 && hand[1] === '0') {
+      streaks.push(currentStreak);
       currentStreak = 0;
       return;
     }
     
     try {
-      const { bidWinner, decision } = decodeHand(hand);
+      const { bidWinner, bid, decision, tricks } = decodeHand(hand);
       const bidderTeam = (bidWinner - 1) % 2;
       
-      // Calculate the actual scores for this hand
-      const [score1, score2] = calculateScore(hand);
-      const teamScore = teamIndex === 0 ? score1 : score2;
-      
-      // A team continues their streak if they gain points OR their opponents lose points due to this team's actions
-      let teamWonPoints = false;
+      let teamContinuesStreak = false;
       
       if (teamIndex === bidderTeam) {
-        // This team was bidding
+        // This team won the bid - did they make it?
         if (decision === 'F') {
-          // Folded/negotiated - always counts as winning points
-          teamWonPoints = teamScore > 0;
+          // Folded/negotiated - always successful
+          teamContinuesStreak = true;
         } else {
-          // Played - they win if they made their bid (got positive points)
-          teamWonPoints = teamScore > 0;
+          // Played - check if they made their bid
+          const tricksNeeded = ['M', 'D', '6'].includes(String(bid)) ? 6 : parseInt(String(bid)) || 4;
+          const madeTheirBid = tricks + tricksNeeded <= 6; // Not set
+          teamContinuesStreak = madeTheirBid;
         }
       } else {
-        // This team was defending
-        // They win if they got positive points (either tricks or from setting bidders)
-        teamWonPoints = teamScore > 0;
+        // The other team won the bid - did they go set?
+        if (decision === 'P') {
+          // Other team played - check if they went set
+          const tricksNeeded = ['M', 'D', '6'].includes(String(bid)) ? 6 : parseInt(String(bid)) || 4;
+          const otherTeamWentSet = tricks + tricksNeeded > 6; // They were set
+          teamContinuesStreak = otherTeamWentSet;
+        } else {
+          // Other team folded/negotiated - they succeeded, so this team's streak breaks
+          teamContinuesStreak = false;
+        }
       }
       
-      if (teamWonPoints) {
+      if (teamContinuesStreak) {
         currentStreak++;
-        longestStreak = Math.max(longestStreak, currentStreak);
       } else {
+        streaks.push(currentStreak);
         currentStreak = 0;
       }
     } catch (e) {
@@ -286,6 +292,10 @@ export function calculateLongestStreak(hands: string[], teamIndex: number): numb
     }
   });
   
+  // Add the final streak
+  streaks.push(currentStreak);
+  
+  const longestStreak = Math.max(...streaks);
   return longestStreak;
 }
 
@@ -584,60 +594,58 @@ export function trackAwardData(
       runningScore[0] += team1Score;
       runningScore[1] += team2Score;
       
-      // Check if this bid pushed the winning team over 42
+      // Check if this bid pushed the WINNING team over 42 AND they actually won
       console.log(`Hand ${i+1}: running score = ${runningScore}, winner = ${winnerIndex}`);
-      // Need to check if this is truly the hand that pushed the winner over the edge
-      // First check if winnerIndex is valid to safely access the array
-      let isWinningScore = false;
-      // Using non-null assertion operator (!) since we've checked the type and bounds
+      
+      // Only check hands where the WINNING team reached 42+
       if (typeof winnerIndex === 'number' && winnerIndex >= 0 && winnerIndex < runningScore.length) {
-        isWinningScore = runningScore[winnerIndex] >= 42;
-      }
-      // Check if this is the first time the winning team went over 42
-      let isFirstTimeOver42 = false;
-      if (typeof winnerIndex === 'number' && isWinningScore) {
-        const prevScore = winnerIndex === 0 ? 
+        const winnerCurrentScore = runningScore[winnerIndex];
+        const winnerPrevScore = winnerIndex === 0 ? 
           runningScore[0] - team1Score : 
           runningScore[1] - team2Score;
-        isFirstTimeOver42 = prevScore < 42;
-      }
-                                  
-      if (isWinningScore && isFirstTimeOver42) {
-        // This was the winning hand - but we need to verify WHO caused the win
-        const { bidWinner } = decodeHand(hand);
         
-        // Safety checks for array bounds and valid indices
-        if (bidWinner < 1 || bidWinner > players.length) {
-          console.error(`Invalid bidWinner index: ${bidWinner}`);
+        // This is the winning hand if:
+        // 1. The winning team is now at 42+ AND
+        // 2. They were below 42 before this hand AND  
+        // 3. They actually won the game (score difference check)
+        const isWinningScore = winnerCurrentScore >= 42;
+        const isFirstTimeOver42 = winnerPrevScore < 42;
+        const actuallyWonGame = runningScore[winnerIndex] > runningScore[1 - winnerIndex];
+        
+        if (isWinningScore && isFirstTimeOver42 && actuallyWonGame) {
+          // This was the winning hand - find who made the bid that caused this
+          const { bidWinner } = decodeHand(hand);
+          
+          // Safety checks for array bounds and valid indices
+          if (bidWinner < 1 || bidWinner > players.length) {
+            console.error(`Invalid bidWinner index: ${bidWinner}`);
+            break;
+          }
+          
+          const bidderName = players[bidWinner - 1];
+          const bidderTeam = Math.floor((bidWinner - 1) / 2);
+          
+          if (bidderName && bidderName in awardData.playerStats) {
+            const playerStat = awardData.playerStats[bidderName];
+            
+            // CRITICAL: Only award clutch player if the bidder is on the WINNING team
+            if (playerStat && bidderTeam === winnerIndex) {
+              const winnerTeamScore = winnerIndex === 0 ? team1Score : team2Score;
+              
+              // The bidder gets clutch player only if their team gained positive points
+              // (meaning they succeeded in their bid or negotiated successfully)
+              if (winnerTeamScore > 0) {
+                console.log(`Player ${bidderName} made the clutch winning bid! Team ${winnerIndex} gained ${winnerTeamScore} points.`);
+                playerStat.wonFinalBid = true;
+              } else {
+                console.log(`Player ${bidderName} made a bid but their team won due to opponent failure, not clutch performance.`);
+              }
+            } else {
+              console.log(`Player ${bidderName} made the final bid but is NOT on winning team ${winnerIndex}. Bidder team: ${bidderTeam}`);
+            }
+          }
           break;
         }
-        
-        const bidderName = players[bidWinner - 1];
-        const bidderTeam = Math.floor((bidWinner - 1) / 2);
-        
-        if (bidderName && bidderName in awardData.playerStats) {
-          const playerStat = awardData.playerStats[bidderName];
-          
-          // Only award clutch player if:
-          // 1. The bidder is on the winning team AND
-          // 2. The bidder's team actually GAINED points from this hand (not just the opponents losing points)
-          if (playerStat && typeof winnerIndex === 'number' && bidderTeam === winnerIndex) {
-            const winnerTeamScore = winnerIndex === 0 ? team1Score : team2Score;
-            
-            // The bidder gets clutch player only if their team gained positive points
-            // (meaning they succeeded in their bid or negotiated successfully)
-            if (winnerTeamScore > 0) {
-              console.log(`Player ${bidderName} made the clutch winning bid! Team gained ${winnerTeamScore} points.`);
-              playerStat.wonFinalBid = true;
-            } else {
-              console.log(`Player ${bidderName} made a bid but their team won due to opponent failure, not clutch performance.`);
-            }
-          } else {
-            console.log(`Player ${bidderName} made a bid but is not on winning team.`);
-            console.log(`bidWinner=${bidWinner}, bidWinnerTeam=${bidderTeam}, winnerIndex=${winnerIndex}`);
-          }
-        }
-        break;
       }
     }
     
