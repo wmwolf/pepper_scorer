@@ -206,6 +206,56 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     
     <!-- This is a container for the victory celebration element -->
     <div id="victory-celebration-container"></div>
+    
+    <!-- Developer Panel (hidden by default) -->
+    <div id="developer-panel" class="hidden fixed bottom-4 right-4 bg-white border border-gray-300 rounded-lg shadow-lg p-4 w-96 z-50">
+      <div class="flex justify-between items-center mb-3">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900">🔧 Developer Panel</h3>
+          <p class="text-xs text-gray-500">Press Ctrl+X to toggle (or call showDevPanel() in console)</p>
+        </div>
+        <button id="close-dev-panel" class="text-gray-500 hover:text-gray-700">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      
+      <div class="space-y-3">
+        <!-- Export Section -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Export Game Data:</label>
+          <div class="flex gap-2">
+            <button id="export-btn" class="flex-1 bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700">
+              Export
+            </button>
+            <button id="copy-export-btn" class="bg-gray-600 text-white px-3 py-2 rounded text-sm hover:bg-gray-700 hidden">
+              Copy
+            </button>
+          </div>
+          <textarea id="export-data" class="w-full mt-2 p-2 border border-gray-300 rounded text-xs font-mono h-24 resize-none hidden" readonly></textarea>
+        </div>
+        
+        <!-- Import Section -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Import Game Data:</label>
+          <textarea id="import-data" class="w-full p-2 border border-gray-300 rounded text-xs font-mono h-24 resize-none" placeholder="Paste JSON game data here..."></textarea>
+          <button id="import-btn" class="w-full mt-2 bg-green-600 text-white px-3 py-2 rounded text-sm hover:bg-green-700">
+            Import & Reload
+          </button>
+        </div>
+        
+        <!-- Quick Actions -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Quick Actions:</label>
+          <div class="flex gap-2">
+            <button id="clear-debug-btn" class="flex-1 bg-red-600 text-white px-3 py-2 rounded text-sm hover:bg-red-700">
+              Clear Debug
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </BaseLayout>
 
@@ -310,5 +360,113 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // Start gameplay with the current game data
       startGameplay(gameData);
     }
+    
+    // Developer Panel Setup
+    setupDeveloperPanel();
+    
+    // Temporary: Add a global function to show the panel for testing
+    window.showDevPanel = () => {
+      const panel = document.getElementById('developer-panel');
+      if (panel) {
+        panel.classList.remove('hidden');
+        console.log('Developer panel shown via window.showDevPanel()');
+      } else {
+        console.log('Developer panel element not found!');
+      }
+    };
   });
+  
+  function setupDeveloperPanel() {
+    console.log('Setting up developer panel...');
+    
+    // Keyboard shortcut to toggle developer panel (Ctrl+X on Mac/PC - simple and reliable)
+    document.addEventListener('keydown', (e) => {
+      // Use a simple, reliable key combination that works across browsers
+      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === 'X' || e.key === 'x')) {
+        console.log('Developer panel shortcut activated!');
+        e.preventDefault();
+        const panel = document.getElementById('developer-panel');
+        if (panel) {
+          console.log('Toggling panel visibility');
+          panel.classList.toggle('hidden');
+        } else {
+          console.log('Panel element not found!');
+        }
+      }
+    });
+    
+    // Close panel button
+    document.getElementById('close-dev-panel')?.addEventListener('click', () => {
+      const panel = document.getElementById('developer-panel');
+      if (panel) panel.classList.add('hidden');
+    });
+    
+    // Export functionality
+    document.getElementById('export-btn')?.addEventListener('click', () => {
+      if (typeof window.exportGame === 'function') {
+        const gameData = window.exportGame();
+        const exportTextarea = document.getElementById('export-data');
+        const copyButton = document.getElementById('copy-export-btn');
+        
+        if (exportTextarea && copyButton) {
+          exportTextarea.value = JSON.stringify(gameData, null, 2);
+          exportTextarea.classList.remove('hidden');
+          copyButton.classList.remove('hidden');
+        }
+      } else {
+        alert('Export function not available. Make sure a game is loaded.');
+      }
+    });
+    
+    // Copy export data to clipboard
+    document.getElementById('copy-export-btn')?.addEventListener('click', async () => {
+      const exportTextarea = document.getElementById('export-data');
+      if (exportTextarea) {
+        try {
+          await navigator.clipboard.writeText(exportTextarea.value);
+          const button = document.getElementById('copy-export-btn');
+          if (button) {
+            const originalText = button.textContent;
+            button.textContent = 'Copied!';
+            setTimeout(() => {
+              button.textContent = originalText;
+            }, 2000);
+          }
+        } catch (err) {
+          // Fallback for older browsers
+          exportTextarea.select();
+          document.execCommand('copy');
+        }
+      }
+    });
+    
+    // Import functionality
+    document.getElementById('import-btn')?.addEventListener('click', () => {
+      const importTextarea = document.getElementById('import-data');
+      if (importTextarea && importTextarea.value.trim()) {
+        try {
+          const gameData = JSON.parse(importTextarea.value.trim());
+          if (typeof window.importGame === 'function') {
+            window.importGame(gameData);
+          } else {
+            alert('Import function not available. Make sure a game is loaded.');
+          }
+        } catch (err) {
+          alert('Invalid JSON data. Please check the format and try again.');
+        }
+      } else {
+        alert('Please paste game data in the import field.');
+      }
+    });
+    
+    // Clear debug functionality
+    document.getElementById('clear-debug-btn')?.addEventListener('click', () => {
+      if (typeof window.clearDebugGame === 'function') {
+        window.clearDebugGame();
+        alert('Debug game data cleared.');
+      } else {
+        alert('Clear function not available. Make sure a game is loaded.');
+      }
+    });
+  }
 </script>
