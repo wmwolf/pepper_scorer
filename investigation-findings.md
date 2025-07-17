@@ -184,3 +184,41 @@ if (tricks === 0) {
 All critical award calculation logic has been fixed. The awards system should now accurately reflect actual game performance and provide meaningful recognition to players and teams.
 
 The good news is that most issues were in isolated functions that could be fixed without major architectural changes. The core game state management was sound - the problems were primarily in the analysis and presentation layers.
+
+## Recent Updates (Post-Investigation)
+
+### ✅ Streaks Calculation Completely Rewritten (Latest)
+
+**Date**: Current session  
+**Problem**: Previous streak calculation was overly complex and potentially unreliable  
+**Solution**: Implemented simplified algorithm that:
+
+- Uses array to track all streaks throughout game
+- Simple logic: team continues streak when they make their bid OR opponents go set
+- Properly captures final ongoing streak after loop completion
+- Much cleaner and more reliable than previous approach
+
+### ✅ Game History Display Bug Fixed
+
+**Date**: Current session  
+**Problem**: When showing newest-first order, scores displayed were from previous hand  
+**Solution**: Fixed timing of score display vs score calculation in reverse chronological order
+
+### ✅ Developer Panel Added
+
+**Date**: Current session  
+**Feature**: Added hidden debug panel (Ctrl+X) with:
+
+- Game data export/import functionality  
+- JSON formatting and clipboard copy
+- Debug game state clearing
+- Useful for testing edge cases and reproducing issues
+
+### Current Assessment
+
+- **Streaks feature**: Now working reliably with simplified algorithm
+- **Awards system**: 11/13 issues fixed, only minor edge cases remain
+- **Game history**: Display bug resolved, works correctly in both sort orders
+- **Core gameplay**: Solid and reliable throughout
+
+The statistics and awards features are now significantly more robust than when the investigation began.
