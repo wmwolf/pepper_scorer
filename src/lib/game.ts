@@ -533,13 +533,13 @@ export function startGameplay(gameData: Record<string, unknown>) {
                     const [score1, score2] = calculateScore(hand);
                     
                     if (reverseHistory) {
-                        // For reverse order, decrement from the total
-                        runningScores[0] -= score1;
-                        runningScores[1] -= score2;
-                        
-                        // Display the scores after subtracting this hand
+                        // For reverse order, display the current running total first
                         team1Score = `${runningScores[0]}`;
                         team2Score = `${runningScores[1]}`;
+                        
+                        // Then decrement for the next iteration
+                        runningScores[0] -= score1;
+                        runningScores[1] -= score2;
                     } else {
                         // For chronological order, increment as usual
                         runningScores[0] += score1;

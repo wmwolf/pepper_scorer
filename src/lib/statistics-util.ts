@@ -238,7 +238,7 @@ export function calculateLongestStreak(hands: string[], teamIndex: number): numb
   let currentStreak = 0;
   const streaks: number[] = [];
   
-  hands.forEach((hand, index) => {
+  hands.forEach((hand) => {
     // Skip incomplete hands
     if (hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) {
       return;
