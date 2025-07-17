@@ -396,7 +396,7 @@ export class GameManager implements IGameManager {
     }
   
     // Other incomplete hands
-    if (hand.length < 6) {
+    if (!isHandComplete(hand)) {
       return { type: 'incomplete' };
     }
     

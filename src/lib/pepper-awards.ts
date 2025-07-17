@@ -2,7 +2,7 @@
 // These types are used for typing functions internally in this module
 // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
 import type { AwardTrackingData, PlayerStats, TeamStats } from './statistics-util';
-import { decodeHand, calculateScore, isPepperRound } from './gameState';
+import { decodeHand, calculateScore, isPepperRound, isHandComplete } from './gameState';
 
 export interface AwardDefinition {
   id: string;               // Unique identifier
@@ -274,7 +274,7 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           
           // Look through each hand to count when this team set the bidders
           data.hands.forEach(hand => {
-            if (hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) {
+            if (!isHandComplete(hand)) {
               return; // Skip incomplete hands
             }
             
@@ -336,7 +336,7 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           // We need to analyze hand by hand to exclude pepper rounds
           data.hands.forEach((hand, handIndex) => {
             // Skip pepper rounds (first four hands)
-            if (isPepperRound(handIndex) || hand.length < 6) return;
+            if (isPepperRound(handIndex) || !isHandComplete(hand)) return;
             
             try {
               const { bidWinner } = decodeHand(hand);
@@ -389,7 +389,7 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           
           // Analyze hands to count points given in negotiations
           data.hands.forEach(hand => {
-            if (hand.length < 6) return;
+            if (!isHandComplete(hand)) return;
             
             try {
               const { bidWinner, decision, tricks } = decodeHand(hand);

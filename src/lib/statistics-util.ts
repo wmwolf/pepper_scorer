@@ -1,5 +1,5 @@
 // src/lib/statistics-util.ts
-import { decodeHand, calculateScore, isPepperRound } from './gameState';
+import { decodeHand, calculateScore, isPepperRound, isHandComplete } from './gameState';
 
 // Trump suit names
 const trumpNames = {
@@ -147,13 +147,11 @@ export function calculateGameStats(
   };
   
   // Count completed hands
-  stats.totalHands = hands.filter(hand => 
-    hand.length === 6 || (hand.length >= 2 && hand[1] === '0')
-  ).length;
+  stats.totalHands = hands.filter(hand => isHandComplete(hand)).length;
   
   // Process each completed hand
   hands.forEach(hand => {
-    if (hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) {
+    if (!isHandComplete(hand)) {
       return; // Skip incomplete hands
     }
     
@@ -240,7 +238,7 @@ export function calculateLongestStreak(hands: string[], teamIndex: number): numb
   
   hands.forEach((hand) => {
     // Skip incomplete hands
-    if (hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) {
+    if (!isHandComplete(hand)) {
       return;
     }
     
@@ -323,9 +321,13 @@ export function trackAwardData(
   
   // Process each hand to collect award-relevant data
   hands.forEach((hand, handIndex) => {
-    // Skip incomplete or throw-in hands
-    if ((hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) || 
-        (hand.length >= 2 && hand[1] === '0')) {
+    // Skip incomplete hands
+    if (!isHandComplete(hand)) {
+      return;
+    }
+    
+    // Skip throw-in hands
+    if (hand.length >= 2 && hand[1] === '0') {
       return;
     }
     
@@ -585,7 +587,7 @@ export function trackAwardData(
     for (let i = 0; i < hands.length; i++) {
       const hand = hands[i];
       
-      if (!hand || (hand.length < 6 && (hand.length < 2 || hand[1] !== '0')) || 
+      if (!hand || !isHandComplete(hand) || 
           (hand.length >= 2 && hand[1] === '0')) {
         continue; // Skip incomplete or throw-in hands
       }
@@ -671,6 +673,19 @@ export function generateStatisticsHTML(
   scores: [number, number], 
   winnerIndex: number
 ): string {
+  // Validate input data
+  if (!hands || hands.length === 0) {
+    return '<div class="bg-white rounded-lg shadow-sm p-6"><p class="text-gray-500">No completed hands to display statistics.</p></div>';
+  }
+  
+  if (!teams || teams.length < 2) {
+    return '<div class="bg-white rounded-lg shadow-sm p-6"><p class="text-gray-500">Invalid team data.</p></div>';
+  }
+  
+  if (winnerIndex < 0 || winnerIndex >= teams.length) {
+    return '<div class="bg-white rounded-lg shadow-sm p-6"><p class="text-gray-500">Invalid winner data.</p></div>';
+  }
+
   const gameStats = calculateGameStats(hands, players);
   const team1LongestStreak = calculateLongestStreak(hands, 0);
   const team2LongestStreak = calculateLongestStreak(hands, 1);
@@ -775,8 +790,10 @@ export function generateStatisticsHTML(
             const maxCount = Math.max(...Object.values(gameStats.trumpCounts), 1);
             let barHeight = Math.round((count / maxCount) * 32);
             
-            // Ensure bars with count > 0 have some visible height
+            // Ensure bars with count > 0 have some visible height and validate bounds
             if (count > 0 && barHeight < 4) barHeight = 4;
+            if (barHeight > 128) barHeight = 128; // Cap maximum height
+            if (barHeight < 0) barHeight = 0; // Ensure non-negative
             
             // Set bar color based on suit
             const barColor = suit === 'H' || suit === 'D' ? 'bg-red-500' : 

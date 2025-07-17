@@ -1,6 +1,6 @@
 // src/lib/game.ts
 
-import { GameManager, getCurrentPhase, isPepperRound, calculateScore } from './gameState';
+import { GameManager, getCurrentPhase, isPepperRound, calculateScore, isHandComplete } from './gameState';
 import { getPath } from './path-utils';
 export function loadGameState() {
     // Check for debug game first
@@ -16,7 +16,7 @@ export function loadGameState() {
         // Add each hand one by one to properly calculate scores and maintain state consistency
         debugData.hands.forEach((hand: string) => {
             // For complete hands, add all parts at once
-            if (hand.length >= 6 || hand[1] === '0') {
+            if (isHandComplete(hand)) {
                 gameManager.state.hands.push(hand);
             } else {
                 // For incomplete hands, just set as the current hand
@@ -476,7 +476,7 @@ export function startGameplay(gameData: Record<string, unknown>) {
             // If we're showing newest first, we need to pre-calculate the running scores
             if (reverseHistory) {
                 gameManager.state.hands.forEach((hand) => {
-                    if (hand.length === 6 || (hand.length >= 2 && hand[1] === '0')) {
+                    if (isHandComplete(hand)) {
                         const [score1, score2] = calculateScore(hand);
                         runningScores[0] += score1;
                         runningScores[1] += score2;
@@ -529,7 +529,7 @@ export function startGameplay(gameData: Record<string, unknown>) {
                 }
                 
                 // Calculate scores based on display order
-                if (hand.length === 6 || (hand.length >= 2 && hand[1] === '0')) {
+                if (isHandComplete(hand)) {
                     const [score1, score2] = calculateScore(hand);
                     
                     if (reverseHistory) {
