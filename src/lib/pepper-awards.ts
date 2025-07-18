@@ -275,6 +275,127 @@ function calculateAwardStats(awardId: string, winnerName: string, data: AwardTra
       return `${winnerName} had ${stdDev.toFixed(1)}-point swing variance per bid`;
     }
     
+    case 'playing_it_safe': {
+      if (!playerStats) return `${winnerName} played it safe with 4-bids`;
+      
+      // Count successful non-pepper 4-bids vs total successful non-pepper bids
+      let successfulNonPepper4Bids = 0;
+      let totalSuccessfulNonPepperBids = 0;
+      
+      data.hands.forEach((hand, handIndex) => {
+        if (isPepperRound(handIndex) || !isHandComplete(hand)) return;
+        
+        try {
+          const { bidWinner, bid } = decodeHand(hand);
+          const playerNames = Object.keys(data.playerStats);
+          if (bidWinner === playerNames.indexOf(winnerName) + 1) {
+            const [score1, score2] = calculateScore(hand);
+            const bidderTeamIndex = (bidWinner - 1) % 2;
+            const bidderScore = bidderTeamIndex === 0 ? score1 : score2;
+            
+            // If bid was successful (not set)
+            if (bidderScore >= 0) {
+              totalSuccessfulNonPepperBids++;
+              if (bid === 4) {
+                successfulNonPepper4Bids++;
+              }
+            }
+          }
+        } catch {
+          // Skip invalid hands
+        }
+      });
+      
+      const percentage = totalSuccessfulNonPepperBids > 0 ? Math.round((successfulNonPepper4Bids / totalSuccessfulNonPepperBids) * 100) : 0;
+      return `${winnerName} played it safe with ${percentage}% 4-bids (${successfulNonPepper4Bids}/${totalSuccessfulNonPepperBids} successful bids)`;
+    }
+    
+    case 'no_trump_no_problem': {
+      if (!playerStats) return `${winnerName} relied heavily on no-trump bids`;
+      
+      // Count all no-trump bids vs total bids (including pepper rounds)
+      let noTrumpBids = 0;
+      let totalBids = 0;
+      
+      data.hands.forEach(hand => {
+        if (!isHandComplete(hand)) return;
+        
+        try {
+          const { bidWinner, trump } = decodeHand(hand);
+          const playerNames = Object.keys(data.playerStats);
+          if (bidWinner === playerNames.indexOf(winnerName) + 1) {
+            totalBids++;
+            if (trump === 'N') {
+              noTrumpBids++;
+            }
+          }
+        } catch {
+          // Skip invalid hands
+        }
+      });
+      
+      const percentage = totalBids > 0 ? Math.round((noTrumpBids / totalBids) * 100) : 0;
+      return `${winnerName} went no-trump ${percentage}% of the time (${noTrumpBids}/${totalBids} bids)`;
+    }
+    
+    case 'footprints_in_the_sand': {
+      if (!playerStats) return `${winnerName} carried their team to victory`;
+      
+      // Find partner's net points
+      const playerTeam = playerStats.team;
+      const partnerStats = Object.values(data.playerStats).find(p => p.team === playerTeam && p.name !== winnerName);
+      const partnerNetPoints = partnerStats?.netPoints || 0;
+      const playerNetPoints = playerStats.netPoints;
+      
+      const partnerContribution = Math.abs(partnerNetPoints);
+      const playerContribution = Math.abs(playerNetPoints);
+      const partnerPercentage = (playerContribution + partnerContribution) > 0 ? 
+        Math.round((partnerContribution / (playerContribution + partnerContribution)) * 100) : 0;
+      
+      return `${winnerName} dominated while partner contributed ${partnerPercentage}% (${partnerNetPoints > 0 ? '+' : ''}${partnerNetPoints} vs ${playerNetPoints > 0 ? '+' : ''}${playerNetPoints} net points)`;
+    }
+    
+    case 'shoot_for_the_moons': {
+      if (!playerStats) return `${winnerName} successfully bid multiple moons`;
+      
+      // Count successful Moon and Double Moon bids
+      let successfulMoons = 0;
+      let successfulDoubleMoons = 0;
+      
+      data.hands.forEach(hand => {
+        if (!isHandComplete(hand)) return;
+        
+        try {
+          const { bidWinner, bid } = decodeHand(hand);
+          const playerNames = Object.keys(data.playerStats);
+          if (bidWinner === playerNames.indexOf(winnerName) + 1) {
+            const [score1, score2] = calculateScore(hand);
+            const bidderTeamIndex = (bidWinner - 1) % 2;
+            const bidderScore = bidderTeamIndex === 0 ? score1 : score2;
+            
+            // If bid was successful (not set)
+            if (bidderScore >= 0) {
+              if (bid === 'M') successfulMoons++;
+              else if (bid === 'D') successfulDoubleMoons++;
+            }
+          }
+        } catch {
+          // Skip invalid hands
+        }
+      });
+      
+      const totalMoonBids = successfulMoons + successfulDoubleMoons;
+      if (successfulDoubleMoons > 0 && successfulMoons > 0) {
+        return `${winnerName} successfully bid ${successfulMoons} Moon${successfulMoons > 1 ? 's' : ''} and ${successfulDoubleMoons} Double Moon${successfulDoubleMoons > 1 ? 's' : ''}`;
+      } else if (successfulDoubleMoons > 0) {
+        return `${winnerName} successfully bid ${successfulDoubleMoons} Double Moon${successfulDoubleMoons > 1 ? 's' : ''}`;
+      } else if (successfulMoons > 0) {
+        return `${winnerName} successfully bid ${successfulMoons} Moon${successfulMoons > 1 ? 's' : ''}`;
+      } else {
+        return `${winnerName} successfully bid ${totalMoonBids} high-value bids`;
+      }
+    }
+    
     default:
       return `${winnerName} earned this award`;
   }
@@ -358,6 +479,26 @@ export const gameAwards: AwardDefinition[] = [
     important: true,
     icon: 'honey-pot'
   },
+  {
+    id: 'shoot_for_the_moons',
+    name: 'Shoot for the Moons',
+    description: 'Successfully bid multiple moons in one game',
+    technicalDefinition: 'Player who successfully bid at least two Moon or Double Moon bids in a single game.',
+    type: 'player',
+    scope: 'game',
+    important: true,
+    icon: 'target'
+  },
+  {
+    id: 'footprints_in_the_sand',
+    name: 'Footprints in the Sand',
+    description: 'Carried their team while partner contributed little',
+    technicalDefinition: 'Player whose team won but their partner contributed 25% or less of the combined net points.',
+    type: 'player',
+    scope: 'game',
+    important: false,
+    icon: 'footprints'
+  },
   
   // Dubious Awards
   {
@@ -389,6 +530,26 @@ export const gameAwards: AwardDefinition[] = [
     scope: 'game',
     important: false,
     icon: 'hand'
+  },
+  {
+    id: 'playing_it_safe',
+    name: 'Playing it Safe',
+    description: 'Overwhelmingly conservative with 4-bids',
+    technicalDefinition: 'Player who made 80% or more of their successful non-pepper bids as 4-bids. Minimum 5 successful non-pepper bids required.',
+    type: 'player',
+    scope: 'game',
+    important: false,
+    icon: 'shield-check'
+  },
+  {
+    id: 'no_trump_no_problem',
+    name: 'No Trump? No Problem!',
+    description: 'Excessive reliance on no-trump bids',
+    technicalDefinition: 'Player who bid no-trump for 50% or more of their bids (including pepper rounds). Minimum 4 bids required.',
+    type: 'player',
+    scope: 'game',
+    important: false,
+    icon: 'ban'
   }
 ];
 
@@ -856,6 +1017,234 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         };
       }
       
+      case 'shoot_for_the_moons': {
+        // Player who successfully bid at least 2 moons/double moons in a single game
+        const qualifyingPlayers = playerStats.filter(player => {
+          let successfulHighValueBids = 0;
+          
+          data.hands.forEach(hand => {
+            if (!isHandComplete(hand)) return;
+            
+            try {
+              const { bidWinner, bid } = decodeHand(hand);
+              const playerNames = Object.keys(data.playerStats);
+              const playerIndex = playerNames.indexOf(player.name) + 1;
+              
+              if (bidWinner === playerIndex && (bid === 'M' || bid === 'D')) {
+                const [score1, score2] = calculateScore(hand);
+                const bidderTeamIndex = (bidWinner - 1) % 2;
+                const bidderScore = bidderTeamIndex === 0 ? score1 : score2;
+                
+                // If bid was successful (not set)
+                if (bidderScore >= 0) {
+                  successfulHighValueBids++;
+                }
+              }
+            } catch {
+              // Skip invalid hands
+            }
+          });
+          
+          return successfulHighValueBids >= 2;
+        });
+        
+        if (qualifyingPlayers.length === 0) return null;
+        
+        // If multiple qualify, pick one at random
+        const winner = qualifyingPlayers[Math.floor(Math.random() * qualifyingPlayers.length)];
+        
+        return { 
+          ...award, 
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
+      }
+      
+      case 'footprints_in_the_sand': {
+        // Player whose team won but partner contributed 25% or less of combined net points
+        if (data.winningTeam === undefined) return null;
+        
+        const winningTeamPlayers = playerStats.filter(player => player.team === data.winningTeam);
+        if (winningTeamPlayers.length !== 2) return null;
+        
+        const [player1, player2] = winningTeamPlayers;
+        const totalContribution = Math.abs(player1.netPoints) + Math.abs(player2.netPoints);
+        
+        if (totalContribution === 0) return null;
+        
+        const player1Percentage = Math.abs(player1.netPoints) / totalContribution;
+        const player2Percentage = Math.abs(player2.netPoints) / totalContribution;
+        
+        // Check if one player dominated (75%+) while partner contributed little (25% or less)
+        if (player1Percentage >= 0.75 && player2Percentage <= 0.25) {
+          return { 
+            ...award, 
+            winner: player1.name,
+            statDetails: calculateAwardStats(award.id, player1.name, data)
+          };
+        } else if (player2Percentage >= 0.75 && player1Percentage <= 0.25) {
+          return { 
+            ...award, 
+            winner: player2.name,
+            statDetails: calculateAwardStats(award.id, player2.name, data)
+          };
+        }
+        
+        return null;
+      }
+      
+      case 'playing_it_safe': {
+        // Player with 80%+ of successful non-pepper bids as 4-bids, min 5 successful
+        const qualifyingPlayers = playerStats.filter(player => {
+          let successfulNonPepper4Bids = 0;
+          let totalSuccessfulNonPepperBids = 0;
+          
+          data.hands.forEach((hand, handIndex) => {
+            if (isPepperRound(handIndex) || !isHandComplete(hand)) return;
+            
+            try {
+              const { bidWinner, bid } = decodeHand(hand);
+              const playerNames = Object.keys(data.playerStats);
+              const playerIndex = playerNames.indexOf(player.name) + 1;
+              
+              if (bidWinner === playerIndex) {
+                const [score1, score2] = calculateScore(hand);
+                const bidderTeamIndex = (bidWinner - 1) % 2;
+                const bidderScore = bidderTeamIndex === 0 ? score1 : score2;
+                
+                // If bid was successful (not set)
+                if (bidderScore >= 0) {
+                  totalSuccessfulNonPepperBids++;
+                  if (bid === 4) {
+                    successfulNonPepper4Bids++;
+                  }
+                }
+              }
+            } catch {
+              // Skip invalid hands
+            }
+          });
+          
+          return totalSuccessfulNonPepperBids >= 5 && 
+                 (successfulNonPepper4Bids / totalSuccessfulNonPepperBids) >= 0.8;
+        });
+        
+        if (qualifyingPlayers.length === 0) return null;
+        
+        // Find player with highest percentage of 4-bids
+        const playersWithRatios = qualifyingPlayers.map(player => {
+          let successfulNonPepper4Bids = 0;
+          let totalSuccessfulNonPepperBids = 0;
+          
+          data.hands.forEach((hand, handIndex) => {
+            if (isPepperRound(handIndex) || !isHandComplete(hand)) return;
+            
+            try {
+              const { bidWinner, bid } = decodeHand(hand);
+              const playerNames = Object.keys(data.playerStats);
+              const playerIndex = playerNames.indexOf(player.name) + 1;
+              
+              if (bidWinner === playerIndex) {
+                const [score1, score2] = calculateScore(hand);
+                const bidderTeamIndex = (bidWinner - 1) % 2;
+                const bidderScore = bidderTeamIndex === 0 ? score1 : score2;
+                
+                if (bidderScore >= 0) {
+                  totalSuccessfulNonPepperBids++;
+                  if (bid === 4) {
+                    successfulNonPepper4Bids++;
+                  }
+                }
+              }
+            } catch {
+              // Skip invalid hands
+            }
+          });
+          
+          const ratio = totalSuccessfulNonPepperBids > 0 ? successfulNonPepper4Bids / totalSuccessfulNonPepperBids : 0;
+          return { player, ratio };
+        });
+        
+        const winner = playersWithRatios.reduce((highest, current) => 
+          current.ratio > highest.ratio ? current : highest
+        );
+        
+        return { 
+          ...award, 
+          winner: winner.player.name,
+          statDetails: calculateAwardStats(award.id, winner.player.name, data)
+        };
+      }
+      
+      case 'no_trump_no_problem': {
+        // Player who bid no-trump 50%+ of the time, min 4 bids
+        const qualifyingPlayers = playerStats.filter(player => {
+          let noTrumpBids = 0;
+          let totalBids = 0;
+          
+          data.hands.forEach(hand => {
+            if (!isHandComplete(hand)) return;
+            
+            try {
+              const { bidWinner, trump } = decodeHand(hand);
+              const playerNames = Object.keys(data.playerStats);
+              const playerIndex = playerNames.indexOf(player.name) + 1;
+              
+              if (bidWinner === playerIndex) {
+                totalBids++;
+                if (trump === 'N') {
+                  noTrumpBids++;
+                }
+              }
+            } catch {
+              // Skip invalid hands
+            }
+          });
+          
+          return totalBids >= 4 && (noTrumpBids / totalBids) >= 0.5;
+        });
+        
+        if (qualifyingPlayers.length === 0) return null;
+        
+        // Find player with highest percentage of no-trump bids
+        const playersWithRatios = qualifyingPlayers.map(player => {
+          let noTrumpBids = 0;
+          let totalBids = 0;
+          
+          data.hands.forEach(hand => {
+            if (!isHandComplete(hand)) return;
+            
+            try {
+              const { bidWinner, trump } = decodeHand(hand);
+              const playerNames = Object.keys(data.playerStats);
+              const playerIndex = playerNames.indexOf(player.name) + 1;
+              
+              if (bidWinner === playerIndex) {
+                totalBids++;
+                if (trump === 'N') {
+                  noTrumpBids++;
+                }
+              }
+            } catch {
+              // Skip invalid hands
+            }
+          });
+          
+          const ratio = totalBids > 0 ? noTrumpBids / totalBids : 0;
+          return { player, ratio };
+        });
+        
+        const winner = playersWithRatios.reduce((highest, current) => 
+          current.ratio > highest.ratio ? current : highest
+        );
+        
+        return { 
+          ...award, 
+          winner: winner.player.name,
+          statDetails: calculateAwardStats(award.id, winner.player.name, data)
+        };
+      }
+      
       case 'overreaching': {
         // Player with highest average failed bid value
         const qualifyingPlayers = playerStats.filter(player => player.failedBidValues.length >= 2);
@@ -1094,6 +1483,8 @@ export function selectGameAwards(data: AwardTrackingData): AwardWithWinner[] {
   const selectedAwards: AwardWithWinner[] = [];
   const awards = getAwards({ scope: 'game' });
   
+  // console.log('Available game awards:', awards.map(a => `${a.id} (${a.type}, important: ${a.important})`));
+  
   // First check for important awards
   // Important team award 
   const importantTeamAwards = awards.filter(a => a.type === 'team' && a.important && !a.id.includes('overreaching') && !a.id.includes('helping_hand'));
@@ -1116,7 +1507,7 @@ export function selectGameAwards(data: AwardTrackingData): AwardWithWinner[] {
   }
   
   // Important dubious award
-  const importantDubiousAwards = awards.filter(a => a.important && (a.id.includes('overreaching') || a.id.includes('false_confidence') || a.id.includes('helping_hand')));
+  const importantDubiousAwards = awards.filter(a => a.important && (a.id.includes('overreaching') || a.id.includes('false_confidence') || a.id.includes('helping_hand') || a.id.includes('playing_it_safe') || a.id.includes('no_trump_no_problem')));
   for (const award of importantDubiousAwards) {
     const result = evaluateAward(award, data);
     if (result) {
@@ -1138,8 +1529,8 @@ export function selectGameAwards(data: AwardTrackingData): AwardWithWinner[] {
   }
   
   // If we don't have a positive player award yet, try to find one
-  if (!selectedAwards.some(a => a.type === 'player' && !a.id.includes('overreaching') && !a.id.includes('false_confidence'))) {
-    const playerAwards = awards.filter(a => a.type === 'player' && !a.important && !a.id.includes('overreaching') && !a.id.includes('false_confidence'));
+  if (!selectedAwards.some(a => a.type === 'player' && !a.id.includes('overreaching') && !a.id.includes('false_confidence') && !a.id.includes('playing_it_safe') && !a.id.includes('no_trump_no_problem'))) {
+    const playerAwards = awards.filter(a => a.type === 'player' && !a.important && !a.id.includes('overreaching') && !a.id.includes('false_confidence') && !a.id.includes('playing_it_safe') && !a.id.includes('no_trump_no_problem'));
     for (const award of playerAwards) {
       const result = evaluateAward(award, data);
       if (result) {
@@ -1150,10 +1541,13 @@ export function selectGameAwards(data: AwardTrackingData): AwardWithWinner[] {
   }
   
   // If we don't have a dubious award yet, try to find one
-  if (!selectedAwards.some(a => a.id.includes('overreaching') || a.id.includes('false_confidence') || a.id.includes('helping_hand'))) {
-    const dubiousAwards = awards.filter(a => !a.important && (a.id.includes('overreaching') || a.id.includes('false_confidence') || a.id.includes('helping_hand')));
+  if (!selectedAwards.some(a => a.id.includes('overreaching') || a.id.includes('false_confidence') || a.id.includes('helping_hand') || a.id.includes('playing_it_safe') || a.id.includes('no_trump_no_problem'))) {
+    const dubiousAwards = awards.filter(a => !a.important && (a.id.includes('overreaching') || a.id.includes('false_confidence') || a.id.includes('helping_hand') || a.id.includes('playing_it_safe') || a.id.includes('no_trump_no_problem')));
+    // console.log('Looking for dubious awards:', dubiousAwards.map(a => a.id));
     for (const award of dubiousAwards) {
+      // console.log(`Evaluating dubious award: ${award.id}`);
       const result = evaluateAward(award, data);
+      // console.log(`Result for ${award.id}:`, result ? `Winner: ${result.winner}` : 'No winner');
       if (result) {
         selectedAwards.push(result);
         break;
