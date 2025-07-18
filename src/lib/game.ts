@@ -1006,10 +1006,21 @@ function createConfettiEffect() {
         console.log('Game awards selected:', gameAwards);
         
         // Select series awards if series is complete
-        let seriesAwards: Array<{id: string; name: string; description: string; technicalDefinition: string; type: string; scope: string; icon: string; winner: string}> = [];
+        let seriesAwards: Array<{id: string; name: string; description: string; technicalDefinition: string; type: string; scope: string; icon: string; winner: string; statDetails?: string}> = [];
         if (gameManager.state.isSeries && gameManager.state.seriesWinner !== undefined) {
           const { selectSeriesAwards } = awardsModule;
-          seriesAwards = selectSeriesAwards(awardData);
+          const { aggregateSeriesAwardData } = statsModule;
+          
+          // Use aggregated series data instead of current game data for series awards
+          const seriesAwardData = aggregateSeriesAwardData(
+            gameManager.state.completedGames || [],
+            gameManager.state.hands,
+            gameManager.state.players,
+            gameManager.state.teams,
+            gameManager.state.seriesWinner
+          );
+          
+          seriesAwards = selectSeriesAwards(seriesAwardData);
           console.log('Series awards selected:', seriesAwards);
         }
         
@@ -1035,8 +1046,8 @@ function createConfettiEffect() {
   function createVictoryCelebration(
     gameManager: GameManager, 
     winnerIndex: number, 
-    gameAwards: Array<{id: string; name: string; description: string; technicalDefinition: string; type: string; scope: string; icon: string; winner: string}> = [],
-    seriesAwards: Array<{id: string; name: string; description: string; technicalDefinition: string; type: string; scope: string; icon: string; winner: string}> = []
+    gameAwards: Array<{id: string; name: string; description: string; technicalDefinition: string; type: string; scope: string; icon: string; winner: string; statDetails?: string}> = [],
+    seriesAwards: Array<{id: string; name: string; description: string; technicalDefinition: string; type: string; scope: string; icon: string; winner: string; statDetails?: string}> = []
   ) {
     // Ensure we have a valid winner index
     const winningTeam = winnerIndex !== null ? (gameManager.state.teams[winnerIndex] || 'Winner') : 'Winner';
@@ -1329,6 +1340,7 @@ function createConfettiEffect() {
     scope: string;
     icon: string;
     winner: string;
+    statDetails?: string;
   }) {
     // Define styling based on award type
     const isDubious = award.id.includes('overreaching') || 
@@ -1388,7 +1400,8 @@ function createConfettiEffect() {
       'moon': '🌙',
       'sun': '☀️',
       'scale': '⚖️',
-      'clock-rewind': '⏪'
+      'clock-rewind': '⏪',
+      'honey-pot': '🍯'
     };
     
     const iconEmoji = iconMap[award.icon] || '🏆'; // Default to trophy if icon not found
@@ -1423,6 +1436,12 @@ function createConfettiEffect() {
           <p class="text-xs text-gray-600 mt-2 text-left">
             <span class="font-medium text-gray-700">Criteria:</span> ${award.technicalDefinition}
           </p>
+          
+          ${award.statDetails ? `
+            <p class="text-xs text-gray-500 mt-2 text-left">
+              ${award.statDetails}
+            </p>
+          ` : ''}
         </div>
       </div>
     `;

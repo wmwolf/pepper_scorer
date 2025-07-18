@@ -17,6 +17,267 @@ export interface AwardDefinition {
 
 export interface AwardWithWinner extends AwardDefinition {
   winner: string;           // Name of player or team who won the award
+  statDetails?: string;     // Specific statistics for this award (e.g., "Player X had 3 Big Fours")
+}
+
+// ==============================
+// Stat Calculation Functions
+// ==============================
+
+/**
+ * Calculate specific statistics for each award type
+ */
+function calculateAwardStats(awardId: string, winnerName: string, data: AwardTrackingData): string {
+  const playerStats = data.playerStats[winnerName];
+  const teamStats = data.teamStats[winnerName];
+  
+  switch (awardId) {
+    // Team Awards
+    case 'defensive_fortress': {
+      const sets = teamStats?.setsAgainstOpponents || 0;
+      return `${winnerName} set opponents ${sets} times`;
+    }
+    
+    case 'bid_specialists': {
+      if (!teamStats) return `${winnerName} had excellent bid success rate`;
+      
+      // Calculate non-pepper bid success rate
+      let nonPepperBids = 0;
+      let nonPepperSets = 0;
+      
+      data.hands.forEach((hand, handIndex) => {
+        if (isPepperRound(handIndex) || !isHandComplete(hand)) return;
+        
+        try {
+          const { bidWinner } = decodeHand(hand);
+          const bidderTeamIndex = (bidWinner - 1) % 2;
+          const teamIndex = Object.values(data.teamStats).indexOf(teamStats);
+          
+          if (bidderTeamIndex === teamIndex) {
+            nonPepperBids++;
+            const [score1, score2] = calculateScore(hand);
+            const teamScore = teamIndex === 0 ? score1 : score2;
+            if (teamScore < 0) {
+              nonPepperSets++;
+            }
+          }
+        } catch {
+          // Skip invalid hands
+        }
+      });
+      
+      const successRate = nonPepperBids > 0 ? Math.round((1 - (nonPepperSets / nonPepperBids)) * 100) : 0;
+      return `${winnerName} had ${successRate}% bid success rate (${nonPepperBids - nonPepperSets}/${nonPepperBids} bids)`;
+    }
+    
+    case 'remember_the_time': {
+      const deficit = teamStats?.maxDeficit || 0;
+      return `${winnerName} overcame a ${deficit}-point deficit`;
+    }
+    
+    case 'helping_hand': {
+      let pointsGiven = 0;
+      const teamIndex = Object.values(data.teamStats).indexOf(teamStats!);
+      
+      data.hands.forEach(hand => {
+        if (!isHandComplete(hand)) return;
+        
+        try {
+          const { bidWinner, decision, tricks } = decodeHand(hand);
+          const bidderTeamIndex = (bidWinner - 1) % 2;
+          
+          if (bidderTeamIndex === teamIndex && decision === 'F' && tricks > 0) {
+            pointsGiven += tricks;
+          }
+        } catch {
+          // Skip invalid hands
+        }
+      });
+      
+      return `${winnerName} gave away ${pointsGiven} points in negotiations`;
+    }
+    
+    case 'bid_bullies': {
+      const successes = teamStats?.highValueBids.successes || 0;
+      return `${winnerName} made ${successes} successful high-value bids`;
+    }
+    
+    case 'streak_masters': {
+      const streak = teamStats?.longestStreak || 0;
+      return `${winnerName} had a ${streak}-hand scoring streak`;
+    }
+    
+    case 'defensive_specialists': {
+      const rate = Math.round((teamStats?.defensiveSuccessRate || 0) * 100);
+      const successful = teamStats?.successfulDefenses || 0;
+      const total = teamStats?.totalDefenses || 0;
+      return `${winnerName} had ${rate}% defensive success rate (${successful}/${total} defenses)`;
+    }
+    
+    // Player Awards
+    case 'trump_master': {
+      if (!playerStats) return `${winnerName} mastered trump suits`;
+      
+      const suitedAttempts = Object.entries(playerStats.trumpBids)
+        .filter(([suit]) => suit !== 'N')
+        .reduce((sum, [, data]) => sum + data.attempts, 0);
+      
+      const suitedSuccesses = Object.entries(playerStats.trumpBids)
+        .filter(([suit]) => suit !== 'N')
+        .reduce((sum, [, data]) => sum + data.successes, 0);
+      
+      const rate = Math.round((suitedSuccesses / suitedAttempts) * 100);
+      return `${winnerName} had ${rate}% success rate with trump suits (${suitedSuccesses}/${suitedAttempts} bids)`;
+    }
+    
+    case 'bid_royalty': {
+      const bids = playerStats?.bidsWon || 0;
+      return `${winnerName} won ${bids} bids`;
+    }
+    
+    case 'clutch_player': {
+      return `${winnerName} made the winning bid`;
+    }
+    
+    case 'honeypot': {
+      const bigFours = playerStats?.bigFours || 0;
+      return `${winnerName} had ${bigFours} Big Fours`;
+    }
+    
+    case 'series_mvp': {
+      const netPoints = playerStats?.netPoints || 0;
+      const sign = netPoints >= 0 ? '+' : '';
+      return `${winnerName} had ${sign}${netPoints} net points`;
+    }
+    
+    case 'suit_specialist': {
+      if (!playerStats) return `${winnerName} specialized in one suit`;
+      
+      let bestSuit = '';
+      let bestRate = 0;
+      let bestAttempts = 0;
+      let bestSuccesses = 0;
+      
+      Object.entries(playerStats.trumpBids).forEach(([suit, data]) => {
+        if (data.attempts >= 4) {
+          const rate = data.successes / data.attempts;
+          if (rate > bestRate) {
+            bestRate = rate;
+            bestSuit = suit;
+            bestAttempts = data.attempts;
+            bestSuccesses = data.successes;
+          }
+        }
+      });
+      
+      const suitNames = { 'C': 'Clubs', 'D': 'Diamonds', 'H': 'Hearts', 'S': 'Spades', 'N': 'No-trump' };
+      const suitName = suitNames[bestSuit as keyof typeof suitNames] || bestSuit;
+      const percentage = Math.round(bestRate * 100);
+      
+      return `${winnerName} had ${percentage}% ${suitName} success rate (${bestSuccesses}/${bestAttempts} bids)`;
+    }
+    
+    case 'pepper_perfect': {
+      const opponentsSets = playerStats?.pepperRoundBids.opponents_set || 0;
+      return `${winnerName} never failed a pepper bid and set opponents ${opponentsSets} times`;
+    }
+    
+    // Dubious Awards
+    case 'overreaching': {
+      if (!playerStats || playerStats.failedBidValues.length === 0) {
+        return `${winnerName} had ambitious failed bids`;
+      }
+      
+      const avgValue = playerStats.failedBidValues.reduce((sum, val) => sum + val, 0) / playerStats.failedBidValues.length;
+      return `${winnerName} averaged ${avgValue.toFixed(1)} points on failed bids`;
+    }
+    
+    case 'false_confidence': {
+      if (!playerStats) return `${winnerName} struggled with no-trump bids`;
+      
+      const failedNoTrumps = playerStats.trumpBids['N'] 
+        ? playerStats.trumpBids['N'].attempts - playerStats.trumpBids['N'].successes 
+        : 0;
+      
+      return `${winnerName} failed ${failedNoTrumps} no-trump bids`;
+    }
+    
+    case 'moon_struck': {
+      if (!playerStats) return `${winnerName} reached for the moon too often`;
+      
+      const totalFailed = playerStats.highValueBids.attempts - playerStats.highValueBids.successes;
+      
+      // We need to analyze the actual failed bids to separate Moon vs Double Moon
+      let moonFailed = 0;
+      let doubleMoonFailed = 0;
+      
+      // Count from failedBidValues (7 = Moon, 14 = Double Moon)
+      playerStats.failedBidValues.forEach(value => {
+        if (value === 7) moonFailed++;
+        else if (value === 14) doubleMoonFailed++;
+      });
+      
+      if (doubleMoonFailed > 0 && moonFailed > 0) {
+        return `${winnerName} failed ${moonFailed} Moon bids and ${doubleMoonFailed} Double Moon bid${doubleMoonFailed > 1 ? 's' : ''}`;
+      } else if (doubleMoonFailed > 0) {
+        return `${winnerName} failed ${doubleMoonFailed} Double Moon bid${doubleMoonFailed > 1 ? 's' : ''}`;
+      } else if (moonFailed > 0) {
+        return `${winnerName} failed ${moonFailed} Moon bid${moonFailed > 1 ? 's' : ''}`;
+      } else {
+        return `${winnerName} failed ${totalFailed} high-value bids`;
+      }
+    }
+    
+    case 'gambling_problem': {
+      // Count team's sets when defending against 4/5 bids
+      let defensiveSets = 0;
+      const teamIndex = Object.values(data.teamStats).indexOf(teamStats!);
+      
+      data.hands.forEach(hand => {
+        if (!isHandComplete(hand)) return;
+        
+        try {
+          const { bidWinner, bid, decision } = decodeHand(hand);
+          const bidderTeamIndex = (bidWinner - 1) % 2;
+          const defendingTeamIndex = 1 - bidderTeamIndex;
+          
+          // Check if this team was defending against a 4 or 5 bid that was played (not negotiated)
+          if (defendingTeamIndex === teamIndex && 
+              (bid === 4 || bid === 5 || bid === 'P') && 
+              decision === 'P') {
+            
+            const [score1, score2] = calculateScore(hand);
+            const defendingTeamScore = teamIndex === 0 ? score1 : score2;
+            
+            // If defending team score is negative, they went set
+            if (defendingTeamScore < 0) {
+              defensiveSets++;
+            }
+          }
+        } catch {
+          // Skip invalid hands
+        }
+      });
+      
+      return `${winnerName} went set ${defensiveSets} times defending 4/5 bids`;
+    }
+    
+    case 'feast_or_famine': {
+      if (!playerStats || playerStats.pointsPerBid.length === 0) {
+        return `${winnerName} was spectacularly inconsistent`;
+      }
+      
+      const mean = playerStats.pointsPerBid.reduce((sum, val) => sum + val, 0) / playerStats.pointsPerBid.length;
+      const squaredDiffs = playerStats.pointsPerBid.map(val => Math.pow(val - mean, 2));
+      const variance = squaredDiffs.reduce((sum, val) => sum + val, 0) / playerStats.pointsPerBid.length;
+      const stdDev = Math.sqrt(variance);
+      
+      return `${winnerName} had ${stdDev.toFixed(1)}-point swing variance per bid`;
+    }
+    
+    default:
+      return `${winnerName} earned this award`;
+  }
 }
 
 // ==============================
@@ -86,6 +347,16 @@ export const gameAwards: AwardDefinition[] = [
     scope: 'game',
     important: true,
     icon: 'zap'
+  },
+  {
+    id: 'honeypot',
+    name: 'Honeypot',
+    description: 'Master of the dangerous Big Four',
+    technicalDefinition: 'Player with the most "Big Four" hands - 4-bids (including Pepper) where opponents chose to play and got zero tricks, excluding clubs bids. Minimum 2 Big Fours required.',
+    type: 'player',
+    scope: 'game',
+    important: true,
+    icon: 'honey-pot'
   },
   
   // Dubious Awards
@@ -205,8 +476,8 @@ export const seriesAwards: AwardDefinition[] = [
     id: 'gambling_problem',
     name: 'Gambling Problem',
     description: 'Should have folded but couldn\'t resist playing',
-    technicalDefinition: 'Player on teams that most frequently went set when defending against bids of 4 or 5 (which could have been negotiated).',
-    type: 'player',
+    technicalDefinition: 'Team that most frequently went set when defending against bids of 4 or 5 (which could have been negotiated).',
+    type: 'team',
     scope: 'series',
     important: false,
     icon: 'dice-5'
@@ -323,7 +594,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         // If there's a tie, return null (no award)
         if (secondBest) return null;
         
-        return { ...award, winner: winner.name };
+        return { 
+          ...award, 
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
       }
       
       case 'bid_specialists': {
@@ -373,13 +648,21 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         qualifyingTeams.sort((a, b) => b.successRatio - a.successRatio);
         
         // Return the team with the highest success ratio
-        return { ...award, winner: qualifyingTeams[0].team.name };
+        return { 
+          ...award, 
+          winner: qualifyingTeams[0].team.name,
+          statDetails: calculateAwardStats(award.id, qualifyingTeams[0].team.name, data)
+        };
       }
       
       case 'remember_the_time': {
         // Team that overcame a 30+ point deficit
         const comebackTeam = teamStats.find(team => team.comebackAchieved);
-        return comebackTeam ? { ...award, winner: comebackTeam.name } : null;
+        return comebackTeam ? { 
+          ...award, 
+          winner: comebackTeam.name,
+          statDetails: calculateAwardStats(award.id, comebackTeam.name, data)
+        } : null;
       }
       
       case 'helping_hand': {
@@ -422,7 +705,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           qualifyingTeams[0]
         );
         
-        return { ...award, winner: winner.team.name };
+        return { 
+          ...award, 
+          winner: winner.team.name,
+          statDetails: calculateAwardStats(award.id, winner.team.name, data)
+        };
       }
       
       case 'bid_bullies': {
@@ -434,7 +721,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           current.highValueBids.successes > most.highValueBids.successes ? current : most
         );
         
-        return { ...award, winner: winner.name };
+        return { 
+          ...award, 
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
       }
       
       case 'streak_masters': {
@@ -445,7 +736,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         
         if (winner.longestStreak <= 1) return null; // At least 2+ streak to qualify
         
-        return { ...award, winner: winner.name };
+        return { 
+          ...award, 
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
       }
       
       case 'defensive_specialists': {
@@ -459,7 +754,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         
         if (winner.defensiveSuccessRate === 0) return null;
         
-        return { ...award, winner: winner.name };
+        return { 
+          ...award, 
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
       }
     }
   }
@@ -504,7 +803,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         
         if (winnerData.successRate === 0) return null;
         
-        return { ...award, winner: winnerData.player.name };
+        return { 
+          ...award, 
+          winner: winnerData.player.name,
+          statDetails: calculateAwardStats(award.id, winnerData.player.name, data)
+        };
       }
       
       case 'bid_royalty': {
@@ -515,13 +818,42 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         
         if (winner.bidsWon === 0) return null;
         
-        return { ...award, winner: winner.name };
+        return { 
+          ...award, 
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
       }
       
       case 'clutch_player': {
         // Player who made winning bid
         const clutchPlayer = playerStats.find(player => player.wonFinalBid);
-        return clutchPlayer ? { ...award, winner: clutchPlayer.name } : null;
+        return clutchPlayer ? { 
+          ...award, 
+          winner: clutchPlayer.name,
+          statDetails: calculateAwardStats(award.id, clutchPlayer.name, data)
+        } : null;
+      }
+      
+      case 'honeypot': {
+        // Player with most Big Fours, minimum 2 required
+        const qualifyingPlayers = playerStats.filter(player => player.bigFours >= 2);
+        if (qualifyingPlayers.length === 0) return null;
+        
+        // Find the maximum number of Big Fours
+        const maxBigFours = Math.max(...qualifyingPlayers.map(p => p.bigFours));
+        
+        // Get all players with the maximum Big Fours (in case of ties)
+        const topPlayers = qualifyingPlayers.filter(p => p.bigFours === maxBigFours);
+        
+        // Random selection from tied players
+        const winner = topPlayers[Math.floor(Math.random() * topPlayers.length)];
+        
+        return { 
+          ...award, 
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
       }
       
       case 'overreaching': {
@@ -538,7 +870,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           current.avgFailedBidValue > highest.avgFailedBidValue ? current : highest
         );
         
-        return { ...award, winner: winnerData.player.name };
+        return { 
+          ...award, 
+          winner: winnerData.player.name,
+          statDetails: calculateAwardStats(award.id, winnerData.player.name, data)
+        };
       }
       
       case 'false_confidence': {
@@ -556,7 +892,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           return currFailedNoTrumps > mostFailedNoTrumps ? current : most;
         });
         
-        return { ...award, winner: winner.name };
+        return { 
+          ...award, 
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
       }
       
       case 'series_mvp': {
@@ -567,7 +907,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           current.netPoints > best.netPoints ? current : best
         );
         
-        return { ...award, winner: winner.name };
+        return { 
+          ...award, 
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
       }
       
       case 'suit_specialist': {
@@ -603,7 +947,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         
         if (winnerData.bestSuccessRate === 0) return null;
         
-        return { ...award, winner: winnerData.player.name };
+        return { 
+          ...award, 
+          winner: winnerData.player.name,
+          statDetails: calculateAwardStats(award.id, winnerData.player.name, data)
+        };
       }
       
       case 'pepper_perfect': {
@@ -619,7 +967,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         // If multiple qualify, pick one at random
         const randomIndex = Math.floor(Math.random() * qualifyingPlayers.length);
         const player = qualifyingPlayers[randomIndex];
-        return player ? { ...award, winner: player.name } : null;
+        return player ? { 
+          ...award, 
+          winner: player.name,
+          statDetails: calculateAwardStats(award.id, player.name, data)
+        } : null;
       }
       
       case 'moon_struck': {
@@ -637,27 +989,64 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           return currFailed > mostFailed ? current : most;
         });
         
-        return { ...award, winner: winner.name };
+        return { 
+          ...award, 
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
       }
       
       case 'gambling_problem': {
-        // Player with most 4/5 bids that went set
-        // This is a simplified implementation - ideally we'd track more details about each hand
-        const qualifyingPlayers = playerStats.filter(player => {
-          // Look for players with multiple failed bids that could have been negotiated
-          const lowFailedBids = player.failedBidValues.filter(val => val <= 5).length;
-          return lowFailedBids >= 2;
+        // Team that most frequently went set when defending against 4/5 bids 
+        const teamsWithDefensiveSets = Object.values(data.teamStats).map(team => {
+          let defensiveSets = 0;
+          let defensiveOpportunities = 0;
+          const teamIndex = Object.values(data.teamStats).indexOf(team);
+          
+          data.hands.forEach(hand => {
+            if (!isHandComplete(hand)) return;
+            
+            try {
+              const { bidWinner, bid, decision } = decodeHand(hand);
+              const bidderTeamIndex = (bidWinner - 1) % 2;
+              const defendingTeamIndex = 1 - bidderTeamIndex;
+              
+              // Check if this team was defending against a 4 or 5 bid that was played
+              if (defendingTeamIndex === teamIndex && 
+                  (bid === 4 || bid === 5 || bid === 'P') && 
+                  decision === 'P') {
+                
+                defensiveOpportunities++;
+                const [score1, score2] = calculateScore(hand);
+                const defendingTeamScore = teamIndex === 0 ? score1 : score2;
+                
+                // If defending team score is negative, they went set
+                if (defendingTeamScore < 0) {
+                  defensiveSets++;
+                }
+              }
+            } catch {
+              // Skip invalid hands
+            }
+          });
+          
+          return { team, defensiveSets, defensiveOpportunities };
         });
         
-        if (qualifyingPlayers.length === 0) return null;
+        // Filter teams with at least 2 defensive sets against 4/5 bids
+        const qualifyingTeams = teamsWithDefensiveSets.filter(item => item.defensiveSets >= 2);
+        if (qualifyingTeams.length === 0) return null;
         
-        const winner = qualifyingPlayers.reduce((most, current) => {
-          const mostLowFailed = most.failedBidValues.filter(val => val <= 5).length;
-          const currLowFailed = current.failedBidValues.filter(val => val <= 5).length;
-          return currLowFailed > mostLowFailed ? current : most;
-        });
+        // Find team with most defensive sets
+        const winner = qualifyingTeams.reduce((most, current) => 
+          current.defensiveSets > most.defensiveSets ? current : most
+        );
         
-        return { ...award, winner: winner.name };
+        return { 
+          ...award, 
+          winner: winner.team.name,
+          statDetails: calculateAwardStats(award.id, winner.team.name, data)
+        };
       }
       
       case 'feast_or_famine': {
@@ -679,7 +1068,11 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
           current.stdDev > highest.stdDev ? current : highest
         );
         
-        return { ...award, winner: winnerData.player.name };
+        return { 
+          ...award, 
+          winner: winnerData.player.name,
+          statDetails: calculateAwardStats(award.id, winnerData.player.name, data)
+        };
       }
     }
   }

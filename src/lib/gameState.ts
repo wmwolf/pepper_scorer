@@ -74,7 +74,7 @@ export function decodeHand(encoded: string): {
   return {
     dealer: parseInt(dealer || '1'),
     bidWinner: parseInt(bidWinner || '1'),
-    bid: bid as 'P' | 'M' | 'D' || '4',
+    bid: ['P', 'M', 'D'].includes(bid) ? bid as 'P' | 'M' | 'D' : parseInt(bid || '4'),
     trump: trump || 'N',
     decision: (decision || 'P') as 'P' | 'F',
     tricks: parseInt(tricks || '0')

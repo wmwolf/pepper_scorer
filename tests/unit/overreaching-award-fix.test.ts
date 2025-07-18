@@ -99,9 +99,9 @@ describe('Overreaching Award Bug Fix', () => {
     const players = ['Alice', 'Bob', 'Charlie'];
     const hands = [
       '11PHP6', // Alice bids Pepper, fails (gets 0 tricks, needs 4)
-      '21PHP2', // Bob bids Pepper, succeeds (gets 4 tricks, needs 4)
+      '22PHP2', // Bob bids Pepper, succeeds (gets 4 tricks, needs 4)
       '31PHP6', // Alice bids Pepper again, fails (gets 0 tricks, needs 4)  
-      '12MNP1', // Charlie bids Moon, fails (gets 5 tricks, needs 6)
+      '13MNP1', // Charlie bids Moon, fails (gets 5 tricks, needs 6)
     ];
     
     const teams = ['Team 1', 'Team 2'];

@@ -34,6 +34,7 @@ export interface PlayerStats {
   noTrumpBids: { attempts: number; successes: number };
   failedBidValues: number[];  // Track values of failed bids
   pepperRoundBids: { attempts: number; successes: number; opponents_set: number };
+  bigFours: number;  // Count of "Big Four" hands - 4-bids where opponents play and get zero (excludes clubs)
   netPoints: number;  // For Series MVP - sum of team scores on hands this player bid
   pointsPerBid: number[]; // For feast or famine - track variance
   wonFinalBid: boolean; // Did this player make the bid that won the game
@@ -92,6 +93,7 @@ export function initializeAwardTracking(
       noTrumpBids: { attempts: 0, successes: 0 },
       failedBidValues: [],
       pepperRoundBids: { attempts: 0, successes: 0, opponents_set: 0 },
+      bigFours: 0,
       netPoints: 0,
       pointsPerBid: [],
       wonFinalBid: false
@@ -431,6 +433,12 @@ export function trackAwardData(
             if (inPepperRound) {
               playerStat.pepperRoundBids.successes++;
             }
+            
+            // Track Big Fours: 4-bids where opponents played and got zero (excludes clubs)
+            if ((bid === 4 || bid === 'P') && trump !== 'C' && tricks === 0) {
+              playerStat.bigFours++;
+              console.log(`  ${bidderName} achieved a Big Four! Trump: ${trump}, Tricks: ${tricks}`);
+            }
           } else {
             // Bid failed
             playerStat.bidsFailed++;
@@ -671,6 +679,298 @@ export function trackAwardData(
   }
   
   return awardData;
+}
+
+/**
+ * Aggregate award data across all completed games in a series plus the current game
+ * This is essential for series awards to properly calculate statistics across multiple games
+ */
+export function aggregateSeriesAwardData(
+  completedGames: Array<{hands: string[], winner: number, finalScores: [number, number]}>,
+  currentGameHands: string[],
+  players: string[],
+  teams: string[],
+  seriesWinner: number | null
+): AwardTrackingData {
+  // Initialize aggregated award tracking data
+  const aggregatedData = initializeAwardTracking(players, teams);
+  
+  // Aggregate hands from all completed games plus current game
+  const allHands: string[] = [];
+  
+  // Add hands from all completed games
+  completedGames.forEach(game => {
+    allHands.push(...game.hands);
+  });
+  
+  // Add current game hands
+  allHands.push(...currentGameHands);
+  
+  // Store all hands for reference
+  aggregatedData.hands = allHands;
+  
+  // Running series-wide tracking
+  const seriesScores: [number, number] = [0, 0];
+  
+  // Process each completed game + current game
+  const allGames = [...completedGames];
+  if (currentGameHands.length > 0) {
+    // Add current game data
+    const currentScores = [0, 0] as [number, number];
+    currentGameHands.forEach(hand => {
+      if (isHandComplete(hand) && hand.length >= 2 && hand[1] !== '0') {
+        const [s1, s2] = calculateScore(hand);
+        currentScores[0] += s1;
+        currentScores[1] += s2;
+      }
+    });
+    
+    allGames.push({
+      hands: currentGameHands,
+      winner: seriesWinner || 0, // Use series winner as placeholder for current game
+      finalScores: currentScores
+    });
+  }
+  
+  // Process each game
+  allGames.forEach((game) => {
+    const gameStartScores: [number, number] = [...seriesScores];
+    
+    // Process each hand in this game
+    game.hands.forEach((hand, handIndex) => {
+      if (!isHandComplete(hand) || (hand.length >= 2 && hand[1] === '0')) {
+        return; // Skip incomplete or throw-in hands
+      }
+      
+      try {
+        const { bidWinner, bid, trump, decision, tricks } = decodeHand(hand);
+        const bidderIndex = bidWinner - 1;
+        const bidderName = players[bidderIndex];
+        const bidderTeam = bidderIndex % 2;
+        const defenderTeam = 1 - bidderTeam;
+        const bidderTeamName = teams[bidderTeam];
+        const defenderTeamName = teams[defenderTeam];
+        const inPepperRound = isPepperRound(handIndex); // Pepper round is per-game, not series-wide
+        
+        // Calculate hand scores
+        const [scoreTeam1, scoreTeam2] = calculateScore(hand);
+        const handScores: [number, number] = [scoreTeam1, scoreTeam2];
+        aggregatedData.handScores.push(handScores);
+        
+        // Convert bid to point value
+        const bidValue = {
+          'P': 4, '4': 4, '5': 5, '6': 6, 'M': 7, 'D': 14
+        }[bid] || 0;
+        
+        // Update player stats (accumulate across all games)
+        const playerStat = aggregatedData.playerStats[bidderName];
+        if (playerStat) {
+          playerStat.bidsWon++;
+          
+          // Track trump usage
+          if (trump && playerStat.trumpBids[trump]) {
+            playerStat.trumpBids[trump].attempts++;
+          }
+          
+          // Track high-value bids
+          if (['6', 'M', 'D'].includes(bid.toString())) {
+            playerStat.highValueBids.attempts++;
+          }
+          
+          // Track no-trump bids
+          if (trump === 'N') {
+            playerStat.noTrumpBids.attempts++;
+          }
+          
+          // Track pepper round bids
+          if (inPepperRound) {
+            playerStat.pepperRoundBids.attempts++;
+          }
+          
+          // Calculate bidder points and add to NET POINTS (this is key for Series MVP)
+          const bidderPoints = bidderTeam === 0 ? scoreTeam1 : scoreTeam2;
+          playerStat.netPoints += bidderPoints; // Accumulate across all games!
+          playerStat.pointsPerBid.push(bidderPoints);
+          
+          // Determine bid success
+          if (decision === 'P') {
+            const tricksNeeded = (['M', 'D', '6'].includes(String(bid))) ? 6 : (parseInt(String(bid)) || 4);
+            const biddingTeamTricks = 6 - tricks;
+            const bidSucceeded = biddingTeamTricks >= tricksNeeded;
+            
+            if (bidSucceeded) {
+              playerStat.bidsSucceeded++;
+              
+              // Track successes
+              if (trump && playerStat.trumpBids[trump]) {
+                playerStat.trumpBids[trump].successes++;
+              }
+              if (['6', 'M', 'D'].includes(bid.toString())) {
+                playerStat.highValueBids.successes++;
+              }
+              if (trump === 'N') {
+                playerStat.noTrumpBids.successes++;
+              }
+              if (inPepperRound) {
+                playerStat.pepperRoundBids.successes++;
+              }
+              
+              // Track Big Fours
+              if ((bid === 4 || bid === 'P') && trump !== 'C' && tricks === 0) {
+                playerStat.bigFours++;
+              }
+            } else {
+              playerStat.bidsFailed++;
+              playerStat.failedBidValues.push(bidValue);
+            }
+          } else if (decision === 'F') {
+            // Folded hands count as succeeded
+            playerStat.bidsSucceeded++;
+            
+            if (trump && playerStat.trumpBids[trump]) {
+              playerStat.trumpBids[trump].successes++;
+            }
+            if (['6', 'M', 'D'].includes(bid.toString())) {
+              playerStat.highValueBids.successes++;
+            }
+            if (trump === 'N') {
+              playerStat.noTrumpBids.successes++;
+            }
+            if (inPepperRound) {
+              playerStat.pepperRoundBids.successes++;
+            }
+          }
+        }
+        
+        // Update team stats (accumulate across all games)
+        const bidderTeamStat = aggregatedData.teamStats[bidderTeamName];
+        const defenderTeamStat = aggregatedData.teamStats[defenderTeamName];
+        
+        if (bidderTeamStat && defenderTeamStat) {
+          bidderTeamStat.totalBids++;
+          
+          if (['6', 'M', 'D'].includes(bid.toString())) {
+            bidderTeamStat.highValueBids.attempts++;
+          }
+          
+          if (decision === 'P') {
+            const tricksNeeded = (['M', 'D', '6'].includes(String(bid))) ? 6 : (parseInt(String(bid)) || 4);
+            const bidSucceeded = tricks === 0 ? true : tricks + tricksNeeded <= 6;
+            
+            if (bidSucceeded) {
+              bidderTeamStat.successfulBids++;
+              if (['6', 'M', 'D'].includes(bid.toString())) {
+                bidderTeamStat.highValueBids.successes++;
+              }
+            }
+            
+            // Track defensive success
+            if (!bidSucceeded) {
+              defenderTeamStat.successfulDefenses++;
+              
+              // Track pepper round opponents_set
+              if (inPepperRound) {
+                players.forEach((defenderName, idx) => {
+                  if (idx % 2 === defenderTeam) {
+                    const defenderStat = aggregatedData.playerStats[defenderName];
+                    if (defenderStat) {
+                      defenderStat.pepperRoundBids.opponents_set++;
+                    }
+                  }
+                });
+              }
+            }
+            
+            defenderTeamStat.totalDefenses++;
+            const bidderPoints = bidderTeam === 0 ? scoreTeam1 : scoreTeam2;
+            defenderTeamStat.pointsAllowedToOpponents += Math.max(0, bidderPoints);
+          } else if (decision === 'F') {
+            bidderTeamStat.successfulBids++;
+            if (['6', 'M', 'D'].includes(bid.toString())) {
+              bidderTeamStat.highValueBids.successes++;
+            }
+            
+            if (tricks > 0) {
+              defenderTeamStat.successfulDefenses++;
+            }
+            defenderTeamStat.totalDefenses++;
+          }
+        }
+        
+        // Update running scores
+        seriesScores[0] += handScores[0];
+        seriesScores[1] += handScores[1];
+        aggregatedData.pointsHistory.push([...seriesScores]);
+        
+        // Track team deficits across entire series
+        const team0Deficit = seriesScores[1] - seriesScores[0];
+        const team1Deficit = seriesScores[0] - seriesScores[1];
+        
+        const team0Stats = aggregatedData.teamStats[teams[0]];
+        if (team0Stats && team0Deficit > team0Stats.maxDeficit) {
+          team0Stats.maxDeficit = team0Deficit;
+          team0Stats.minScoreTrailing = seriesScores[0];
+        }
+        
+        const team1Stats = aggregatedData.teamStats[teams[1]];
+        if (team1Stats && team1Deficit > team1Stats.maxDeficit) {
+          team1Stats.maxDeficit = team1Deficit;
+          team1Stats.minScoreTrailing = seriesScores[1];
+        }
+        
+      } catch (e) {
+        console.error('Error processing hand for series awards:', hand, e);
+      }
+    });
+    
+    // Update game-end scores for this game
+    seriesScores[0] = gameStartScores[0];
+    seriesScores[1] = gameStartScores[1];
+    
+    // Add final scores from this game
+    seriesScores[0] += game.finalScores[0];
+    seriesScores[1] += game.finalScores[1];
+  });
+  
+  // Calculate final team stats (streaks and success rates)
+  teams.forEach((team, teamIndex) => {
+    const teamStat = aggregatedData.teamStats[team];
+    
+    if (teamStat) {
+      // Calculate longest streak across entire series
+      teamStat.longestStreak = calculateLongestStreak(allHands, teamIndex);
+      
+      // Calculate defense and bid success rates
+      if (teamStat.totalDefenses > 0) {
+        teamStat.defensiveSuccessRate = teamStat.successfulDefenses / teamStat.totalDefenses;
+      }
+      
+      if (teamStat.totalBids > 0) {
+        teamStat.bidSuccessRate = teamStat.successfulBids / teamStat.totalBids;
+      }
+      
+      // Check for comeback achievement (across entire series)
+      if (seriesWinner === teamIndex && teamStat.maxDeficit >= 30) {
+        teamStat.comebackAchieved = true;
+      }
+    }
+  });
+  
+  // Set series completion data
+  aggregatedData.winningTeam = seriesWinner;
+  aggregatedData.winningTeamName = seriesWinner !== null ? teams[seriesWinner] : '';
+  aggregatedData.gameCompleted = true;
+  
+  console.log('Series award data aggregated:', {
+    totalHands: allHands.length,
+    games: allGames.length,
+    seriesWinner,
+    playerNetPoints: Object.fromEntries(
+      Object.entries(aggregatedData.playerStats).map(([name, stats]) => [name, stats.netPoints])
+    )
+  });
+  
+  return aggregatedData;
 }
 
 // Function to generate game statistics HTML
