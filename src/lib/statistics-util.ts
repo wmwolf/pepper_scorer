@@ -391,8 +391,21 @@ export function trackAwardData(
         
         // Update scoring stats
         if (decision === 'P') {
-          const tricksNeeded = ['M', 'D', '6'].includes(bid as string) ? 6 : parseInt(bid as string);
-          const bidSucceeded = tricks === 0 ? true : tricks + tricksNeeded <= 6; // Special case: tricks = 0 means defending team set (bidding team succeeds)
+          // Map bid to required tricks for bidding team
+          const bidValueMap: {[key: string]: number} = {
+            'P': 4,  // Pepper
+            '4': 4,
+            '5': 5,
+            '6': 6,
+            'M': 6,  // Moon requires all 6 tricks
+            'D': 6   // Double Moon requires all 6 tricks
+          };
+          const tricksNeeded = bidValueMap[bid as string] || parseInt(bid as string) || 4;
+          
+          // Bidding team gets (6 - tricks) tricks
+          // Special case: tricks = 0 means defending team got 0, so bidding team got all 6
+          const biddingTeamTricks = 6 - tricks;
+          const bidSucceeded = biddingTeamTricks >= tricksNeeded;
           console.log(`  ${bidderName} bid ${bid}, tricks ${tricks}, tricksNeeded ${tricksNeeded}, bidSucceeded ${bidSucceeded}`);
           
           if (bidSucceeded) {
