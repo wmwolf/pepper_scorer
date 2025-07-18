@@ -96,7 +96,7 @@ export function calculateScore(hand: string): [number, number] {
     'D': 14
   }[bid.toString()] || 4; // Default to 4 if bid is undefined or not found
   
-  const biddingTeam = bidWinner % 2 === 1 ? 0 : 1;
+  const biddingTeam = (bidWinner - 1) % 2;
   const scores: [number, number] = [0, 0];
 
   if (decision === 'F') {

@@ -101,3 +101,6 @@ Common issues to watch for:
 - `/src/layouts/` - Page layout templates
 - `/src/pages/` - Page routes (index.astro for setup, game.astro for gameplay)
 - `/rules/` - Game rules documentation in LaTeX and generated Markdown
+
+## Development Best Practices
+- Remember to run tests often when making changes to the codebase.
