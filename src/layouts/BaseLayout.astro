@@ -231,7 +231,17 @@ const {
     </style>
 
     <script>
+      // Initialize Firebase when DOM is loaded
+      import { initializeFirebase } from '../lib/firebase';
+
       document.addEventListener('DOMContentLoaded', () => {
+        // Initialize Firebase
+        try {
+          initializeFirebase();
+        } catch (error) {
+          console.error('Error initializing Firebase:', error);
+        }
+
         const modal = document.getElementById('rules-modal');
         const closeButtons = document.querySelectorAll('#close-rules-modal, #close-rules-modal-footer');
         const rulesLink = document.getElementById('rules-link');
