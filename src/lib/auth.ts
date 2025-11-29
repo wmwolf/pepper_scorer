@@ -262,3 +262,79 @@ export const getUserByUsername = async (username: string): Promise<PepperUser | 
 export const getDisplayName = (user: PepperUser): string => {
   return user.displayName || user.username;
 };
+
+// Search for users by username, display name, or email
+export const searchUsers = async (query: string, limit: number = 5): Promise<PepperUser[]> => {
+  if (!isFirebaseConfigured() || !query.trim()) return [];
+
+  const database = getFirebaseDatabase();
+  if (!database) return [];
+
+  try {
+    const usersRef = ref(database, 'users');
+    const snapshot = await get(usersRef);
+
+    if (!snapshot.exists()) return [];
+
+    const users = snapshot.val() as Record<string, PepperUser>;
+    const queryLower = query.toLowerCase().trim();
+
+    // Search and rank results
+    const matches = Object.values(users)
+      .map(user => ({
+        user,
+        score: calculateSearchScore(user, queryLower)
+      }))
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ user }) => user);
+
+    return matches;
+  } catch (error) {
+    console.error('Error searching users:', error);
+    return [];
+  }
+};
+
+// Calculate search relevance score
+const calculateSearchScore = (user: PepperUser, query: string): number => {
+  let score = 0;
+
+  // Exact username match (highest priority)
+  if (user.username.toLowerCase() === query) {
+    score += 100;
+  }
+  // Username starts with query
+  else if (user.username.toLowerCase().startsWith(query)) {
+    score += 80;
+  }
+  // Username contains query
+  else if (user.username.toLowerCase().includes(query)) {
+    score += 40;
+  }
+
+  // Display name matches
+  if (user.displayName) {
+    const displayNameLower = user.displayName.toLowerCase();
+    if (displayNameLower === query) {
+      score += 90;
+    } else if (displayNameLower.startsWith(query)) {
+      score += 70;
+    } else if (displayNameLower.includes(query)) {
+      score += 30;
+    }
+  }
+
+  // Email matches (if available and not too revealing)
+  if (user.email && query.includes('@')) {
+    const emailLower = user.email.toLowerCase();
+    if (emailLower === query) {
+      score += 95;
+    } else if (emailLower.startsWith(query)) {
+      score += 75;
+    }
+  }
+
+  return score;
+};

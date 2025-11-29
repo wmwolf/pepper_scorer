@@ -52,21 +52,27 @@ import ResumeGameModal from '../components/resume-modal.astro';
           <form id="player-form" class="space-y-4">
             <div class="space-y-4">
               {[1, 2, 3, 4].map(i => (
-                <div class="space-y-2">
-                  <label 
+                <div class="space-y-2 relative">
+                  <label
                     class="block text-sm font-medium text-gray-700"
                     for={`player-${i}`}
                   >
                     {i === 1 ? 'First Dealer' : `Player ${i}`}
                   </label>
-                  <input
-                    type="text"
-                    id={`player-${i}`}
-                    name={`player-${i}`}
-                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 py-3 px-4 text-base transition-all"
-                    placeholder={`Enter player ${i} name`}
-                    required
-                  />
+                  <div class="relative">
+                    <input
+                      type="text"
+                      id={`player-${i}`}
+                      name={`player-${i}`}
+                      class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 py-3 px-4 text-base transition-all"
+                      placeholder={`Enter player ${i} name or search registered users...`}
+                      required
+                      autocomplete="off"
+                    />
+                    <div id={`dropdown-${i}`} class="hidden absolute z-10 w-full mt-1 bg-white shadow-lg border border-gray-200 rounded-md max-h-40 overflow-y-auto">
+                      <!-- Search results will appear here -->
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -143,12 +149,15 @@ import ResumeGameModal from '../components/resume-modal.astro';
 <script>
   import { GameManager } from '../lib/gameState';
   import { getPath } from '../lib/path-utils';
-  import { signInWithGoogle, signOutUser, onAuthStateChange, getCurrentUser } from '../lib/auth';
+  import { signInWithGoogle, signOutUser, onAuthStateChange, getCurrentUser, searchUsers } from '../lib/auth';
 
   // Check for unfinished game on load
   document.addEventListener('DOMContentLoaded', () => {
     // Setup authentication
     setupAuth();
+
+    // Setup user autocomplete for player inputs
+    setupUserAutocomplete();
 
     // Check for unfinished game
     const savedGame = localStorage.getItem('currentGame');
@@ -325,6 +334,118 @@ function setupAuth() {
       console.error('Error signing out:', error);
     }
   });
+}
+
+// User autocomplete setup
+function setupUserAutocomplete() {
+  // Store selected user data for each player position
+  const selectedUsers = {};
+  let searchTimeout = null;
+
+  // Setup autocomplete for each player input
+  [1, 2, 3, 4].forEach(playerIndex => {
+    const input = document.getElementById(`player-${playerIndex}`);
+    const dropdown = document.getElementById(`dropdown-${playerIndex}`);
+
+    if (!input || !dropdown) return;
+
+    // Handle input changes with debouncing
+    input.addEventListener('input', async (e) => {
+      const query = e.target.value.trim();
+
+      // Clear previous timeout
+      if (searchTimeout) {
+        clearTimeout(searchTimeout);
+      }
+
+      // Hide dropdown if query is too short
+      if (query.length < 2) {
+        dropdown.classList.add('hidden');
+        selectedUsers[playerIndex] = null;
+        return;
+      }
+
+      // Debounced search
+      searchTimeout = setTimeout(async () => {
+        try {
+          const users = await searchUsers(query);
+          displaySearchResults(dropdown, users, playerIndex, input);
+        } catch (error) {
+          console.error('Error searching users:', error);
+        }
+      }, 300);
+    });
+
+    // Handle focus/blur events
+    input.addEventListener('focus', () => {
+      if (input.value.length >= 2) {
+        dropdown.classList.remove('hidden');
+      }
+    });
+
+    input.addEventListener('blur', () => {
+      // Delay hiding to allow clicking on dropdown items
+      setTimeout(() => {
+        dropdown.classList.add('hidden');
+      }, 200);
+    });
+  });
+
+  // Display search results in dropdown
+  function displaySearchResults(dropdown, users, playerIndex, input) {
+    if (users.length === 0) {
+      dropdown.innerHTML = '<div class="px-3 py-2 text-gray-500 text-sm">No registered users found</div>';
+      dropdown.classList.remove('hidden');
+      return;
+    }
+
+    dropdown.innerHTML = users.map(user => `
+      <div class="user-result px-3 py-2 hover:bg-blue-50 cursor-pointer flex items-center space-x-3"
+           data-user-id="${user.uid}"
+           data-username="${user.username}"
+           data-display-name="${user.displayName}">
+        <img src="${user.photoURL || '/default-avatar.png'}"
+             alt="${user.displayName}"
+             class="w-6 h-6 rounded-full"
+             onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJDMTMuMSAyIDE0IDIuOSAxNCA0QzE0IDUuMSAxMy4xIDYgMTIgNkMxMC45IDYgMTAgNS4xIDEwIDRDMTAgMi45IDEwLjkgMiAxMiAyWk0yMSAxMlY5SDJWMTJIMTU7VDJDMTE5IDE4LjUgMTQuNSAyIDkgMkgxNUMxOS41IDIgMjMgNS41IDIzIDEwVjEySDIxWiIgZmlsbD0iIzZCNzI4MCIvPgo8L3N2Zz4K'" />
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium text-gray-900 truncate">${user.displayName}</div>
+          <div class="text-xs text-gray-500 truncate">@${user.username}</div>
+        </div>
+        <div class="text-xs text-blue-600">Registered</div>
+      </div>
+    `).join('');
+
+    // Add click handlers
+    dropdown.querySelectorAll('.user-result').forEach(item => {
+      item.addEventListener('click', () => {
+        const userId = item.dataset.userId;
+        const username = item.dataset.username;
+        const displayName = item.dataset.displayName;
+
+        // Store selected user data
+        selectedUsers[playerIndex] = {
+          userId,
+          username,
+          displayName,
+          isAuthenticated: true
+        };
+
+        // Update input value
+        input.value = displayName;
+
+        // Hide dropdown
+        dropdown.classList.add('hidden');
+
+        console.log(`Selected user for Player ${playerIndex}:`, selectedUsers[playerIndex]);
+      });
+    });
+
+    dropdown.classList.remove('hidden');
+  }
+
+  // Make selectedUsers accessible for game creation
+  window.getSelectedUsers = () => selectedUsers;
 }
 
 </script>
