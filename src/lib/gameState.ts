@@ -1,6 +1,6 @@
 // src/lib/gameState.ts
 import { getPath } from './path-utils';
-interface GameState {
+export interface GameState {
   players: string[];
   teams: string[];
   hands: string[];
