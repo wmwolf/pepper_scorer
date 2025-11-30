@@ -12,6 +12,7 @@ export interface GameState {
   startTime: number;                // Unix timestamp of game start
   seriesWinner?: number;            // Index of team that won the series
   completedGames?: GameSummary[];   // Array of completed games in the series
+  firebaseGameId?: string;          // Optional Firebase game ID for real-time sync
 }
 
 interface GameSummary {
