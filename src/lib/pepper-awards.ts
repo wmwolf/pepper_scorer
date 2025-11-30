@@ -1474,7 +1474,6 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
  * Ensure we have one positive team award, one positive player award, and one dubious award
  */
 export function selectGameAwards(data: AwardTrackingData): AwardWithWinner[] {
-  console.log('selectGameAwards called with data:', data);
   if (!data || !data.playerStats || !data.teamStats) {
     console.error('Invalid award data provided to selectGameAwards');
     // Return a default set of awards if data is invalid

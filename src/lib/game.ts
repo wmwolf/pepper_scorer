@@ -2,6 +2,18 @@
 
 import { GameManager, getCurrentPhase, isPepperRound, calculateScore, isHandComplete } from './gameState';
 import { getPath } from './path-utils';
+
+// Extend window interface for global properties
+declare global {
+  interface Window {
+    gameManager?: GameManager;
+    firebaseGame?: GameManager;
+    updateUI?: () => void;
+    exportGame?: () => Record<string, unknown>;
+    importGame?: (_gameData: Record<string, unknown>) => void;
+    clearDebugGame?: () => void;
+  }
+}
 export function loadGameState() {
     // Check for debug game first
     const debugGame = localStorage.getItem('debugGame');
@@ -410,10 +422,24 @@ function processPepperRound(gameManager: GameManager, updateUI: () => void) {
 }
 
 export function startGameplay(gameData: Record<string, unknown>) {
-    const gameManager = GameManager.fromJSON(JSON.stringify(gameData));
+    // Use FirebaseGameManager if this is a Firebase game, otherwise use regular GameManager
+    let gameManager: GameManager;
+
+    if (gameData.firebaseGameId && window.firebaseGame) {
+        // Use the existing Firebase game instance
+        gameManager = window.firebaseGame;
+    } else {
+        // Use regular GameManager for local games
+        gameManager = GameManager.fromJSON(JSON.stringify(gameData));
+    }
+
+    // Make gameManager available globally for Firebase sync
+    window.gameManager = gameManager;
+
+
     // Initialize reverse history preference from localStorage
     let reverseHistory = localStorage.getItem('reverseHistory') === 'true';
-    
+
     function updateUI() {
         // Using currentHand would be for future feature needs
         // const currentHand = gameManager.getCurrentHand();
@@ -475,7 +501,7 @@ export function startGameplay(gameData: Record<string, unknown>) {
             
             // If we're showing newest first, we need to pre-calculate the running scores
             if (reverseHistory) {
-                gameManager.state.hands.forEach((hand) => {
+                gameManager.state.hands.forEach((hand: string) => {
                     if (isHandComplete(hand)) {
                         const [score1, score2] = calculateScore(hand);
                         runningScores[0] += score1;
@@ -645,10 +671,13 @@ export function startGameplay(gameData: Record<string, unknown>) {
     
     setupEventListeners();
     updateUI();
-    
+
+    // Make updateUI available globally for Firebase real-time sync
+    window.updateUI = updateUI;
+
     // Debug functions for browser console
     if (typeof window !== 'undefined') {
-      (window as any).exportGame = () => {
+      window.exportGame = () => {
         const gameData = {
           players: gameManager.state.players,
           teams: gameManager.state.teams,
@@ -661,19 +690,19 @@ export function startGameplay(gameData: Record<string, unknown>) {
         return gameData;
       };
       
-      (window as any).importGame = (gameData: any) => {
+      window.importGame = (gameData: Record<string, unknown>) => {
         console.log('Importing game data:', gameData);
         localStorage.setItem('debugGame', JSON.stringify(gameData));
         console.log('Debug game loaded. Reloading page...');
         window.location.reload();
       };
       
-      (window as any).clearDebugGame = () => {
+      window.clearDebugGame = () => {
         localStorage.removeItem('debugGame');
         console.log('Debug game cleared');
       };
       
-      console.log('🔧 Debug functions available: exportGame(), importGame(data), clearDebugGame()');
+      console.log('🔧 Debug functions available: exportGame(), importGame(data), clearDebugGame(), showDevPanel()');
     }
     
     return gameManager;
@@ -976,11 +1005,6 @@ function createConfettiEffect() {
       import('../lib/pepper-awards.ts')
     ]).then(async ([statsModule, awardsModule]) => {
       try {
-        console.log('Generating awards - hands:', gameManager.state.hands);
-        console.log('Players:', gameManager.state.players);
-        console.log('Teams:', gameManager.state.teams);
-        console.log('Scores:', gameManager.getScores());
-        console.log('Winner index:', winnerIndex);
         
         // Generate award data - explicitly access properties to avoid namespace issues
         const { trackAwardData } = statsModule;
@@ -998,12 +1022,10 @@ function createConfettiEffect() {
           winnerIndex
         );
         
-        console.log('Award data generated:', awardData);
         
         // Select awards for the game - explicitly access properties to avoid namespace issues
         const { selectGameAwards } = awardsModule;
         const gameAwards = selectGameAwards(awardData);
-        console.log('Game awards selected:', gameAwards);
         
         // Select series awards if series is complete
         let seriesAwards: Array<{id: string; name: string; description: string; technicalDefinition: string; type: string; scope: string; icon: string; winner: string; statDetails?: string}> = [];
@@ -1021,7 +1043,6 @@ function createConfettiEffect() {
           );
           
           seriesAwards = selectSeriesAwards(seriesAwardData);
-          console.log('Series awards selected:', seriesAwards);
         }
         
         // Create victory celebration with awards
@@ -1185,7 +1206,13 @@ function createConfettiEffect() {
     `;
     
     document.body.appendChild(victoryElement);
-    
+
+    // Set up series listener for dynamic button updates (Firebase only)
+    if ('setupVictoryOverlaySeriesListener' in gameManager && typeof gameManager.setupVictoryOverlaySeriesListener === 'function') {
+      // Type guard: we know this has the method since we checked above
+      (gameManager as GameManager & { setupVictoryOverlaySeriesListener: () => void }).setupVictoryOverlaySeriesListener();
+    }
+
     // Add event listeners to buttons
     document.getElementById('edit-last-tricks-btn')?.addEventListener('click', () => {
       // Remove the victory modal

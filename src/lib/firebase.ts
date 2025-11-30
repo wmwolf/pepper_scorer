@@ -28,12 +28,18 @@ const firebaseConfig: FirebaseConfig = {
 
 // Check if Firebase is configured
 export const isFirebaseConfigured = () => {
-  return Boolean(
+  const configured = Boolean(
     firebaseConfig.apiKey &&
     firebaseConfig.authDomain &&
     firebaseConfig.databaseURL &&
     firebaseConfig.projectId
   );
+
+  if (!configured) {
+    console.warn('Firebase configuration incomplete');
+  }
+
+  return configured;
 };
 
 // Initialize Firebase app
@@ -52,7 +58,6 @@ export const initializeFirebase = () => {
       app = initializeApp(firebaseConfig);
       auth = getAuth(app);
       database = getDatabase(app);
-      console.log('Firebase initialized successfully');
     }
     return { app, auth, database };
   } catch (error) {

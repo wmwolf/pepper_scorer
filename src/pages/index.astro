@@ -6,10 +6,10 @@ import ResumeGameModal from '../components/resume-modal.astro';
 <ResumeGameModal isVisible={false}/>
 <BaseLayout title="New Game">
   <div class="max-w-3xl mx-auto">
-    <!-- Firebase Auth Section -->
+    <!-- Cloud Connection Section -->
     <div id="auth-section" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
       <div id="auth-logged-out" class="text-center">
-        <p class="text-blue-700 mb-3"><strong>Firebase Integration Active!</strong> Sign in to enable multiplayer features.</p>
+        <p class="text-blue-700 mb-3"><strong>Pepper Scorer in the Cloud!</strong> Sign in to enable multiplayer features.</p>
         <div class="space-y-2">
           <button id="sign-in-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors block w-full sm:w-auto sm:inline-block">
             Sign in with Google
@@ -176,34 +176,19 @@ import ResumeGameModal from '../components/resume-modal.astro';
 
   // Check for unfinished game on load
   document.addEventListener('DOMContentLoaded', async () => {
-    console.log('DOM Content Loaded - Starting initialization...');
-    console.log('Browser details:', {
-      userAgent: navigator.userAgent,
-      vendor: navigator.vendor,
-      platform: navigator.platform,
-      cookieEnabled: navigator.cookieEnabled,
-      onLine: navigator.onLine
-    });
+    // Initialize page
 
     try {
       // Check Firebase configuration first
-      console.log('Checking Firebase configuration...');
       const { isFirebaseConfigured } = await import('../lib/firebase');
-      console.log('Firebase configured:', isFirebaseConfigured());
 
       if (isFirebaseConfigured()) {
         // Setup authentication
-        console.log('Setting up authentication...');
         setupAuth();
-        console.log('Authentication setup complete');
-      } else {
-        console.log('Firebase not configured, skipping auth setup');
       }
 
       // Setup user autocomplete for player inputs
-      console.log('Setting up user autocomplete...');
       setupUserAutocomplete();
-      console.log('User autocomplete setup complete');
 
     } catch (error) {
       console.error('Error during initialization:', error);
@@ -337,12 +322,10 @@ teamForm?.addEventListener('submit', async (e) => {
       gameManager = new FirebaseGameManager(state.players, state.teams);
       await gameManager.createFirebaseGame(playersData, createdBy);
 
-      console.log('Created Firebase game with registered users');
-    } else {
+          } else {
       // Use regular GameManager for manual-only games
       gameManager = new GameManager(state.players, state.teams);
-      console.log('Created local game (no registered users)');
-    }
+          }
 
     // Save to localStorage (works for both Firebase and local games)
     localStorage.setItem('currentGame', gameManager.toJSON());
@@ -361,12 +344,11 @@ teamForm?.addEventListener('submit', async (e) => {
 
 // Authentication setup
 function setupAuth() {
-  console.log('setupAuth() called');
+  // Setup authentication
 
   // Give DOM time to settle and try multiple times
   const setupAuthWithRetry = (attempt = 1) => {
-    console.log(`Setting up auth attempt #${attempt}`);
-
+    
     const signInBtn = document.getElementById('sign-in-btn');
     const signOutBtn = document.getElementById('sign-out-btn');
     const loggedOutSection = document.getElementById('auth-logged-out');
@@ -375,16 +357,9 @@ function setupAuth() {
     const userName = document.getElementById('user-name');
     const userUsername = document.getElementById('user-username');
 
-    console.log('DOM elements found:', {
-      signInBtn: !!signInBtn,
-      signOutBtn: !!signOutBtn,
-      loggedOutSection: !!loggedOutSection,
-      loggedInSection: !!loggedInSection
-    });
-
+    
     if (!signInBtn && attempt < 5) {
-      console.log(`Sign-in button not found, retrying in 100ms (attempt ${attempt})`);
-      setTimeout(() => setupAuthWithRetry(attempt + 1), 100);
+            setTimeout(() => setupAuthWithRetry(attempt + 1), 100);
       return;
     }
 
@@ -455,8 +430,7 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
       // Load active games
       loadActiveGames(user);
 
-      console.log('User signed in:', user.username);
-    } else {
+          } else {
       // User is signed out
       loggedOutSection?.classList.remove('hidden');
       loggedInSection?.classList.add('hidden');
@@ -478,8 +452,7 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
       const activeGamesSection = document.getElementById('active-games-section');
       if (activeGamesSection) activeGamesSection.classList.add('hidden');
 
-      console.log('User signed out');
-    }
+          }
   }
 
   // Set up auth state listener
@@ -492,9 +465,7 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
   }
 
   // Sign in button - with comprehensive debugging and multiple approaches
-  console.log('Setting up sign-in button event listener...');
-  console.log('Sign-in button element:', signInBtn);
-  console.log('Sign-in button properties:', {
+      console.log('Sign-in button properties:', {
     id: signInBtn?.id,
     className: signInBtn?.className,
     disabled: signInBtn?.disabled,
@@ -510,19 +481,16 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
     // Method 1: Direct event listeners (multiple types for Safari compatibility)
     ['click', 'touchstart', 'mousedown', 'mouseup'].forEach(eventType => {
       signInBtn.addEventListener(eventType, (e) => {
-        console.log(`Sign-in button ${eventType} event fired`, e);
       });
     });
 
     // Method 2: Main click handler with multiple fallbacks
     const handleSignIn = async (e) => {
-      console.log('handleSignIn called!', e);
 
       try {
         e.preventDefault(); // Prevent any default behavior
         e.stopPropagation(); // Stop event bubbling
 
-        console.log('Starting sign-in process...');
 
         // Immediately show loading state
         signInBtn.disabled = true;
@@ -548,9 +516,7 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
           authSection.appendChild(loadingDiv);
         }
 
-        console.log('Calling signInWithGoogle()...');
         const user = await signInWithGoogle();
-        console.log('signInWithGoogle() returned:', user);
 
         // Clean up loading state
         const loadingDiv = document.getElementById('auth-loading');
@@ -559,12 +525,10 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
         }
 
         if (user) {
-          console.log('Successfully signed in:', user.username);
           // Success will be handled by the auth state change listener
           // No need to reset UI here - it will update automatically
         } else {
           // Sign-in was cancelled or failed
-          console.log('Sign in was cancelled or failed');
 
           // Restore the original sign-in UI
           if (loggedOutSection) {
@@ -613,19 +577,16 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
 
     // Method 4: Add a direct click test function
     window.testSignInButton = () => {
-      console.log('Testing sign-in button manually...');
-      handleSignIn({ preventDefault: () => {}, stopPropagation: () => {}, target: signInBtn, currentTarget: signInBtn });
+            handleSignIn({ preventDefault: () => {}, stopPropagation: () => {}, target: signInBtn, currentTarget: signInBtn });
     };
 
     // Method 5: Event delegation fallback for Safari
     document.addEventListener('click', (e) => {
       if (e.target && e.target.id === 'sign-in-btn') {
-        console.log('Sign-in button clicked via event delegation');
         handleSignIn(e);
       }
     });
 
-    console.log('All sign-in event handlers set up');
 
   } else {
     console.error('Sign-in button not found! Check DOM structure.');
@@ -633,17 +594,13 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
     // Method 6: Last resort - event delegation without element reference
     document.addEventListener('click', (e) => {
       if (e.target && e.target.id === 'sign-in-btn') {
-        console.log('Sign-in button clicked via fallback delegation');
         // Try to find the button again
         const btn = document.getElementById('sign-in-btn');
         if (btn) {
-          console.log('Found button via fallback, setting up handler...');
           const handleSignIn = async (e) => {
-            console.log('Fallback sign-in handler called');
             // Call signInWithGoogle directly for fallback
             try {
               const user = await signInWithGoogle();
-              console.log('Fallback sign-in result:', user);
             } catch (error) {
               console.error('Fallback sign-in error:', error);
             }
@@ -666,7 +623,6 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
   // Skip authentication button
   const skipAuthBtn = document.getElementById('skip-auth-btn');
   skipAuthBtn?.addEventListener('click', () => {
-    console.log('User chose to skip authentication');
 
     // Hide the auth section to give the user a clean interface
     const authSection = document.getElementById('auth-section');
@@ -805,7 +761,6 @@ function setupUserAutocomplete() {
         // Hide dropdown
         dropdown.classList.add('hidden');
 
-        console.log(`Selected user for Player ${playerIndex}:`, selectedUsers[playerIndex]);
       });
     });
 

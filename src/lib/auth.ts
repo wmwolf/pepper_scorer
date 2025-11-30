@@ -60,7 +60,7 @@ const createDefaultStats = () => ({
 
 // Current user state
 let currentUser: PepperUser | null = null;
-const authStateListeners: ((user: PepperUser | null) => void)[] = [];
+const authStateListeners: ((_user: PepperUser | null) => void)[] = [];
 
 // Google sign-in
 export const signInWithGoogle = async (): Promise<PepperUser | null> => {
@@ -208,7 +208,7 @@ const usernameExists = async (username: string): Promise<boolean> => {
 };
 
 // Auth state listener management
-export const onAuthStateChange = (callback: (user: PepperUser | null) => void) => {
+export const onAuthStateChange = (callback: (_user: PepperUser | null) => void) => {
   authStateListeners.push(callback);
 
   // Set up Firebase auth state listener on first subscription

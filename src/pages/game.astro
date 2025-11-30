@@ -5,6 +5,26 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 <BaseLayout title="Current Game">
   <div class="max-w-6xl mx-auto px-4">
+  <!-- Connection Status Indicator -->
+  <div id="connection-status" class="hidden mb-4 p-3 rounded-lg border">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center space-x-2">
+        <div id="connection-indicator" class="w-3 h-3 rounded-full"></div>
+        <span id="connection-text" class="text-sm font-medium"></span>
+      </div>
+      <div class="flex items-center space-x-3">
+        <div id="sync-info" class="text-xs text-gray-500"></div>
+        <button
+          id="manual-sync-btn"
+          class="hidden px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+          title="Force sync current state to cloud"
+        >
+          Sync Now
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Score Display -->
   <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
     <!-- Mobile Layout -->
@@ -323,74 +343,238 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 <script>
   import { loadGameState, startGameplay } from '../lib/game';
-  
-  document.addEventListener('DOMContentLoaded', () => {
-    const gameData = loadGameState();
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    // Check if we have a game ID in the URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const gameId = urlParams.get('id');
+
+    let gameData;
+
+    if (gameId) {
+      // Load Firebase game by ID
+      try {
+        const { FirebaseGameManager } = await import('../lib/firebaseGameState');
+        const firebaseGame = await FirebaseGameManager.loadFirebaseGame(gameId);
+        if (firebaseGame) {
+          gameData = firebaseGame.state;
+          // Save to localStorage for consistency
+          localStorage.setItem('currentGame', JSON.stringify(gameData));
+        } else {
+          console.error('Failed to load Firebase game');
+          alert('Game not found or you do not have access to it.');
+          window.location.href = '/';
+          return;
+        }
+      } catch (error) {
+        console.error('Error loading Firebase game:', error);
+        alert('Error loading game. Redirecting to home.');
+        window.location.href = '/';
+        return;
+      }
+    } else {
+      // Load from localStorage as before
+      gameData = loadGameState();
+    }
+
     if (gameData) {
       // Update team names for both mobile and desktop layouts
       const team1Name = document.getElementById('team1-name');
       const team2Name = document.getElementById('team2-name');
       const team1NameMobile = document.getElementById('team1-name-mobile');
       const team2NameMobile = document.getElementById('team2-name-mobile');
-      
+
       if (team1Name) team1Name.textContent = gameData.teams[0];
       if (team2Name) team2Name.textContent = gameData.teams[1];
       if (team1NameMobile) team1NameMobile.textContent = gameData.teams[0];
       if (team2NameMobile) team2NameMobile.textContent = gameData.teams[1];
-      
+
       // Add series trophies if in series mode
       if (gameData.isSeries && gameData.seriesScores) {
         const team1Wins = document.getElementById('team1-wins');
         const team2Wins = document.getElementById('team2-wins');
         const team1WinsMobile = document.getElementById('team1-wins-mobile');
         const team2WinsMobile = document.getElementById('team2-wins-mobile');
-        
+
         const team1TrophyHTML = '🏆'.repeat(gameData.seriesScores[0]);
         const team2TrophyHTML = '🏆'.repeat(gameData.seriesScores[1]);
-        
+
         if (team1Wins) team1Wins.innerHTML = team1TrophyHTML;
         if (team2Wins) team2Wins.innerHTML = team2TrophyHTML;
         if (team1WinsMobile) team1WinsMobile.innerHTML = team1TrophyHTML;
         if (team2WinsMobile) team2WinsMobile.innerHTML = team2TrophyHTML;
       }
-      
+
       // Expose GameManager to window for use in victory functions
       window.GameManager = { fromJSON: (json) => startGameplay(JSON.parse(json)).constructor.fromJSON(json) };
-      
-      // Start gameplay with the current game data
+
+      // Set up Firebase sync FIRST if this is a Firebase game
+      if (gameData.firebaseGameId) {
+        await setupFirebaseSync(gameData);
+      }
+
+      // THEN start gameplay (this will use window.firebaseGame if available)
       startGameplay(gameData);
     }
-    
+
     // Developer Panel Setup
     setupDeveloperPanel();
-    
+
     // Temporary: Add a global function to show the panel for testing
     window.showDevPanel = () => {
       const panel = document.getElementById('developer-panel');
       if (panel) {
         panel.classList.remove('hidden');
-        console.log('Developer panel shown via window.showDevPanel()');
       } else {
-        console.log('Developer panel element not found!');
       }
     };
+
   });
-  
+
+  // Firebase synchronization setup
+  async function setupFirebaseSync(gameData) {
+    try {
+      // Check if this game has Firebase metadata (firebaseGameId)
+      if (!gameData.firebaseGameId) {
+        return;
+      }
+
+      // Import Firebase dependencies
+      const { FirebaseGameManager } = await import('../lib/firebaseGameState');
+      const { getCurrentUser } = await import('../lib/auth');
+      const { isFirebaseConfigured } = await import('../lib/firebase');
+
+      if (!isFirebaseConfigured()) {
+        updateConnectionStatus('offline', 'Cloud not configured - local mode');
+        return;
+      }
+
+      // Show connection status
+      showConnectionStatus();
+      updateConnectionStatus('connecting', 'Connecting to cloud...');
+
+      // Load the existing Firebase game
+      const firebaseGame = await FirebaseGameManager.loadFirebaseGame(gameData.firebaseGameId);
+
+      if (!firebaseGame) {
+        updateConnectionStatus('error', 'Failed to load game - using local mode');
+        return;
+      }
+
+      window.firebaseGame = firebaseGame; // Make available globally
+
+      // Set UI update callback on the FirebaseGameManager's internal listener
+      firebaseGame.setUIUpdateCallback((updatedGameData) => {
+        if (typeof window.updateUI === 'function') {
+          window.updateUI();
+          updateSyncInfo('Synced from remote');
+        }
+      });
+
+      // Update connection status
+      updateConnectionStatus('connected', 'Synced with cloud');
+
+      // Show manual sync button
+      const manualSyncBtn = document.getElementById('manual-sync-btn');
+      if (manualSyncBtn) {
+        manualSyncBtn.classList.remove('hidden');
+        manualSyncBtn.addEventListener('click', async () => {
+          try {
+            manualSyncBtn.textContent = 'Syncing...';
+            manualSyncBtn.disabled = true;
+
+            if (window.firebaseGame && window.firebaseGame.forceSyncToFirebase) {
+              await window.firebaseGame.forceSyncToFirebase();
+              updateSyncInfo('Manual sync completed');
+            } else {
+              updateSyncInfo('No cloud connection');
+            }
+          } catch (error) {
+            console.error('Manual sync failed:', error);
+            updateSyncInfo('Sync failed');
+          } finally {
+            manualSyncBtn.textContent = 'Sync Now';
+            manualSyncBtn.disabled = false;
+          }
+        });
+      }
+
+      // Get current user info for connection display
+      const currentUser = getCurrentUser();
+      if (currentUser) {
+        updateSyncInfo(`Connected as ${currentUser.displayName}`);
+      }
+
+    } catch (error) {
+      console.error('Error setting up Firebase sync:', error);
+      updateConnectionStatus('error', 'Connection failed - using local mode');
+      updateSyncInfo(error.message);
+    }
+  }
+
+  // Connection status management
+  function showConnectionStatus() {
+    const statusElement = document.getElementById('connection-status');
+    if (statusElement) {
+      statusElement.classList.remove('hidden');
+    }
+  }
+
+  function updateConnectionStatus(status, message) {
+    const indicator = document.getElementById('connection-indicator');
+    const text = document.getElementById('connection-text');
+    const container = document.getElementById('connection-status');
+
+    if (!indicator || !text || !container) return;
+
+    // Update indicator color and container border
+    switch (status) {
+      case 'connected':
+        indicator.className = 'w-3 h-3 rounded-full bg-green-500';
+        container.className = 'mb-4 p-3 rounded-lg border border-green-200 bg-green-50';
+        break;
+      case 'connecting':
+        indicator.className = 'w-3 h-3 rounded-full bg-yellow-500 animate-pulse';
+        container.className = 'mb-4 p-3 rounded-lg border border-yellow-200 bg-yellow-50';
+        break;
+      case 'error':
+        indicator.className = 'w-3 h-3 rounded-full bg-red-500';
+        container.className = 'mb-4 p-3 rounded-lg border border-red-200 bg-red-50';
+        break;
+      case 'offline':
+        indicator.className = 'w-3 h-3 rounded-full bg-gray-500';
+        container.className = 'mb-4 p-3 rounded-lg border border-gray-200 bg-gray-50';
+        break;
+    }
+
+    text.textContent = message;
+  }
+
+  function updateSyncInfo(info) {
+    const syncInfo = document.getElementById('sync-info');
+    if (syncInfo) {
+      syncInfo.textContent = info;
+    }
+  }
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    if (window.firebaseUnsubscribe) {
+      window.firebaseUnsubscribe();
+    }
+  });
+
   function setupDeveloperPanel() {
-    console.log('Setting up developer panel...');
     
     // Keyboard shortcut to toggle developer panel (Ctrl+X on Mac/PC - simple and reliable)
     document.addEventListener('keydown', (e) => {
       // Use a simple, reliable key combination that works across browsers
       if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === 'X' || e.key === 'x')) {
-        console.log('Developer panel shortcut activated!');
         e.preventDefault();
         const panel = document.getElementById('developer-panel');
         if (panel) {
-          console.log('Toggling panel visibility');
           panel.classList.toggle('hidden');
         } else {
-          console.log('Panel element not found!');
         }
       }
     });

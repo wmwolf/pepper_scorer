@@ -96,7 +96,13 @@ Modernizing the Pepper card game scoring application by moving from Bootstrap 4 
 - ✅ **Display Name Persistence**: Custom display names now persist properly and don't revert to Google data on page refresh
 
 ### Phase 6: Database Schema & Core Data Migration
-**Goal**: Replace localStorage with Firebase, maintain backward compatibility
+**Goal**: Replace localStorage with Firebase, maintain backward compatibility, implement robust real-time synchronization
+
+#### Critical Real-time Sync Improvements:
+- **Firebase Transactions**: Implement atomic updates using `runTransaction()` to prevent race conditions
+- **Conflict Resolution**: Handle multiple browsers updating the same game simultaneously
+- **State Consistency**: Ensure all connected devices stay in perfect sync even with rapid actions
+- **Manual Sync Fix**: Resolve issue where manual sync can revert newer state to older state
 
 #### Database Structure:
 ```
