@@ -10,9 +10,15 @@ import ResumeGameModal from '../components/resume-modal.astro';
     <div id="auth-section" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
       <div id="auth-logged-out" class="text-center">
         <p class="text-blue-700 mb-3"><strong>Firebase Integration Active!</strong> Sign in to enable multiplayer features.</p>
-        <button id="sign-in-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
-          Sign in with Google
-        </button>
+        <div class="space-y-2">
+          <button id="sign-in-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors block w-full sm:w-auto sm:inline-block">
+            Sign in with Google
+          </button>
+          <button id="skip-auth-btn" class="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors block w-full sm:w-auto sm:inline-block sm:ml-2 text-sm">
+            Continue without signing in
+          </button>
+        </div>
+        <p class="text-xs text-gray-600 mt-2">Note: Safari/DuckDuckGo users may experience auth issues. Consider using Chrome or continuing without signing in.</p>
       </div>
 
       <div id="auth-logged-in" class="hidden">
@@ -27,6 +33,14 @@ import ResumeGameModal from '../components/resume-modal.astro';
           <button id="sign-out-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm">
             Sign Out
           </button>
+        </div>
+
+        <!-- Active Games Section -->
+        <div id="active-games-section" class="mt-4 hidden">
+          <h3 class="text-blue-800 font-medium mb-2">Your Active Games</h3>
+          <div id="active-games-list" class="space-y-2">
+            <!-- Active games will be populated here -->
+          </div>
         </div>
       </div>
     </div>
@@ -64,11 +78,20 @@ import ResumeGameModal from '../components/resume-modal.astro';
                       type="text"
                       id={`player-${i}`}
                       name={`player-${i}`}
-                      class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 py-3 px-4 text-base transition-all"
+                      class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 py-3 px-4 pr-12 text-base transition-all"
                       placeholder={`Enter player ${i} name or search registered users...`}
                       required
                       autocomplete="off"
                     />
+                    <!-- User indicator (hidden by default) -->
+                    <div id={`user-indicator-${i}`} class="hidden absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center space-x-2">
+                      <img id={`user-avatar-${i}`} class="w-6 h-6 rounded-full border border-gray-300" alt="User avatar" />
+                      <div class="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+                        <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                        </svg>
+                      </div>
+                    </div>
                     <div id={`dropdown-${i}`} class="hidden absolute z-10 w-full mt-1 bg-white shadow-lg border border-gray-200 rounded-md max-h-40 overflow-y-auto">
                       <!-- Search results will appear here -->
                     </div>
@@ -152,12 +175,39 @@ import ResumeGameModal from '../components/resume-modal.astro';
   import { signInWithGoogle, signOutUser, onAuthStateChange, getCurrentUser, searchUsers } from '../lib/auth';
 
   // Check for unfinished game on load
-  document.addEventListener('DOMContentLoaded', () => {
-    // Setup authentication
-    setupAuth();
+  document.addEventListener('DOMContentLoaded', async () => {
+    console.log('DOM Content Loaded - Starting initialization...');
+    console.log('Browser details:', {
+      userAgent: navigator.userAgent,
+      vendor: navigator.vendor,
+      platform: navigator.platform,
+      cookieEnabled: navigator.cookieEnabled,
+      onLine: navigator.onLine
+    });
 
-    // Setup user autocomplete for player inputs
-    setupUserAutocomplete();
+    try {
+      // Check Firebase configuration first
+      console.log('Checking Firebase configuration...');
+      const { isFirebaseConfigured } = await import('../lib/firebase');
+      console.log('Firebase configured:', isFirebaseConfigured());
+
+      if (isFirebaseConfigured()) {
+        // Setup authentication
+        console.log('Setting up authentication...');
+        setupAuth();
+        console.log('Authentication setup complete');
+      } else {
+        console.log('Firebase not configured, skipping auth setup');
+      }
+
+      // Setup user autocomplete for player inputs
+      console.log('Setting up user autocomplete...');
+      setupUserAutocomplete();
+      console.log('User autocomplete setup complete');
+
+    } catch (error) {
+      console.error('Error during initialization:', error);
+    }
 
     // Check for unfinished game
     const savedGame = localStorage.getItem('currentGame');
@@ -236,13 +286,13 @@ import ResumeGameModal from '../components/resume-modal.astro';
   // Handle team form submission
 teamForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  
+
   // Get team names
   state.teams = [1, 2].map(i => {
     const input = document.getElementById(`team-${i}`) as HTMLInputElement;
     return input.value.trim();
   });
-  
+
   // Set series flag to false as we're removing the checkbox
   state.isSeries = false;
 
@@ -255,26 +305,98 @@ teamForm?.addEventListener('submit', async (e) => {
     return;
   }
 
-  // Create game using GameManager
-  const gameManager = new GameManager(state.players, state.teams);
-  
-  // Save to localStorage
-  localStorage.setItem('currentGame', gameManager.toJSON());
+  try {
+    // Get selected users data
+    const selectedUsers = window.getSelectedUsers ? window.getSelectedUsers() : {};
+    const hasRegisteredUsers = Object.values(selectedUsers).some(user => user?.isAuthenticated);
 
-  // Navigate to game page
-  window.location.href = getPath('/game');
+    let gameManager;
+
+    if (hasRegisteredUsers) {
+      // Import FirebaseGameManager for games with registered users
+      const { FirebaseGameManager } = await import('../lib/firebaseGameState');
+      const { getCurrentUser, isAuthenticated } = await import('../lib/auth');
+
+      // Create players array with authentication data
+      const playersData = state.players.map((playerName, index) => {
+        const selectedUser = selectedUsers[index + 1];
+        return {
+          displayName: playerName,
+          userId: selectedUser?.userId || null,
+          username: selectedUser?.username || null,
+          isAuthenticated: Boolean(selectedUser?.isAuthenticated),
+          position: index
+        };
+      });
+
+      // Get current user as game creator
+      const currentUser = getCurrentUser();
+      const createdBy = isAuthenticated() && currentUser ? currentUser.uid : null;
+
+      // Create Firebase-enabled game
+      gameManager = new FirebaseGameManager(state.players, state.teams);
+      await gameManager.createFirebaseGame(playersData, createdBy);
+
+      console.log('Created Firebase game with registered users');
+    } else {
+      // Use regular GameManager for manual-only games
+      gameManager = new GameManager(state.players, state.teams);
+      console.log('Created local game (no registered users)');
+    }
+
+    // Save to localStorage (works for both Firebase and local games)
+    localStorage.setItem('currentGame', gameManager.toJSON());
+
+    // Navigate to game page
+    window.location.href = getPath('/game');
+
+  } catch (error) {
+    console.error('Error creating game:', error);
+    if (teamError) {
+      teamError.textContent = 'Failed to create game. Please try again.';
+      teamError.classList.remove('hidden');
+    }
+  }
 });
 
 // Authentication setup
 function setupAuth() {
-  const signInBtn = document.getElementById('sign-in-btn');
-  const signOutBtn = document.getElementById('sign-out-btn');
-  const loggedOutSection = document.getElementById('auth-logged-out');
-  const loggedInSection = document.getElementById('auth-logged-in');
-  const userPhoto = document.getElementById('user-photo');
-  const userName = document.getElementById('user-name');
-  const userUsername = document.getElementById('user-username');
+  console.log('setupAuth() called');
 
+  // Give DOM time to settle and try multiple times
+  const setupAuthWithRetry = (attempt = 1) => {
+    console.log(`Setting up auth attempt #${attempt}`);
+
+    const signInBtn = document.getElementById('sign-in-btn');
+    const signOutBtn = document.getElementById('sign-out-btn');
+    const loggedOutSection = document.getElementById('auth-logged-out');
+    const loggedInSection = document.getElementById('auth-logged-in');
+    const userPhoto = document.getElementById('user-photo');
+    const userName = document.getElementById('user-name');
+    const userUsername = document.getElementById('user-username');
+
+    console.log('DOM elements found:', {
+      signInBtn: !!signInBtn,
+      signOutBtn: !!signOutBtn,
+      loggedOutSection: !!loggedOutSection,
+      loggedInSection: !!loggedInSection
+    });
+
+    if (!signInBtn && attempt < 5) {
+      console.log(`Sign-in button not found, retrying in 100ms (attempt ${attempt})`);
+      setTimeout(() => setupAuthWithRetry(attempt + 1), 100);
+      return;
+    }
+
+    // Proceed with auth setup
+    setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSection, userPhoto, userName, userUsername);
+  };
+
+  setupAuthWithRetry();
+}
+
+// Separate function to set up auth handlers
+function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSection, userPhoto, userName, userUsername) {
   // Update UI based on auth state
   function updateAuthUI(user) {
     if (user) {
@@ -282,15 +404,79 @@ function setupAuth() {
       loggedOutSection?.classList.add('hidden');
       loggedInSection?.classList.remove('hidden');
 
-      if (userPhoto) userPhoto.src = user.photoURL || '';
+      // Handle user photo with fallback and error handling
+      if (userPhoto) {
+        if (user.photoURL) {
+          userPhoto.src = user.photoURL;
+          userPhoto.style.display = 'block';
+
+          // Add error handler for failed photo loads
+          userPhoto.onerror = () => {
+            console.warn('Failed to load user photo, using fallback');
+            userPhoto.style.display = 'none';
+
+            // Create or update fallback avatar with user's initials
+            let fallbackAvatar = document.getElementById('fallback-avatar');
+            if (!fallbackAvatar) {
+              fallbackAvatar = document.createElement('div');
+              fallbackAvatar.id = 'fallback-avatar';
+              fallbackAvatar.className = 'w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold text-sm';
+              userPhoto.parentNode.insertBefore(fallbackAvatar, userPhoto);
+            }
+
+            // Use first letters of display name or username as initials
+            const name = user.displayName || user.username || 'U';
+            const initials = name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+            fallbackAvatar.textContent = initials;
+            fallbackAvatar.style.display = 'flex';
+          };
+        } else {
+          // No photo URL provided, show initials immediately
+          userPhoto.style.display = 'none';
+
+          let fallbackAvatar = document.getElementById('fallback-avatar');
+          if (!fallbackAvatar) {
+            fallbackAvatar = document.createElement('div');
+            fallbackAvatar.id = 'fallback-avatar';
+            fallbackAvatar.className = 'w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold text-sm';
+            userPhoto.parentNode.insertBefore(fallbackAvatar, userPhoto);
+          }
+
+          const name = user.displayName || user.username || 'U';
+          const initials = name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+          fallbackAvatar.textContent = initials;
+          fallbackAvatar.style.display = 'flex';
+        }
+      }
+
       if (userName) userName.textContent = user.displayName;
       if (userUsername) userUsername.textContent = user.username;
+
+      // Load active games
+      loadActiveGames(user);
 
       console.log('User signed in:', user.username);
     } else {
       // User is signed out
       loggedOutSection?.classList.remove('hidden');
       loggedInSection?.classList.add('hidden');
+
+      // Clean up avatar elements
+      if (userPhoto) {
+        userPhoto.style.display = 'block';
+        userPhoto.src = '';
+        userPhoto.onerror = null;
+      }
+
+      // Remove fallback avatar if it exists
+      const fallbackAvatar = document.getElementById('fallback-avatar');
+      if (fallbackAvatar) {
+        fallbackAvatar.remove();
+      }
+
+      // Hide active games section
+      const activeGamesSection = document.getElementById('active-games-section');
+      if (activeGamesSection) activeGamesSection.classList.add('hidden');
 
       console.log('User signed out');
     }
@@ -305,26 +491,168 @@ function setupAuth() {
     updateAuthUI(currentUser);
   }
 
-  // Sign in button
-  signInBtn?.addEventListener('click', async () => {
-    try {
-      signInBtn.disabled = true;
-      signInBtn.textContent = 'Signing in...';
-
-      const user = await signInWithGoogle();
-      if (user) {
-        console.log('Successfully signed in:', user.username);
-      } else {
-        console.log('Sign in was cancelled or failed');
-      }
-    } catch (error) {
-      console.error('Error signing in:', error);
-      alert('Failed to sign in. Please try again.');
-    } finally {
-      signInBtn.disabled = false;
-      signInBtn.textContent = 'Sign in with Google';
-    }
+  // Sign in button - with comprehensive debugging and multiple approaches
+  console.log('Setting up sign-in button event listener...');
+  console.log('Sign-in button element:', signInBtn);
+  console.log('Sign-in button properties:', {
+    id: signInBtn?.id,
+    className: signInBtn?.className,
+    disabled: signInBtn?.disabled,
+    style: signInBtn?.style?.cssText,
+    parentElement: signInBtn?.parentElement?.tagName
   });
+  console.log('Browser info:', {
+    userAgent: navigator.userAgent,
+    isSafari: /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
+  });
+
+  if (signInBtn) {
+    // Method 1: Direct event listeners (multiple types for Safari compatibility)
+    ['click', 'touchstart', 'mousedown', 'mouseup'].forEach(eventType => {
+      signInBtn.addEventListener(eventType, (e) => {
+        console.log(`Sign-in button ${eventType} event fired`, e);
+      });
+    });
+
+    // Method 2: Main click handler with multiple fallbacks
+    const handleSignIn = async (e) => {
+      console.log('handleSignIn called!', e);
+
+      try {
+        e.preventDefault(); // Prevent any default behavior
+        e.stopPropagation(); // Stop event bubbling
+
+        console.log('Starting sign-in process...');
+
+        // Immediately show loading state
+        signInBtn.disabled = true;
+        signInBtn.textContent = 'Opening Google Sign-In...';
+
+        // Hide the logged-out section and show a loading state
+        if (loggedOutSection) {
+          loggedOutSection.style.display = 'none';
+        }
+
+        // Show loading state in auth section
+        const authSection = document.getElementById('auth-section');
+        if (authSection) {
+          const loadingDiv = document.createElement('div');
+          loadingDiv.id = 'auth-loading';
+          loadingDiv.className = 'text-center py-4';
+          loadingDiv.innerHTML = `
+            <div class="flex items-center justify-center space-x-2">
+              <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+              <span class="text-blue-700">Signing in with Google...</span>
+            </div>
+          `;
+          authSection.appendChild(loadingDiv);
+        }
+
+        console.log('Calling signInWithGoogle()...');
+        const user = await signInWithGoogle();
+        console.log('signInWithGoogle() returned:', user);
+
+        // Clean up loading state
+        const loadingDiv = document.getElementById('auth-loading');
+        if (loadingDiv) {
+          loadingDiv.remove();
+        }
+
+        if (user) {
+          console.log('Successfully signed in:', user.username);
+          // Success will be handled by the auth state change listener
+          // No need to reset UI here - it will update automatically
+        } else {
+          // Sign-in was cancelled or failed
+          console.log('Sign in was cancelled or failed');
+
+          // Restore the original sign-in UI
+          if (loggedOutSection) {
+            loggedOutSection.style.display = 'block';
+          }
+          signInBtn.disabled = false;
+          signInBtn.textContent = 'Sign in with Google';
+        }
+      } catch (error) {
+        console.error('Error signing in:', error);
+        console.log('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          code: error.code
+        });
+
+        signInBtn.disabled = false;
+        signInBtn.textContent = 'Sign in with Google';
+
+        // Show user-friendly error message with workaround options
+        const message = `Google Sign-In failed in Safari/DuckDuckGo.\n\nOptions:\n1. Use Chrome (works perfectly)\n2. Continue without authentication (local-only mode)\n3. Try alternative auth method\n\nWhat would you like to do?`;
+
+        const choice = prompt(message + '\n\nEnter 1, 2, or 3:', '2');
+
+        if (choice === '1') {
+          alert('Please open this app in Chrome for the best authentication experience.');
+        } else if (choice === '2') {
+          console.log('User chose to continue without authentication');
+          alert('Continuing in local-only mode. Your games will be saved locally but not synced across devices.');
+        } else if (choice === '3') {
+          try {
+            const { signInWithGoogleAlternative } = await import('../lib/auth');
+            const result = await signInWithGoogleAlternative();
+            console.log('Alternative sign-in result:', result);
+          } catch (alternativeError) {
+            console.error('Alternative sign-in also failed:', alternativeError);
+            alert('Alternative method also failed. Please use Chrome or continue in local-only mode.');
+          }
+        }
+      }
+    };
+
+    // Method 3: Attach multiple handlers
+    signInBtn.addEventListener('click', handleSignIn);
+    signInBtn.onclick = handleSignIn; // Direct property assignment as fallback
+
+    // Method 4: Add a direct click test function
+    window.testSignInButton = () => {
+      console.log('Testing sign-in button manually...');
+      handleSignIn({ preventDefault: () => {}, stopPropagation: () => {}, target: signInBtn, currentTarget: signInBtn });
+    };
+
+    // Method 5: Event delegation fallback for Safari
+    document.addEventListener('click', (e) => {
+      if (e.target && e.target.id === 'sign-in-btn') {
+        console.log('Sign-in button clicked via event delegation');
+        handleSignIn(e);
+      }
+    });
+
+    console.log('All sign-in event handlers set up');
+
+  } else {
+    console.error('Sign-in button not found! Check DOM structure.');
+
+    // Method 6: Last resort - event delegation without element reference
+    document.addEventListener('click', (e) => {
+      if (e.target && e.target.id === 'sign-in-btn') {
+        console.log('Sign-in button clicked via fallback delegation');
+        // Try to find the button again
+        const btn = document.getElementById('sign-in-btn');
+        if (btn) {
+          console.log('Found button via fallback, setting up handler...');
+          const handleSignIn = async (e) => {
+            console.log('Fallback sign-in handler called');
+            // Call signInWithGoogle directly for fallback
+            try {
+              const user = await signInWithGoogle();
+              console.log('Fallback sign-in result:', user);
+            } catch (error) {
+              console.error('Fallback sign-in error:', error);
+            }
+          };
+          handleSignIn(e);
+        }
+      }
+    });
+  }
 
   // Sign out button
   signOutBtn?.addEventListener('click', async () => {
@@ -332,6 +660,27 @@ function setupAuth() {
       await signOutUser();
     } catch (error) {
       console.error('Error signing out:', error);
+    }
+  });
+
+  // Skip authentication button
+  const skipAuthBtn = document.getElementById('skip-auth-btn');
+  skipAuthBtn?.addEventListener('click', () => {
+    console.log('User chose to skip authentication');
+
+    // Hide the auth section to give the user a clean interface
+    const authSection = document.getElementById('auth-section');
+    if (authSection) {
+      authSection.style.display = 'none';
+    }
+
+    // Show a brief confirmation
+    const playerSetup = document.getElementById('player-setup');
+    if (playerSetup) {
+      const notice = document.createElement('div');
+      notice.className = 'bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-center';
+      notice.innerHTML = '<p class="text-yellow-700 text-sm">📱 <strong>Local Mode:</strong> Games will be saved on this device only.</p>';
+      playerSetup.insertBefore(notice, playerSetup.firstChild);
     }
   });
 }
@@ -352,16 +701,24 @@ function setupUserAutocomplete() {
     // Handle input changes with debouncing
     input.addEventListener('input', async (e) => {
       const query = e.target.value.trim();
+      const userIndicator = document.getElementById(`user-indicator-${playerIndex}`);
 
       // Clear previous timeout
       if (searchTimeout) {
         clearTimeout(searchTimeout);
       }
 
+      // Hide user indicator and clear selection when user types
+      if (selectedUsers[playerIndex] && e.target.value !== selectedUsers[playerIndex].displayName) {
+        selectedUsers[playerIndex] = null;
+        userIndicator?.classList.add('hidden');
+      }
+
       // Hide dropdown if query is too short
       if (query.length < 2) {
         dropdown.classList.add('hidden');
         selectedUsers[playerIndex] = null;
+        userIndicator?.classList.add('hidden');
         return;
       }
 
@@ -422,17 +779,28 @@ function setupUserAutocomplete() {
         const userId = item.dataset.userId;
         const username = item.dataset.username;
         const displayName = item.dataset.displayName;
+        const photoURL = item.querySelector('img')?.src;
 
         // Store selected user data
         selectedUsers[playerIndex] = {
           userId,
           username,
           displayName,
+          photoURL,
           isAuthenticated: true
         };
 
         // Update input value
         input.value = displayName;
+
+        // Show user indicator
+        const userIndicator = document.getElementById(`user-indicator-${playerIndex}`);
+        const userAvatar = document.getElementById(`user-avatar-${playerIndex}`);
+
+        if (userIndicator && userAvatar) {
+          userAvatar.src = photoURL || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJDMTMuMSAyIDE0IDIuOSAxNCA0QzE0IDUuMSAxMy4xIDYgMTIgNkMxMC45IDYgMTAgNS4xIDEwIDRDMTAgMi45IDEwLjkgMiAxMiAyWk0yMSAxMlY5SDJWMTJIMTU7VDJDMTE5IDE4LjUgMTQuNSAyIDkgMkgxNUMxOS41IDIgMjMgNS41IDIzIDEwVjEySDIxWiIgZmlsbD0iIzZCNzI4MCIvPgo8L3N2Zz4K';
+          userIndicator.classList.remove('hidden');
+        }
 
         // Hide dropdown
         dropdown.classList.add('hidden');
@@ -447,5 +815,338 @@ function setupUserAutocomplete() {
   // Make selectedUsers accessible for game creation
   window.getSelectedUsers = () => selectedUsers;
 }
+
+// Load active games for signed-in user
+async function loadActiveGames(user) {
+  try {
+    const { FirebaseGameManager } = await import('../lib/firebaseGameState');
+    const activeGames = await FirebaseGameManager.getUserActiveGames(user.uid);
+
+    const activeGamesSection = document.getElementById('active-games-section');
+    const activeGamesList = document.getElementById('active-games-list');
+
+    if (!activeGamesSection || !activeGamesList) {
+      console.error('Active games UI elements not found');
+      return;
+    }
+
+    if (activeGames.length === 0) {
+      console.log('No active games found, hiding section');
+      activeGamesSection.classList.add('hidden');
+      return;
+    }
+
+    // Show the section
+    activeGamesSection.classList.remove('hidden');
+
+    // Clear existing content
+    activeGamesList.innerHTML = '';
+
+    // Add each active game
+    activeGames.forEach(game => {
+      const gameElement = document.createElement('div');
+      gameElement.className = 'flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors';
+
+      const gameInfo = document.createElement('div');
+      gameInfo.innerHTML = `
+        <div class="font-medium text-blue-900">${game.teams[0]} vs ${game.teams[1]}</div>
+        <div class="text-sm text-blue-600">Score: ${game.scores[0]} - ${game.scores[1]} • Hand ${game.hands + 1}</div>
+        <div class="text-xs text-blue-500">Created ${new Date(game.metadata.createdAt).toLocaleDateString()}</div>
+      `;
+
+      const joinButton = document.createElement('button');
+      joinButton.className = 'px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors';
+      joinButton.textContent = 'Join Game';
+      joinButton.onclick = () => joinGame(game.id);
+
+      gameElement.appendChild(gameInfo);
+      gameElement.appendChild(joinButton);
+      activeGamesList.appendChild(gameElement);
+    });
+
+  } catch (error) {
+    console.error('Error loading active games:', error);
+  }
+}
+
+// Join an existing game
+function joinGame(gameId) {
+  // Load the game into localStorage and navigate to it
+  window.location.href = getPath(`/game?id=${gameId}`);
+}
+
+// Manual authentication debugging functions
+window.debugAuth = function() {
+  console.log('=== AUTH DEBUG INFO ===');
+  console.log('Current user:', getCurrentUser());
+  console.log('Is authenticated:', getCurrentUser() !== null);
+  console.log('Firebase configured:', (async () => {
+    const { isFirebaseConfigured } = await import('../lib/firebase');
+    return isFirebaseConfigured();
+  })());
+  console.log('Browser details:', {
+    userAgent: navigator.userAgent,
+    cookieEnabled: navigator.cookieEnabled,
+    onLine: navigator.onLine,
+    currentURL: window.location.href
+  });
+  console.log('Local storage:', {
+    hasCurrentGame: !!localStorage.getItem('currentGame'),
+    keys: Object.keys(localStorage)
+  });
+  console.log('========================');
+};
+
+window.tryDirectRedirect = async function() {
+  console.log('Attempting direct redirect authentication...');
+  try {
+    const { signInWithGoogleRedirect } = await import('../lib/auth');
+    await signInWithGoogleRedirect();
+  } catch (error) {
+    console.error('Direct redirect failed:', error);
+  }
+};
+
+window.forceHandleRedirect = async function() {
+  console.log('Force checking redirect result...');
+  try {
+    const { handleRedirectResult } = await import('../lib/auth');
+    const result = await handleRedirectResult();
+    console.log('Forced redirect result:', result);
+  } catch (error) {
+    console.error('Force redirect handling failed:', error);
+  }
+};
+
+window.forceAuthStateCheck = async function() {
+  console.log('Force checking auth state...');
+  try {
+    const { getFirebaseAuth } = await import('../lib/firebase');
+    const { getCurrentUser } = await import('../lib/auth');
+
+    const auth = getFirebaseAuth();
+    console.log('Firebase auth:', auth);
+    console.log('Firebase current user:', auth?.currentUser);
+    console.log('Pepper current user:', getCurrentUser());
+
+    if (auth && auth.currentUser && !getCurrentUser()) {
+      console.log('Found Firebase user but no Pepper user - this indicates the auth state sync issue');
+      console.log('Firebase user details:', {
+        uid: auth.currentUser.uid,
+        email: auth.currentUser.email,
+        displayName: auth.currentUser.displayName
+      });
+    }
+  } catch (error) {
+    console.error('Force auth state check failed:', error);
+  }
+};
+
+window.diagnoseAuthDomain = async function() {
+  console.log('=== AUTH DOMAIN DIAGNOSIS ===');
+  try {
+    const { firebaseConfig, isFirebaseConfigured } = await import('../lib/firebase');
+
+    console.log('Firebase configured:', isFirebaseConfigured());
+    console.log('Current URL details:', {
+      href: window.location.href,
+      origin: window.location.origin,
+      hostname: window.location.hostname,
+      protocol: window.location.protocol,
+      port: window.location.port,
+      pathname: window.location.pathname
+    });
+
+    console.log('Firebase config details:', {
+      authDomain: firebaseConfig.authDomain,
+      apiKey: firebaseConfig.apiKey?.substring(0, 10) + '...',
+      projectId: firebaseConfig.projectId
+    });
+
+    // Check redirect URL configuration
+    const authDomain = firebaseConfig.authDomain;
+    const currentOrigin = window.location.origin;
+    const currentHostname = window.location.hostname;
+    const currentPath = window.location.pathname;
+    const fullURL = currentOrigin + currentPath;
+    const isDevelopment = currentOrigin.includes('localhost') || currentOrigin.includes('127.0.0.1');
+
+    console.log('URL and domain analysis:', {
+      authDomain,
+      currentOrigin,
+      currentHostname,
+      currentPath,
+      fullURL,
+      isDevelopment,
+      hostnameAuthorized: currentHostname === 'localhost' || authDomain?.includes(currentHostname)
+    });
+
+    // Check if this is the base path issue
+    if (isDevelopment) {
+      const hasBasePath = currentPath !== '/' && currentPath !== '';
+
+      if (hasBasePath) {
+        console.warn('🎯 POTENTIAL ISSUE: Base Path Configuration');
+        console.warn('Current path:', currentPath);
+        console.warn('Full URL:', fullURL);
+        console.warn('');
+        console.warn('Firebase will redirect back to this exact URL after authentication.');
+        console.warn('If authentication fails, the issue might be:');
+        console.warn('1. Astro base path configuration conflicts with Firebase redirects');
+        console.warn('2. Firebase not handling the /pepper_scorer path correctly');
+        console.warn('3. Need to test auth from root path (/) vs base path');
+        console.warn('');
+        console.warn('🧪 Try these tests:');
+        console.warn('1. Test auth from http://localhost:4321/ (root)');
+        console.warn('2. Test auth from http://localhost:4321/pepper_scorer/ (current)');
+        console.warn('3. Check if Astro base path should be removed for development');
+      } else {
+        console.log('✅ Using root path - no base path conflicts');
+      }
+
+      // Check hostname authorization
+      const hostnameAuthorized = currentHostname === 'localhost' || authDomain?.includes(currentHostname);
+      if (!hostnameAuthorized) {
+        console.error('🔴 HOSTNAME NOT AUTHORIZED');
+        console.error('Add localhost to Firebase authorized domains');
+      } else {
+        console.log('✅ Hostname authorized in Firebase');
+      }
+    } else {
+      console.log('ℹ️  Production environment detected');
+    }
+
+    // Check sessionStorage
+    console.log('SessionStorage state:', {
+      hasRedirectAttempt: !!sessionStorage.getItem('pepper_auth_redirect_attempt'),
+      redirectAttemptTime: sessionStorage.getItem('pepper_auth_redirect_attempt'),
+      redirectInfo: sessionStorage.getItem('pepper_auth_redirect_info'),
+      allKeys: Object.keys(sessionStorage)
+    });
+
+    // Check localStorage
+    console.log('LocalStorage state:', {
+      hasCurrentGame: !!localStorage.getItem('currentGame'),
+      allKeys: Object.keys(localStorage)
+    });
+
+  } catch (error) {
+    console.error('Auth domain diagnosis failed:', error);
+  }
+  console.log('==============================');
+};
+
+window.tryAlternativeAuth = async function() {
+  console.log('Trying alternative authentication method...');
+  try {
+    const { signInWithGoogleAlternative } = await import('../lib/auth');
+    const result = await signInWithGoogleAlternative();
+    console.log('Alternative auth result:', result);
+  } catch (error) {
+    console.error('Alternative auth failed:', error);
+  }
+};
+
+window.testAuthFromRoot = function() {
+  console.log('🧪 NOTE: Astro config now uses root path in development');
+  console.log('Current URL:', window.location.href);
+  console.log('Base URL from environment:', import.meta.env.BASE_URL || 'undefined');
+  console.log('');
+  console.log('✅ No need to navigate to root - auth should work from current page now');
+  console.log('The astro.config.mjs has been updated to use base: "/" in development');
+  console.log('');
+  console.log('🔄 Please restart your dev server (npm run dev) for the config change to take effect');
+};
+
+window.testReturnFromRoot = function() {
+  console.log('Checking if we should return to original path...');
+  if (typeof sessionStorage !== 'undefined') {
+    const returnPath = sessionStorage.getItem('pepper_return_path');
+    if (returnPath && returnPath !== '/') {
+      console.log('Returning to original path:', returnPath);
+      sessionStorage.removeItem('pepper_return_path');
+      window.location.href = window.location.origin + returnPath;
+    }
+  }
+};
+
+// Debug function to inspect Firebase data directly
+window.debugFirebaseData = async function(gameId) {
+  try {
+    const { getFirebaseDatabase, isFirebaseConfigured } = await import('../lib/firebase');
+
+    if (!isFirebaseConfigured()) {
+      console.log('Firebase not configured');
+      return;
+    }
+
+    const database = getFirebaseDatabase();
+    if (!database) {
+      console.log('Database not available');
+      return;
+    }
+
+    const { ref, get } = await import('firebase/database');
+
+    if (gameId) {
+      // Check specific game
+      const gameRef = ref(database, `games/${gameId}`);
+      const snapshot = await get(gameRef);
+
+      if (snapshot.exists()) {
+        const gameData = snapshot.val();
+        console.log('=== FIREBASE GAME DATA ===');
+        console.log('Game ID:', gameId);
+        console.log('Full game data:', gameData);
+        console.log('Game state specifically:', gameData.gameState);
+        console.log('Current scores:', gameData.gameState?.scores);
+        console.log('Hands array:', gameData.gameState?.hands);
+        console.log('Hands count:', gameData.gameState?.hands?.length);
+        console.log('=========================');
+      } else {
+        console.log('Game not found:', gameId);
+      }
+    } else {
+      // Check all user games
+      const { getCurrentUser } = await import('../lib/auth');
+      const currentUser = getCurrentUser();
+
+      if (!currentUser) {
+        console.log('No current user');
+        return;
+      }
+
+      const userGamesRef = ref(database, `userGames/${currentUser.uid}`);
+      const userSnapshot = await get(userGamesRef);
+
+      if (userSnapshot.exists()) {
+        const gameIds = Object.keys(userSnapshot.val());
+        console.log('=== USER GAMES DEBUG ===');
+        console.log('User ID:', currentUser.uid);
+        console.log('Game IDs:', gameIds);
+
+        for (const gameId of gameIds) {
+          const gameRef = ref(database, `games/${gameId}`);
+          const gameSnapshot = await get(gameRef);
+
+          if (gameSnapshot.exists()) {
+            const gameData = gameSnapshot.val();
+            console.log(`\n--- Game ${gameId} ---`);
+            console.log('Teams:', gameData.teams);
+            console.log('Status:', gameData.metadata?.status);
+            console.log('Scores:', gameData.gameState?.scores);
+            console.log('Hands:', gameData.gameState?.hands?.length || 0);
+            console.log('Raw hands array:', gameData.gameState?.hands);
+          }
+        }
+        console.log('======================');
+      } else {
+        console.log('No user games found');
+      }
+    }
+  } catch (error) {
+    console.error('Debug error:', error);
+  }
+};
 
 </script>

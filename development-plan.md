@@ -57,7 +57,7 @@ Modernizing the Pepper card game scoring application by moving from Bootstrap 4 
 **Phase 5 Complete!** Authentication and infrastructure are working. Ready for Phase 6.
 
 ### Phase 5: Firebase Foundation & Authentication ✅
-**Status: Complete**
+**Status: Complete - Safari/DuckDuckGo authentication issues resolved**
 
 #### Manual Firebase Setup Complete:
 1. **Firebase Project Created** ✅ - Project configured at console.firebase.google.com
@@ -65,20 +65,35 @@ Modernizing the Pepper card game scoring application by moving from Bootstrap 4 
    - Realtime Database (test mode active)
    - Authentication with Google sign-in provider
 3. **Configuration Complete** ✅ - Environment variables configured
+4. **Authorized Domains** ✅ - localhost and billwolf.space configured
 
 #### Code Implementation Complete:
 1. **Firebase SDK Integration** ✅ - Dependencies installed and configured
 2. **Configuration Infrastructure** ✅ - Environment-based setup with fallbacks
-3. **Authentication System** ✅ - Google sign-in working with user profile management
+3. **Authentication System** ✅ - Simple popup authentication working across all browsers
 4. **Database Schema Design** ✅ - Complete schema for users, games, and real-time sync
 5. **Testing Interface** ✅ - Authentication UI added and verified working
+6. **User Lookup System** ✅ - Username autocomplete for game setup
+
+#### Critical Authentication Fixes Applied:
+- ✅ **Simple popup-only authentication** - Reverted from complex redirect system
+- ✅ **Cross-browser compatibility** - Works in Chrome, Safari, DuckDuckGo
+- ✅ **Base path configuration** - Development uses root path, production uses /pepper_scorer
+- ✅ **Domain configuration** - Proper Firebase authorized domains setup
 
 #### Verified Working Features:
 - ✅ Firebase initialization and configuration
-- ✅ Google authentication (sign in/sign out)
+- ✅ Google authentication (sign in/sign out) in all browsers
 - ✅ User profile creation and management
 - ✅ Real-time authentication state management
+- ✅ User search and autocomplete in game setup
 - ✅ Backward compatibility with localStorage
+- ✅ "Continue without signing in" fallback option
+
+#### All Known Issues Resolved ✅:
+- ✅ **Login UI State**: Login button now shows proper loading states during authentication process
+- ✅ **Account Page Loading**: Eliminated jarring flash of "authentication required" message with smooth loading state
+- ✅ **Display Name Persistence**: Custom display names now persist properly and don't revert to Google data on page refresh
 
 ### Phase 6: Database Schema & Core Data Migration
 **Goal**: Replace localStorage with Firebase, maintain backward compatibility

@@ -17,6 +17,7 @@ export interface PepperUser {
   photoURL?: string;
   createdAt: number;
   lastLogin: number;
+  hasCustomDisplayName?: boolean; // Flag to track if user has set a custom display name
   stats: {
     wins: number;
     losses: number;
@@ -76,6 +77,7 @@ export const signInWithGoogle = async (): Promise<PepperUser | null> => {
     provider.addScope('profile');
     provider.addScope('email');
 
+    // Simple popup authentication works in all browsers when domains are properly configured
     const result = await signInWithPopup(auth, provider);
     const user = result.user;
 
@@ -87,6 +89,7 @@ export const signInWithGoogle = async (): Promise<PepperUser | null> => {
     return null;
   }
 };
+
 
 // Sign out
 export const signOutUser = async (): Promise<void> => {
@@ -115,16 +118,36 @@ const createOrUpdateUser = async (firebaseUser: User): Promise<PepperUser> => {
   const now = Date.now();
   let pepperUser: PepperUser;
 
+  // Clean up photo URL to avoid rate limiting issues
+  const cleanPhotoURL = (url: string | null | undefined): string | undefined => {
+    if (!url) return undefined;
+
+    // For Google Photos, ensure we use a standard size parameter to avoid rate limiting
+    if (url.includes('googleusercontent.com')) {
+      // Replace any existing size parameter with a standard one
+      let cleanUrl = url.replace(/=s\d+-c$/, '=s96-c').replace(/=s\d+$/, '=s96');
+      // If no size parameter exists, add one
+      if (!cleanUrl.includes('=s')) {
+        cleanUrl += '=s96-c';
+      }
+      return cleanUrl;
+    }
+
+    return url;
+  };
+
   if (snapshot.exists()) {
     // Existing user - update last login
     const existingUser = snapshot.val() as PepperUser;
     pepperUser = {
       ...existingUser,
       lastLogin: now,
-      // Update profile info from Google in case it changed
-      displayName: firebaseUser.displayName || existingUser.displayName,
+      // Only update displayName from Google if user hasn't set a custom one
+      displayName: existingUser.hasCustomDisplayName
+        ? existingUser.displayName
+        : (firebaseUser.displayName || existingUser.displayName),
       email: firebaseUser.email || existingUser.email,
-      photoURL: firebaseUser.photoURL || existingUser.photoURL
+      photoURL: cleanPhotoURL(firebaseUser.photoURL) || existingUser.photoURL
     };
   } else {
     // New user - create profile
@@ -136,7 +159,7 @@ const createOrUpdateUser = async (firebaseUser: User): Promise<PepperUser> => {
       username,
       displayName: firebaseUser.displayName || username,
       email: firebaseUser.email || undefined,
-      photoURL: firebaseUser.photoURL || undefined,
+      photoURL: cleanPhotoURL(firebaseUser.photoURL),
       createdAt: now,
       lastLogin: now,
       stats: createDefaultStats()
@@ -261,6 +284,79 @@ export const getUserByUsername = async (username: string): Promise<PepperUser | 
 // Get display name for user (fallback to username)
 export const getDisplayName = (user: PepperUser): string => {
   return user.displayName || user.username;
+};
+
+// Update user's display name
+export const updateDisplayName = async (newDisplayName: string): Promise<PepperUser | null> => {
+  if (!isFirebaseConfigured() || !currentUser) {
+    console.warn('Firebase not configured or user not signed in. Cannot update display name.');
+    return null;
+  }
+
+  try {
+    const database = getFirebaseDatabase();
+    if (!database) throw new Error('Firebase Database not initialized');
+
+    const userRef = ref(database, `users/${currentUser.uid}`);
+
+    // Update the display name and mark as custom
+    const updatedUser: PepperUser = {
+      ...currentUser,
+      displayName: newDisplayName.trim(),
+      hasCustomDisplayName: true // Mark that user has set a custom display name
+    };
+
+    await set(userRef, updatedUser);
+
+    // Update local state
+    currentUser = updatedUser;
+    notifyAuthStateListeners(updatedUser);
+
+    return updatedUser;
+  } catch (error) {
+    console.error('Error updating display name:', error);
+    return null;
+  }
+};
+
+// Reset display name to Google's default
+export const resetDisplayNameToGoogle = async (): Promise<PepperUser | null> => {
+  if (!isFirebaseConfigured() || !currentUser) {
+    console.warn('Firebase not configured or user not signed in. Cannot reset display name.');
+    return null;
+  }
+
+  try {
+    const auth = getFirebaseAuth();
+    const firebaseUser = auth?.currentUser;
+
+    if (!firebaseUser) {
+      throw new Error('No Firebase user found');
+    }
+
+    const database = getFirebaseDatabase();
+    if (!database) throw new Error('Firebase Database not initialized');
+
+    const userRef = ref(database, `users/${currentUser.uid}`);
+
+    // Reset to Google's display name and remove custom flag
+    const updatedUser: PepperUser = {
+      ...currentUser,
+      displayName: firebaseUser.displayName || currentUser.username,
+      hasCustomDisplayName: false // Remove custom flag
+    };
+
+    await set(userRef, updatedUser);
+
+    // Update local state
+    currentUser = updatedUser;
+    notifyAuthStateListeners(updatedUser);
+
+    return updatedUser;
+  } catch (error) {
+    console.error('Error resetting display name:', error);
+    return null;
+  }
 };
 
 // Search for users by username, display name, or email
