@@ -347,6 +347,13 @@ export function trackAwardData(
         'D': 14
       }[bid] || 0;
       
+      // Per-hand score outcome — needed for running totals and deficit tracking
+      // regardless of whether the bidder resolves to a known player.
+      const [scoreTeam1, scoreTeam2] = calculateScore(hand);
+      const handScores: [number, number] = [scoreTeam1, scoreTeam2];
+      awardData.handScores.push(handScores);
+      const bidderPoints = bidderTeam === 0 ? scoreTeam1 : scoreTeam2;
+
       // 1. Update player-specific stats
       const playerStat = bidderName && bidderName in awardData.playerStats ? awardData.playerStats[bidderName] : undefined;
       if (playerStat) {
@@ -371,15 +378,6 @@ export function trackAwardData(
         if (inPepperRound) {
           playerStat.pepperRoundBids.attempts++;
         }
-        
-        // Calculate hand outcome
-        const [scoreTeam1, scoreTeam2] = calculateScore(hand);
-        const handScores: [number, number] = [scoreTeam1, scoreTeam2];
-        awardData.handScores.push(handScores);
-        
-        const bidderPoints = bidderTeam === 0 ? scoreTeam1 : scoreTeam2;
-        // Defender points calculation kept for future feature development
-        // const defenderPoints = bidderTeam === 0 ? scoreTeam2 : scoreTeam1;
         
         // For MVP calculation: add the actual points this player's team scored on their bid
         playerStat.netPoints += bidderPoints;
@@ -524,32 +522,33 @@ export function trackAwardData(
             defenderTeamStat.totalDefenses++;
           }
         }
-        
-        // 3. Update score history
-        currentScores[0] += handScores[0];
-        currentScores[1] += handScores[1];
-        awardData.pointsHistory.push([...currentScores]);
-        
-        // Check for deficit and comeback
-        const team0Deficit = currentScores[1] - currentScores[0];
-        const team1Deficit = currentScores[0] - currentScores[1];
-        
-        const team0Name = teams[0];
-        if (team0Name && team0Name in awardData.teamStats) {
-          const teamStats = awardData.teamStats[team0Name];
-          if (teamStats && team0Deficit > teamStats.maxDeficit) {
-            teamStats.maxDeficit = team0Deficit;
-            teamStats.minScoreTrailing = currentScores[0];
-          }
+      }
+
+      // 3. Update score history and deficit tracking. This runs for every completed
+      // (non-throw-in) hand regardless of whether the bidder resolved to a known
+      // player, so an out-of-range bidder can't desync the running score line.
+      currentScores[0] += handScores[0];
+      currentScores[1] += handScores[1];
+      awardData.pointsHistory.push([...currentScores]);
+
+      const team0Deficit = currentScores[1] - currentScores[0];
+      const team1Deficit = currentScores[0] - currentScores[1];
+
+      const team0Name = teams[0];
+      if (team0Name && team0Name in awardData.teamStats) {
+        const teamStats = awardData.teamStats[team0Name];
+        if (teamStats && team0Deficit > teamStats.maxDeficit) {
+          teamStats.maxDeficit = team0Deficit;
+          teamStats.minScoreTrailing = currentScores[0];
         }
-        
-        const team1 = teams[1];
-        if (team1 && team1 in awardData.teamStats) {
-          const teamStats = awardData.teamStats[team1];
-          if (teamStats && team1Deficit > teamStats.maxDeficit) {
-            teamStats.maxDeficit = team1Deficit;
-            teamStats.minScoreTrailing = currentScores[1];
-          }
+      }
+
+      const team1 = teams[1];
+      if (team1 && team1 in awardData.teamStats) {
+        const teamStats = awardData.teamStats[team1];
+        if (teamStats && team1Deficit > teamStats.maxDeficit) {
+          teamStats.maxDeficit = team1Deficit;
+          teamStats.minScoreTrailing = currentScores[1];
         }
       }
     } catch (e) {
