@@ -347,10 +347,11 @@ function calculateAwardStats(awardId: string, winnerName: string, data: AwardTra
       const partnerNetPoints = partnerStats?.netPoints || 0;
       const playerNetPoints = playerStats.netPoints;
       
-      const partnerContribution = Math.abs(partnerNetPoints);
-      const playerContribution = Math.abs(playerNetPoints);
-      const partnerPercentage = (playerContribution + partnerContribution) > 0 ? 
-        Math.round((partnerContribution / (playerContribution + partnerContribution)) * 100) : 0;
+      // Use signed net points to match the (fixed) award evaluation, which only fires
+      // when the team's combined net contribution is positive.
+      const totalNetPoints = playerNetPoints + partnerNetPoints;
+      const partnerPercentage = totalNetPoints > 0 ?
+        Math.round((partnerNetPoints / totalNetPoints) * 100) : 0;
       
       return `${winnerName} dominated while partner contributed ${partnerPercentage}% (${partnerNetPoints > 0 ? '+' : ''}${partnerNetPoints} vs ${playerNetPoints > 0 ? '+' : ''}${playerNetPoints} net points)`;
     }
@@ -1068,12 +1069,14 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         if (winningTeamPlayers.length !== 2) return null;
         
         const [player1, player2] = winningTeamPlayers;
-        const totalContribution = Math.abs(player1.netPoints) + Math.abs(player2.netPoints);
-        
-        if (totalContribution === 0) return null;
-        
-        const player1Percentage = Math.abs(player1.netPoints) / totalContribution;
-        const player2Percentage = Math.abs(player2.netPoints) / totalContribution;
+        // Use signed net points: a player who bled points should NOT count as a dominant contributor.
+        const totalContribution = player1.netPoints + player2.netPoints;
+
+        // If the team's combined net contribution isn't positive, "carried the team" is meaningless.
+        if (totalContribution <= 0) return null;
+
+        const player1Percentage = player1.netPoints / totalContribution;
+        const player2Percentage = player2.netPoints / totalContribution;
         
         // Check if one player dominated (75%+) while partner contributed little (25% or less)
         if (player1Percentage >= 0.75 && player2Percentage <= 0.25) {

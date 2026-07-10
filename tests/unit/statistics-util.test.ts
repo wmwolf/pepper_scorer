@@ -149,16 +149,21 @@ describe('calculateGameStats', () => {
     expect(stats.mostCommonTrump.count).toBe(3)
   })
 
-  it('counts defensive wins (when bidding team gets 0 tricks)', () => {
+  it('counts defensive wins (when defenders set the bidding team)', () => {
+    // The trailing digit is the DEFENDING team's trick count. A defensive set is when the
+    // defenders take enough tricks that the bidder falls short (tricks + tricksNeeded > 6).
+    // Note: tricks === 0 means the bidder swept, a bidder success, NOT a defensive set.
+    // Encoding is dealer,bidWinner,bid,trump,decision,tricks — the 3rd char is the bid.
     const hands = [
-      '114HP0', // Team 1 bids, gets 0 tricks - defensive win
-      '225HP2', // Team 2 bids, gets 2 tricks - normal
-      '136HP0', // Team 1 bids, gets 0 tricks - defensive win
+      '114HP3', // bid 4, defenders take 3 (3+4>6) - defensive set
+      '225HP2', // bid 5, defenders take 2 (2+5>6) - defensive set
+      '124HP2', // bid 4, defenders take 2 (2+4=6, not >6) - bidder made it, not a set
     ]
     const players = ['Alice', 'Bob', 'Charlie', 'Dana']
-    
+
     const stats = calculateGameStats(hands, players)
     expect(stats.defensiveWins).toBe(2)
+    expect(stats.setHands).toBe(2)
   })
 
   it('skips throw-in hands in calculations', () => {

@@ -210,22 +210,41 @@ describe('New Awards System', () => {
       expect(footprintsAward).toBeFalsy()
     })
 
-    it('works with negative net points', () => {
+    it('awards the player who carried despite a net-negative partner', () => {
       const awardData = initializeAwardTracking(players, teams)
-      
-      // Both players have negative points, but Alice's losses dominated
-      awardData.playerStats.Alice.netPoints = -12 // 80% of total contribution
-      awardData.playerStats.Charlie.netPoints = -3 // 20% of total contribution
+
+      // Alice carried the team (+20) while her partner was a net drag (-5).
+      // Signed contribution: Alice 20/15 ≈ 133%, Charlie -5/15 ≈ -33% (<= 25%).
+      awardData.playerStats.Alice.netPoints = 20
+      awardData.playerStats.Charlie.netPoints = -5
       awardData.playerStats.Bob.netPoints = 8
       awardData.playerStats.Dana.netPoints = 10
-      awardData.winningTeam = 0 // Team 1 still wins overall
+      awardData.winningTeam = 0 // Team 1 wins
       awardData.winningTeamName = 'Team 1'
-      
+
       const selectedAwards = selectGameAwards(awardData)
-      
+
       const footprintsAward = selectedAwards.find(award => award.id === 'footprints_in_the_sand')
       expect(footprintsAward).toBeTruthy()
-      expect(footprintsAward?.winner).toBe('Alice') // Alice dominated the contribution even if negative
+      expect(footprintsAward?.winner).toBe('Alice')
+    })
+
+    it('does not award when both partners had net-negative contributions', () => {
+      const awardData = initializeAwardTracking(players, teams)
+
+      // Neither player "carried" anyone: both are net-negative, so combined
+      // contribution is non-positive and no one earns the award.
+      awardData.playerStats.Alice.netPoints = -12
+      awardData.playerStats.Charlie.netPoints = -3
+      awardData.playerStats.Bob.netPoints = 8
+      awardData.playerStats.Dana.netPoints = 10
+      awardData.winningTeam = 0
+      awardData.winningTeamName = 'Team 1'
+
+      const selectedAwards = selectGameAwards(awardData)
+
+      const footprintsAward = selectedAwards.find(award => award.id === 'footprints_in_the_sand')
+      expect(footprintsAward).toBeFalsy()
     })
 
     it('requires 75%+ dominance threshold', () => {
