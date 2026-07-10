@@ -24,7 +24,8 @@ interface MultiplayerManager {
   isManualOverride(): boolean;
   // eslint-disable-next-line no-unused-vars
   setManualOverride(value: boolean): void;
-  isSeatPresent?(_seat: number): boolean; // added in the presence pass (8a commit 3)
+  isSeatPresent?(_seat: number): boolean;
+  hasPresenceData?(): boolean;
 }
 
 function asMultiplayer(gm: GameManager): MultiplayerManager | null {
@@ -70,8 +71,12 @@ function evaluateGating(gm: GameManager, currentHand: string, phase: string): Ga
   if (!gate) return null;               // bidder/bid: any participant may act
   if (gate.seats.includes(seat)) return null; // I'm responsible — show controls
 
-  // Fall back to manual mode automatically if nobody who can act is present (8a commit 3).
-  if (typeof mp.isSeatPresent === 'function' && !gate.seats.some(s => mp.isSeatPresent!(s))) {
+  // Automatic fallback: once presence is known, if nobody who could act is online, drop
+  // gating so the remaining players aren't stuck waiting on an absent seat. Guarded by
+  // hasPresenceData() so the first paint (before presence loads) keeps gating intact.
+  const presenceKnown = typeof mp.hasPresenceData === 'function' && mp.hasPresenceData();
+  if (presenceKnown && typeof mp.isSeatPresent === 'function' &&
+      !gate.seats.some(s => mp.isSeatPresent!(s))) {
     return null;
   }
 

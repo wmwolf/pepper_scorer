@@ -528,11 +528,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         badge.innerHTML = `<span>🎴</span><span>You are <strong>${name}</strong> · Seat ${seat + 1} · ${teamName}</span>`;
       };
 
+      // Begin presence tracking (announce this client, watch who else is online). Safe to
+      // call now and again on auth changes; it re-announces once a user is known.
+      firebaseGame.setupPresence();
+
       renderPlayerIdentity();
       onAuthStateChange(() => {
         renderPlayerIdentity();
-        // Re-run the UI so turn-gating re-evaluates now that we know who is signed in
-        // (getMySeat() depends on the resolved auth state).
+        // Announce presence for the now-known user and re-run the UI so turn-gating
+        // re-evaluates (getMySeat() and presence depend on the resolved auth state).
+        firebaseGame.announcePresence();
         if (typeof window.updateUI === 'function') window.updateUI();
       });
 

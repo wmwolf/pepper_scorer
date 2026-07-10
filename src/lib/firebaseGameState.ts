@@ -1,5 +1,5 @@
 // src/lib/firebaseGameState.ts
-import { ref, set, get, push, onValue, off, remove, runTransaction, type DatabaseReference } from 'firebase/database';
+import { ref, set, get, push, onValue, off, remove, onDisconnect, runTransaction, type DatabaseReference } from 'firebase/database';
 import { getFirebaseDatabase, isFirebaseConfigured } from './firebase';
 import { getCurrentUser } from './auth';
 import { GameManager, type GameState } from './gameState';
@@ -71,6 +71,12 @@ export class FirebaseGameManager extends GameManager {
   // "which seat is the signed-in user?" and surface a shareable room code.
   private firebasePlayers: FirebaseGamePlayer[] = [];
   private roomCode: string | null = null;
+
+  // Phase 8 presence: uids currently connected to this game (via onDisconnect-backed
+  // writes under games/{id}/presence). Drives the "fall back to manual when the seat
+  // whose turn it is has no one online" behaviour. Empty until the presence node loads.
+  private presentUids: Set<string> = new Set();
+  private presenceInitialized = false;
 
   constructor(players: string[], teams: [string, string], gameId?: string) {
     super(players, teams);
@@ -563,6 +569,68 @@ export class FirebaseGameManager extends GameManager {
 
   public setManualOverride(value: boolean): void {
     this.manualOverride = value;
+  }
+
+  // Presence (Phase 8)
+  // ==================
+
+  // Begin tracking who is connected to this game. Idempotent — safe to call again after
+  // auth resolves. Subscribes to the presence node (to know who is online) and, whenever
+  // this client is connected, writes its own presence with an onDisconnect cleanup so a
+  // dropped/closed tab is removed automatically. Re-runs the UI on changes so turn-gating
+  // can fall back to manual when the responsible seat goes offline.
+  public setupPresence(): void {
+    if (!this.gameId || !isFirebaseConfigured()) return;
+    const database = getFirebaseDatabase();
+    if (!database) return;
+
+    // Always (re)announce for the current user — auth may have resolved since last call.
+    this.announcePresence();
+
+    if (this.presenceInitialized) return;
+    this.presenceInitialized = true;
+
+    const presenceRef = ref(database, `games/${this.gameId}/presence`);
+    const unsubscribePresence = onValue(presenceRef, (snapshot) => {
+      const val = (snapshot.val() as Record<string, unknown> | null) || {};
+      this.presentUids = new Set(Object.keys(val));
+      // Presence affects who may act, so refresh the UI (re-evaluates gating).
+      if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
+    });
+    this.listeners.push(() => off(presenceRef, 'value', unsubscribePresence));
+
+    // Re-announce on every (re)connect so presence survives network blips.
+    const connectedRef = ref(database, '.info/connected');
+    const unsubscribeConnected = onValue(connectedRef, (snapshot) => {
+      if (snapshot.val() === true) this.announcePresence();
+    });
+    this.listeners.push(() => off(connectedRef, 'value', unsubscribeConnected));
+  }
+
+  // Write this client's presence for the signed-in user (no-op if signed out). The
+  // onDisconnect handler removes it server-side when the connection drops.
+  public announcePresence(): void {
+    if (!this.gameId || !isFirebaseConfigured()) return;
+    const database = getFirebaseDatabase();
+    const uid = getCurrentUser()?.uid;
+    if (!database || !uid) return;
+
+    const presenceRef = ref(database, `games/${this.gameId}/presence/${uid}`);
+    onDisconnect(presenceRef).remove();
+    set(presenceRef, true).catch(() => { /* queued while offline; non-fatal */ });
+  }
+
+  // Has the presence node reported at least once? Until it has, callers should not treat
+  // "nobody present" as grounds to drop turn-gating (avoids a first-paint race).
+  public hasPresenceData(): boolean {
+    return this.presentUids.size > 0;
+  }
+
+  // Is the authenticated player seated at `seat` currently online? An unauthenticated or
+  // empty seat is never "present" (no one can be waited on), which lets gating fall back.
+  public isSeatPresent(seat: number): boolean {
+    const uid = this.firebasePlayers[seat]?.userId;
+    return uid ? this.presentUids.has(uid) : false;
   }
 
   // Public method to force sync current state to Firebase
