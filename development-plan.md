@@ -226,15 +226,26 @@ The **live sequential ascending auction is the source of truth** (start left of 
 each player bids higher or passes, auction ends when three pass; pepper rounds auto-bid 4 for
 the player left of the dealer). On top of that sits an **optimistic pre-commit layer**:
 - A player may lock in a bid **out of turn** (most often a pass) so they can step away. Their
-  screen then shows only "bid logged" — the value is hidden so a phone left in view doesn't
-  leak it. The pre-committed bid stays **editable until the auction pointer passes that seat**.
+  screen then shows only "bid logged" — the value/suit are hidden so a phone left in view
+  doesn't leak them. The pre-commit stays **editable until the auction pointer passes that seat**.
 - Alternatively a player may **wait** and bid in sequence; the bid screen indicates whose turn
   it currently is, with a directional arrow to that seat **relative to the viewer** (partner =
   across, opponents = left/right).
-- When the pointer reaches a seat with a pre-committed bid, it is applied automatically. A
-  numeric pre-bid that is no longer valid (someone already met/exceeded it) **auto-passes**
-  (we cannot reliably re-prompt an absent player). This edge rule may be refined after testing.
-- Winner picks trump; defending team then gets the play/fold/negotiate decision.
+- **Pre-bid resolution rule (precise):** when the pointer reaches a seat with a pre-committed
+  bid, it **auto-passes if the pre-set bid is equal to or lower than any prior bid** (bids must
+  be strictly higher); otherwise it enters as the pre-set bid. A pass pre-commit always applies.
+  (We cannot reliably re-prompt an absent player, hence auto-pass rather than re-ask.)
+- **Optional pre-selected trump:** the moment a player *submits* a bid (whether in turn or as a
+  pre-bid), control passes to the next bidder immediately — but if they bid (did not pass) they
+  may **optionally pick their trump right then**, while the auction continues, also hidden until
+  reveal. Then at auction end:
+    - if they **won and pre-picked trump** → the win is announced *together with* trump and the
+      separate trump step is skipped;
+    - if they **won without a pre-picked trump** → the trump prompt stays up on their phone with
+      a visual "waiting on you to pick trump" indicator (this is the existing gated trump phase).
+  Pre-picking trump is optional, exactly like pre-bidding. (The `bids` scaffold already carries
+  the optional `suit?` field for this.)
+- After trump is known, the defending team gets the play/fold/negotiate decision (8a gating).
 
 #### Session sequencing (decided 2026-07-09): foundation first, then the auction
 - **8a — foundation (model-agnostic), build + commit incrementally:**
