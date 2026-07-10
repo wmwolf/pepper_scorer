@@ -18,7 +18,7 @@ Pepper Scorer is an Astro-based web application for scoring the card game Pepper
 - **firebase.ts**: Firebase SDK config/init from `PUBLIC_FIREBASE_*` env vars (see `.env.example`). `isFirebaseConfigured()` gates activation; the app falls back to local/localStorage mode when unconfigured.
 - **auth.ts**: Google authentication, `PepperUser` profiles, display names, username lookup/search.
 - **firebaseGameState.ts**: `FirebaseGameManager extends GameManager`, overriding `addHandPart`/`undo`/`completeGame`/`convertToSeries` to sync to the Firebase Realtime Database with live listeners and series coordination. Large (~1200 lines) and untested — treat changes here carefully.
-- **Roadmap**: `development-plan.md` is the source of truth for phase status and remaining work. Firebase security rules are NOT yet applied (DB in test mode) — see Phase 11.
+- **Roadmap**: `development-plan.md` is the source of truth for phase status and remaining work. Firebase security rules are NOT yet properly applied — see Phase 11. The original "test mode" rules expired (Firebase test mode is time-limited) and flipped the DB to deny-all; it was then **temporarily** re-opened (`.read`/`.write: true`) for dev testing and MUST be locked down before launch.
 
 ### State Management
 - Game state is managed through the `GameManager` class with immutable operations

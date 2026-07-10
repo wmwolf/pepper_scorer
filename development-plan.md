@@ -88,11 +88,13 @@ and mental model they share rather than doing them in strict numeric order:
 - **Phase 10 — its own session, and relatively independent.** Advanced stats/history extends
   the existing `statistics-util.ts`/`pepper-awards.ts` layer plus per-user persistence. It
   doesn't depend much on 8/9 and could be slotted whenever a stats-focused session fits.
-- **Phase 11 — split it.** The **security rules are urgent and standalone**: the DB is still
-  in test mode (open read/write), so write and deploy `database.rules.json` (rules drafted
-  below) *before* exposing multiplayer to real users — this is a quick task that does not
-  need to wait for 6–10. The rest of Phase 11 (PWA, offline, monitoring) is launch-hardening
-  for its own late session.
+- **Phase 11 — split it.** The **security rules are urgent and standalone**: the original
+  Firebase "test mode" rules expired (they are time-limited) and flipped the DB to deny-all;
+  it is currently **temporarily** re-opened (`.read`/`.write: true`) for dev testing of the
+  sync layer. Write and deploy `database.rules.json` (rules drafted below) *before* exposing
+  multiplayer to real users — and to re-close the currently-open DB. This is a quick task
+  that does not need to wait for 6–10. The rest of Phase 11 (PWA, offline, monitoring) is
+  launch-hardening for its own late session.
 
 Dependency order: **6 → 7 → 8**; **9**, **10**, and **Phase 11 security rules** are largely
 independent and can be scheduled around the critical path.
@@ -103,7 +105,7 @@ independent and can be scheduled around the critical path.
 #### Manual Firebase Setup Complete:
 1. **Firebase Project Created** ✅ - Project configured at console.firebase.google.com
 2. **Services Enabled** ✅:
-   - Realtime Database (test mode active)
+   - Realtime Database (was "test mode"; those time-limited rules have since expired — see Phase 11 / current-status note above)
    - Authentication with Google sign-in provider
 3. **Configuration Complete** ✅ - Environment variables configured
 4. **Authorized Domains** ✅ - localhost and billwolf.space configured
