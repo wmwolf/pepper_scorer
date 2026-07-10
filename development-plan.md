@@ -236,6 +236,42 @@ optional pre-picked trump) are implemented, CI-green, and verified in-browser by
 - Security rules (Phase 11) must cover the new `presence`/`bidding` nodes and the
   `metadata/roomCode` index, and widen `.write` to any seated player — see the Phase 11 note.
 
+#### Requested 8b refinements (2026-07-10 — NOT yet built; needs a follow-up session)
+User feedback after the first 8b pass. These change the auction interaction model, so treat
+them as a redesign of `auction.ts` + the auction UI, not a tweak. **Confirm the open question
+below before building.**
+
+1. **Decouple bid entry from trump.** Entering a bid value must **advance control to the next
+   bidder immediately** — the current build blocks control until trump is picked (bid+trump
+   submit together). Trump becomes a *separate*, deferrable choice.
+2. **Trump: deferrable + editable, masked.** After bidding, a masked **"Edit trump"** button
+   lets a player set/change their trump at any time until they are outbid or the winner is
+   decided. It must **not display** the current trump (phone may be face-up on the table). A
+   pre-set (out-of-turn) trump is likewise editable until it locks.
+3. **Bid: masked + editable, revealed in dealer order.** A player's bid value stays hidden on
+   their own device ("bid logged") after entry, with a masked **"Edit bid"** button to reopen
+   the bidding interface, until the bid **locks** — which happens as the dealer-order reveal
+   reaches them (i.e., once the neighbor who bids just before them is revealed). Bids reveal
+   progressively in dealer order; the auto-pass rule resolves anything no longer high.
+4. **OPEN QUESTION that drives the engine** — while a later player decides, do they see the
+   **running high** (true ascending auction; "you've been outbid" is meaningful) or are bids
+   **fully sealed** until the reveal (enter blind, reveal-in-order resolves, ties to earlier
+   seat)? The feedback points both ways. Leading interpretation: **running high is public, but
+   each individual bid value is masked on-device** until its dealer-order reveal. Get a decision
+   before implementing.
+5. Note: this **supersedes** the "trump is chosen as part of the bid / no decide-later" commit
+   (`cfff20c`) — that coupling is exactly what refinement #1 undoes.
+
+#### Requested feature: mixed phone / non-phone players (2026-07-10 — NOT built)
+Today the auction is all-or-nothing: it activates only when **all four seats are
+authenticated**; otherwise it falls back to the single-device tap flow (or manual override).
+Desired: a **mix** — some players on their phones, others' bids entered on a **central device**
+because they're calling them out verbally. Clean path: make eligibility **per-seat via
+presence** — a seat whose player is present on their own phone acts for themselves; a seat with
+nobody present can be driven by a central/host device. Reuses the 8a presence system; needs the
+turn-gating and auction UI to support "act on behalf of an absent seat." Moderate scope; own
+design pass.
+
 #### Chosen bidding model (decided 2026-07-09): hybrid sequential auction with optimistic pre-commit
 The **live sequential ascending auction is the source of truth** (start left of the dealer,
 each player bids higher or passes, auction ends when three pass; pepper rounds auto-bid 4 for
