@@ -15,7 +15,6 @@ import {
   legalBids,
   highSeat,
   highRank,
-  isComplete as auctionIsComplete,
   type AuctionState,
   type ActionValue,
   type BidValue,
@@ -332,10 +331,12 @@ function updateHandInfo(gameManager: GameManager) {
 
 // ---- Bidding auction UI (Phase 8b) ---------------------------------------------------
 
-// Local (per-device) UI state for the auction: which hand we've already kicked off, and
-// whether the viewer is currently editing their pending pre-commit.
+// Local (per-device) UI state for the auction: which hand we've already kicked off,
+// whether the viewer is editing their pending pre-commit, and a bid the viewer has chosen
+// but not yet submitted while they optionally pick a trump (the pre-pick step).
 let auctionEnsuredHand: number | null = null;
 let auctionEditingSeat: number | null = null;
+let auctionStagedBid: BidValue | null = null;
 
 // Is the mobile auction the right UI for the current bidder phase? It needs a multiplayer
 // game with all four seats authenticated, not in manual-override, and a non-pepper hand
@@ -373,9 +374,12 @@ function renderAuction(gm: GameManager, mp: MultiplayerManager) {
     const handIndex = gm.state.hands.length - 1;
     const auction = mp.getAuction();
 
-    // Kick off the auction for this hand once if it isn't present/current yet.
+    // Kick off the auction for this hand once if it isn't present/current yet, and clear
+    // any stale per-hand UI staging when the hand changes.
     if ((!auction || auction.handIndex !== handIndex) && auctionEnsuredHand !== handIndex) {
         auctionEnsuredHand = handIndex;
+        auctionStagedBid = null;
+        auctionEditingSeat = null;
         mp.ensureAuctionForCurrentHand();
     }
 
@@ -428,20 +432,41 @@ function renderAuction(gm: GameManager, mp: MultiplayerManager) {
     const bidButtons = (values: BidValue[], attr: string) =>
         values.map(v => `<button class="${attr}" data-bidval="${v}">${bidToString(v)}</button>`).join('');
 
+    // The optional trump pre-pick step, shown after a bid value is staged. Picking a suit
+    // submits the bid with that trump (skipping the trump step if this bid wins); "Decide
+    // later" submits the bid alone (trump is prompted normally if they win).
+    const trumpPick = (value: BidValue) => `
+        <p class="text-gray-800 mb-2">Bidding <strong>${bidToString(value)}</strong>. Pick trump now (optional):</p>
+        <div class="grid grid-cols-3 md:grid-cols-5 gap-3">
+            <button class="btn-auction-suit" data-suit="C">♣️</button>
+            <button class="btn-auction-suit" data-suit="D">♦️</button>
+            <button class="btn-auction-suit" data-suit="H">♥️</button>
+            <button class="btn-auction-suit" data-suit="S">♠️</button>
+            <button class="btn-auction-suit" data-suit="N"><span class="text-xl font-mathematical">∅</span></button>
+        </div>
+        <div class="flex items-center gap-4 mt-3">
+            <button id="auction-decide-later" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700">Submit — decide trump later</button>
+            <button id="auction-stage-back" class="text-sm text-gray-500 underline">Back</button>
+        </div>`;
+
     if (mySeat === null) {
         // Spectator.
         action = current !== null
             ? `<p class="text-gray-600">Waiting for <strong>${esc(auctionSeatName(gm, mp, current))}</strong> to bid…</p>`
             : `<p class="text-gray-600">Auction complete.</p>`;
     } else if (current === mySeat) {
-        // My turn: only bids strictly above the current high, plus pass.
-        const legal = legalBids(auction);
-        action = `
-            <p class="text-gray-800 font-medium mb-2">Your turn to bid.</p>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                ${bidButtons(legal, 'btn-auction-bid')}
-                <button class="btn-auction-pass" data-bidval="PASS">Pass</button>
-            </div>`;
+        // My turn: pick a bid (only strictly above the high) or pass; then optional trump.
+        if (auctionStagedBid) {
+            action = trumpPick(auctionStagedBid);
+        } else {
+            const legal = legalBids(auction);
+            action = `
+                <p class="text-gray-800 font-medium mb-2">Your turn to bid.</p>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    ${bidButtons(legal, 'btn-auction-bid')}
+                    <button class="btn-auction-pass" data-bidval="PASS">Pass</button>
+                </div>`;
+        }
     } else if (myAction && myAction.committed) {
         // I already acted (revealed).
         const mine = myAction.value === 'PASS' ? 'passed' : `bid ${bidToString(myAction.value)}`;
@@ -455,6 +480,9 @@ function renderAuction(gm: GameManager, mp: MultiplayerManager) {
                 <button id="auction-cancel" class="text-sm text-gray-500 underline">Cancel</button>
             </div>
             <p class="text-gray-500 text-sm mt-2">Locked in — you can step away. Editable until it's your turn.</p>`;
+    } else if (auctionStagedBid) {
+        // Not my turn, but I've staged a pre-bid and am choosing an optional trump.
+        action = trumpPick(auctionStagedBid);
     } else {
         // Not my turn and I haven't locked a bid (or I'm editing): offer an optional pre-bid.
         // Pre-bids may be any value (they auto-pass later if no longer high).
@@ -482,25 +510,45 @@ function wireAuctionButtons(gm: GameManager, mp: MultiplayerManager, auction: Au
     if (mySeat === null) return;
     const refresh = () => { if (typeof window.updateUI === 'function') window.updateUI(); };
 
-    // In-turn bid / pass.
-    document.querySelectorAll('.btn-auction-bid, .btn-auction-pass').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            const value = (btn as HTMLElement).dataset.bidval as ActionValue;
-            await mp.submitBid(mySeat, value);
+    // Submit the staged bid (in turn -> submitBid, otherwise -> preCommitBid), with an
+    // optional pre-picked trump. Recomputes in-turn-ness at click time.
+    const submitStaged = async (suit?: string) => {
+        const value = auctionStagedBid;
+        if (!value) return;
+        auctionStagedBid = null;
+        auctionEditingSeat = null;
+        if (currentBidderSeat(auction) === mySeat) {
+            await mp.submitBid(mySeat, value, suit);
+        } else {
+            await mp.preCommitBid(mySeat, value, suit);
+        }
+        refresh();
+    };
+
+    // Choosing a bid value stages it (then the trump pre-pick step renders).
+    document.querySelectorAll('.btn-auction-bid, .btn-auction-prebid').forEach(btn => {
+        btn.addEventListener('click', () => {
+            auctionStagedBid = (btn as HTMLElement).dataset.bidval as BidValue;
             refresh();
         });
     });
 
-    // Out-of-turn pre-bid / pre-pass.
-    document.querySelectorAll('.btn-auction-prebid, .btn-auction-prepass').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            const value = (btn as HTMLElement).dataset.bidval as ActionValue;
-            auctionEditingSeat = null;
-            await mp.preCommitBid(mySeat, value);
-            refresh();
-        });
+    // Pass submits immediately (in turn -> submit, otherwise -> pre-commit); no trump.
+    document.querySelectorAll('.btn-auction-pass').forEach(btn => {
+        btn.addEventListener('click', async () => { await mp.submitBid(mySeat, 'PASS'); refresh(); });
+    });
+    document.querySelectorAll('.btn-auction-prepass').forEach(btn => {
+        btn.addEventListener('click', async () => { auctionEditingSeat = null; await mp.preCommitBid(mySeat, 'PASS'); refresh(); });
     });
 
+    // Trump pre-pick step.
+    document.querySelectorAll('.btn-auction-suit').forEach(btn => {
+        btn.addEventListener('click', () => submitStaged((btn as HTMLElement).dataset.suit));
+    });
+    document.getElementById('auction-decide-later')?.addEventListener('click', () => submitStaged(undefined));
+    document.getElementById('auction-stage-back')?.addEventListener('click', () => { auctionStagedBid = null; refresh(); });
+
+    // Pre-commit edit/cancel.
     document.getElementById('auction-edit')?.addEventListener('click', () => {
         auctionEditingSeat = mySeat;
         refresh();
@@ -510,9 +558,6 @@ function wireAuctionButtons(gm: GameManager, mp: MultiplayerManager, auction: Au
         await mp.cancelPreCommitBid(mySeat);
         refresh();
     });
-
-    // Avoid an unused-parameter lint while keeping the signature explicit for 8b-4.
-    void auction; void auctionIsComplete;
 }
 
 function showPhaseControls(gameManager: GameManager) {
