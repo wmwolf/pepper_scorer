@@ -292,7 +292,6 @@ function setupTrumpButtons(gameManager: GameManager, updateUI: () => void) {
             const suit = button.dataset.suit;
             if (suit) {
                 gameManager.addHandPart(suit);
-                processPepperRound(gameManager, updateUI);
                 updateUI();
             }
         });
@@ -384,28 +383,114 @@ function setupUndoButton(gameManager: GameManager, updateUI: () => void) {
     });
 }
 
-function processPepperRound(gameManager: GameManager, updateUI: () => void) {
-    const currentHand = gameManager.getCurrentHand();
-    const phase = getCurrentPhase(currentHand);
-    const handIndex = gameManager.state.hands.length;
+// Rebuild the score-log table from the current game state.
+// Extracted to module scope so both the main updateUI loop and the
+// "Edit Last Tricks" handler can refresh the log after state changes.
+function rebuildScoreLog(gameManager: GameManager, reverseHistory: boolean) {
+    const scoreLog = document.getElementById('score-log');
+    if (scoreLog) {
+        scoreLog.innerHTML = '';  // Clear existing log
 
-    if (isPepperRound(handIndex)) {
-        if (phase === 'bidder') {
-            const dealer = parseInt(currentHand[0] || '1');
-            const nextPlayer = ((dealer % 4) + 1).toString();
-            gameManager.addHandPart(nextPlayer);
-            gameManager.addHandPart('4');
-            updateUI();
-        } else if (phase === 'trump') {
-            // After trump selection in pepper round, automatically add decision phase
-            if (currentHand[3] === 'C') {
-                gameManager.addHandPart('P'); // Must play if clubs
-                updateUI();
-            } else {
-                gameManager.addHandPart('F'); // Default to fold for other suits
-                updateUI();
-            }
+        // Get hands array to display
+        let handsToDisplay = [...gameManager.state.hands];
+
+        // Reverse the array if needed (but create a copy first to avoid affecting the actual game state)
+        if (reverseHistory) {
+            handsToDisplay = handsToDisplay.slice().reverse();
         }
+
+        const runningScores: [number, number] = [0, 0];
+
+        // If we're showing newest first, we need to pre-calculate the running scores
+        if (reverseHistory) {
+            gameManager.state.hands.forEach((hand) => {
+                if (isHandComplete(hand)) {
+                    const [score1, score2] = calculateScore(hand);
+                    runningScores[0] += score1;
+                    runningScores[1] += score2;
+                }
+            });
+        }
+
+        handsToDisplay.forEach((hand, displayIndex) => {
+            const row = document.createElement('tr');
+
+            // Get the actual index in the original array
+            const actualIndex = reverseHistory
+                ? gameManager.state.hands.length - 1 - displayIndex
+                : displayIndex;
+
+            // Always show hand number and dealer
+            const dealer = parseInt(hand[0] || '1');
+            const dealerName = gameManager.state.players[dealer - 1];
+
+            // Initialize cells with known data
+            let bidDisplay = '';
+            let team1Score = '';
+            let team2Score = '';
+
+            // If we have enough info for the bid
+            if (hand.length >= 4) {
+                const bidWinner = parseInt(hand[1] || '0');
+                if (bidWinner === 0) {
+                    bidDisplay = 'Pass';
+                } else {
+                    const bidderName = gameManager.state.players[bidWinner - 1];
+                    bidDisplay = `${bidderName}: ${bidToString(hand[2] || '')} in ${trumpToString(hand[3] || '')}`;
+                }
+            }
+
+            // Get hand classification for styling
+            const classification = gameManager.getHandClassification(actualIndex);
+
+            // Apply background color based on classification
+            switch (classification.type) {
+                case 'pass':
+                    row.classList.add('bg-green-50');
+                    break;
+                case 'forced-set':
+                    row.classList.add('bg-yellow-50');
+                    break;
+                case 'unforced-set':
+                    row.classList.add('bg-red-50');
+                    break;
+            }
+
+            // Calculate scores based on display order
+            if (isHandComplete(hand)) {
+                const [score1, score2] = calculateScore(hand);
+
+                if (reverseHistory) {
+                    // For reverse order, display the current running total first
+                    team1Score = `${runningScores[0]}`;
+                    team2Score = `${runningScores[1]}`;
+
+                    // Then decrement for the next iteration
+                    runningScores[0] -= score1;
+                    runningScores[1] -= score2;
+                } else {
+                    // For chronological order, increment as usual
+                    runningScores[0] += score1;
+                    runningScores[1] += score2;
+
+                    team1Score = `${runningScores[0]}`;
+                    team2Score = `${runningScores[1]}`;
+                }
+            }
+
+            // Show actual hand number regardless of display order
+            const handNumber = actualIndex + 1;
+
+            // Add cells with score coloring based on classification
+            row.innerHTML = `
+                <td class="py-2 text-center">${handNumber}</td>
+                <td class="py-2 px-4 text-left">${dealerName}</td>
+                <td class="py-2 px-4 text-left">${bidDisplay}</td>
+                <td class="py-2 text-center ${classification.setTeam === 0 ? 'text-red-600 font-medium' : ''}">${team1Score}</td>
+                <td class="py-2 text-center ${classification.setTeam === 1 ? 'text-red-600 font-medium' : ''}">${team2Score}</td>
+            `;
+            scoreLog.appendChild(row);
+        });
     }
 }
 
@@ -459,111 +544,7 @@ export function startGameplay(gameData: Record<string, unknown>) {
             }
         }
         
-        const scoreLog = document.getElementById('score-log');
-        if (scoreLog) {
-            scoreLog.innerHTML = '';  // Clear existing log
-            
-            // Get hands array to display
-            let handsToDisplay = [...gameManager.state.hands];
-            
-            // Reverse the array if needed (but create a copy first to avoid affecting the actual game state)
-            if (reverseHistory) {
-                handsToDisplay = handsToDisplay.slice().reverse();
-            }
-            
-            const runningScores: [number, number] = [0, 0];
-            
-            // If we're showing newest first, we need to pre-calculate the running scores
-            if (reverseHistory) {
-                gameManager.state.hands.forEach((hand) => {
-                    if (isHandComplete(hand)) {
-                        const [score1, score2] = calculateScore(hand);
-                        runningScores[0] += score1;
-                        runningScores[1] += score2;
-                    }
-                });
-            }
-            
-            handsToDisplay.forEach((hand, displayIndex) => {
-                const row = document.createElement('tr');
-                
-                // Get the actual index in the original array
-                const actualIndex = reverseHistory 
-                    ? gameManager.state.hands.length - 1 - displayIndex 
-                    : displayIndex;
-                
-                // Always show hand number and dealer
-                const dealer = parseInt(hand[0] || '1');
-                const dealerName = gameManager.state.players[dealer - 1];
-                
-                // Initialize cells with known data
-                let bidDisplay = '';
-                let team1Score = '';
-                let team2Score = '';
-                
-                // If we have enough info for the bid
-                if (hand.length >= 4) {
-                    const bidWinner = parseInt(hand[1] || '0');
-                    if (bidWinner === 0) {
-                        bidDisplay = 'Pass';
-                    } else {
-                        const bidderName = gameManager.state.players[bidWinner - 1];
-                        bidDisplay = `${bidderName}: ${bidToString(hand[2] || '')} in ${trumpToString(hand[3] || '')}`;
-                    }
-                }
-                
-                // Get hand classification for styling
-                const classification = gameManager.getHandClassification(actualIndex);
-                
-                // Apply background color based on classification
-                switch (classification.type) {
-                    case 'pass':
-                        row.classList.add('bg-green-50');
-                        break;
-                    case 'forced-set':
-                        row.classList.add('bg-yellow-50');
-                        break;
-                    case 'unforced-set':
-                        row.classList.add('bg-red-50');
-                        break;
-                }
-                
-                // Calculate scores based on display order
-                if (isHandComplete(hand)) {
-                    const [score1, score2] = calculateScore(hand);
-                    
-                    if (reverseHistory) {
-                        // For reverse order, display the current running total first
-                        team1Score = `${runningScores[0]}`;
-                        team2Score = `${runningScores[1]}`;
-                        
-                        // Then decrement for the next iteration
-                        runningScores[0] -= score1;
-                        runningScores[1] -= score2;
-                    } else {
-                        // For chronological order, increment as usual
-                        runningScores[0] += score1;
-                        runningScores[1] += score2;
-                        
-                        team1Score = `${runningScores[0]}`;
-                        team2Score = `${runningScores[1]}`;
-                    }
-                }
-                
-                // Show actual hand number regardless of display order
-                const handNumber = actualIndex + 1;
-                
-                // Add cells with score coloring based on classification
-                row.innerHTML = `
-                    <td class="py-2 text-center">${handNumber}</td>
-                    <td class="py-2 px-4 text-left">${dealerName}</td>
-                    <td class="py-2 px-4 text-left">${bidDisplay}</td>
-                    <td class="py-2 text-center ${classification.setTeam === 0 ? 'text-red-600 font-medium' : ''}">${team1Score}</td>
-                    <td class="py-2 text-center ${classification.setTeam === 1 ? 'text-red-600 font-medium' : ''}">${team2Score}</td>
-                `;                
-                scoreLog.appendChild(row);
-            });
-        }
+        rebuildScoreLog(gameManager, reverseHistory);
 
         showPhaseControls(gameManager);
         
@@ -1207,16 +1188,24 @@ function createConfettiEffect() {
       
       // Always reset the completion flag
       gameManager.state.isComplete = false;
-      
+
       // Recompute scores
       gameManager.state.scores = gameManager.getScores();
-      
+
+      // Persist the reverted state so a page reload doesn't restore the
+      // still-complete game and snap back to the victory screen
+      localStorage.setItem('currentGame', gameManager.toJSON());
+
       // Update the UI
       hideAllControls();
       showPhaseControls(gameManager);
       updateHandInfo(gameManager);
       updateScores(gameManager.getScores());
-      
+
+      // Rebuild the score-log table so it reflects the reverted state
+      // (the old completed row is otherwise left stale)
+      rebuildScoreLog(gameManager, localStorage.getItem('reverseHistory') === 'true');
+
       // Make sure the undo button is enabled
       const undoButton = document.getElementById('undo-button');
       if (undoButton) {

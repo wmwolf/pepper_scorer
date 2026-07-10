@@ -52,6 +52,29 @@ describe('Award Statistics Display', () => {
     });
   });
 
+  it('does not credit a fold as a successful defense (team stats)', () => {
+    const players = ['Alice', 'Bob', 'Charlie', 'Diana'];
+    // Bidder 3 (Charlie, team 0 -> "Team 1") bids 5 Hearts; the defenders FOLD,
+    // conceding and negotiating 3 free tricks. A fold makes the bid for the bidders
+    // and is NOT a defensive set.
+    const hands = ['135HF3'];
+    const teams = ['Team 1', 'Team 2'];
+    const finalScores: [number, number] = [5, 0];
+
+    const awardData = trackAwardData(hands, players, teams, finalScores, null);
+
+    const biddingTeam = awardData.teamStats['Team 1'];
+    const defendingTeam = awardData.teamStats['Team 2'];
+
+    // The fold makes the bid for the bidding team.
+    expect(biddingTeam.successfulBids).toBe(1);
+
+    // The defending team defended this hand, but did NOT succeed (they folded).
+    expect(defendingTeam.totalDefenses).toBe(1);
+    expect(defendingTeam.successfulDefenses).toBe(0);
+    expect(defendingTeam.defensiveSuccessRate).toBe(0);
+  });
+
   it('should generate correct stat details for overreaching award', () => {
     const players = ['Alice', 'Bob'];
     const hands = [

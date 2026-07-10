@@ -256,4 +256,33 @@ describe('Honeypot Award - Big Four Detection', () => {
     expect(honeypotAward).toBeDefined();
     expect(honeypotAward?.winner).toBe('Alice');
   });
+
+  it('picks the Honeypot winner deterministically when players are tied', () => {
+    const players = ['Alice', 'Bob', 'Charlie', 'Diana'];
+    // Alice and Diana each earn exactly 2 Big Fours (a tie for the max).
+    const hands = [
+      '114HP0', // Alice: Big Four #1
+      '214HP0', // Alice: Big Four #2
+      '344HP0', // Diana: Big Four #1
+      '444HP0', // Diana: Big Four #2
+    ];
+
+    const teams = ['Team 1', 'Team 2'];
+    const awardData = trackAwardData(hands, players, teams, [16, 0], 0);
+
+    expect(awardData.playerStats.Alice.bigFours).toBe(2);
+    expect(awardData.playerStats.Diana.bigFours).toBe(2);
+
+    // Even when Math.random would pick different indices on each call,
+    // the deterministic tie-break (first by name) must return the same winner.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const firstWinner = selectGameAwards(awardData).find(a => a.id === 'honeypot')?.winner;
+
+    vi.spyOn(Math, 'random').mockReturnValue(0.99);
+    const secondWinner = selectGameAwards(awardData).find(a => a.id === 'honeypot')?.winner;
+
+    expect(firstWinner).toBeDefined();
+    expect(firstWinner).toBe(secondWinner);
+    expect(firstWinner).toBe('Alice'); // first tied player by name
+  });
 });
