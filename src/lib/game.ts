@@ -956,11 +956,18 @@ function createConfettiEffect() {
       `;
       
       // Add event listeners to the post-victory buttons
-      document.getElementById('post-victory-series-btn')?.addEventListener('click', () => {
-        gameManager.convertToSeries();
-        gameManager.startNextGame();
-        localStorage.setItem('currentGame', gameManager.toJSON());
-        window.location.reload();
+      document.getElementById('post-victory-series-btn')?.addEventListener('click', async () => {
+        try {
+          // Properly await series conversion for Firebase games
+          await Promise.resolve(gameManager.convertToSeries());
+          gameManager.startNextGame();
+          localStorage.setItem('currentGame', gameManager.toJSON());
+          window.location.reload();
+        } catch (error) {
+          console.error('Error creating series:', error);
+          // Fallback: just reload to show any partial progress
+          window.location.reload();
+        }
       });
       
       document.getElementById('post-victory-new-series-btn')?.addEventListener('click', () => {
@@ -1314,11 +1321,18 @@ function createConfettiEffect() {
       }
     });
     
-    document.getElementById('victory-series-btn')?.addEventListener('click', () => {
-      gameManager.convertToSeries();
-      gameManager.startNextGame();
-      localStorage.setItem('currentGame', gameManager.toJSON());
-      window.location.reload();
+    document.getElementById('victory-series-btn')?.addEventListener('click', async () => {
+      try {
+        // Properly await series conversion for Firebase games
+        await Promise.resolve(gameManager.convertToSeries());
+        gameManager.startNextGame();
+        localStorage.setItem('currentGame', gameManager.toJSON());
+        window.location.reload();
+      } catch (error) {
+        console.error('Error creating series:', error);
+        // Fallback: just reload to show any partial progress
+        window.location.reload();
+      }
     });
     
     document.getElementById('victory-new-series-btn')?.addEventListener('click', () => {

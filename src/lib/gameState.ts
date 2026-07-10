@@ -43,7 +43,7 @@ export interface IGameManager {
   getHandClassification(handIndex: number): HandClassification;
   isSeriesComplete(): boolean;
   getNextDealer(): string;
-  convertToSeries(): void;
+  convertToSeries(): void | Promise<void>;
 }
 
 export type HandClassification = {
@@ -371,7 +371,17 @@ export class GameManager implements IGameManager {
   public static fromJSON(json: string): GameManager {
     const state = JSON.parse(json);
     const manager = new GameManager(state.players, state.teams);
-    manager.state = state;
+
+    // Safely merge the loaded state with the initialized state to ensure all required properties exist
+    manager.state = {
+      ...manager.state, // Start with the properly initialized state from constructor
+      ...state, // Override with loaded values
+      hands: state.hands || [], // Ensure hands array exists
+      scores: state.scores || [0, 0], // Ensure scores array exists
+      players: state.players || manager.state.players, // Ensure players array exists
+      teams: state.teams || manager.state.teams // Ensure teams array exists
+    };
+
     return manager;
   }
 

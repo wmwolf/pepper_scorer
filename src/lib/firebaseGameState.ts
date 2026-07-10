@@ -252,7 +252,7 @@ export class FirebaseGameManager extends GameManager {
       );
 
       // Restore full game state with proper defaults
-      // Merge Firebase game state with defaults
+      // Merge Firebase game state with defaults, ensuring arrays are properly initialized
       const baseState = {
         players: gameData.players?.map(p => p.displayName) || [],
         teams: gameData.teams || ['Team 1', 'Team 2'],
@@ -264,9 +264,14 @@ export class FirebaseGameManager extends GameManager {
         firebaseGameId: gameId
       };
 
+      // Safely merge game state, ensuring arrays exist
       manager.state = {
         ...baseState,
-        ...gameData.gameState
+        ...gameData.gameState,
+        hands: gameData.gameState?.hands || [],
+        scores: gameData.gameState?.scores || [0, 0],
+        players: gameData.gameState?.players || gameData.players?.map(p => p.displayName) || [],
+        teams: gameData.gameState?.teams || gameData.teams || ['Team 1', 'Team 2']
       };
 
       // Check if this game is part of a series
@@ -305,16 +310,23 @@ export class FirebaseGameManager extends GameManager {
 
         // Only update if this is different from our current state
         if (JSON.stringify(newState) !== JSON.stringify(this.state)) {
-          // Update local state
-          this.state = newState;
+          // Safely merge new state, ensuring arrays are properly initialized
+          this.state = {
+            ...this.state,
+            ...newState,
+            hands: newState.hands || [],
+            scores: newState.scores || [0, 0],
+            players: newState.players || this.state.players || [],
+            teams: newState.teams || this.state.teams || ['Team 1', 'Team 2']
+          };
           this.notifyStateChange();
 
-          // Update localStorage
-          localStorage.setItem('currentGame', JSON.stringify(newState));
+          // Update localStorage with the safely merged state
+          localStorage.setItem('currentGame', JSON.stringify(this.state));
 
           // Call UI update callback if set
           if (this.uiUpdateCallback) {
-            this.uiUpdateCallback(newState);
+            this.uiUpdateCallback(this.state);
           }
         }
       }
@@ -440,15 +452,23 @@ export class FirebaseGameManager extends GameManager {
 
         // Only update if the state is actually different
         if (JSON.stringify(newState) !== JSON.stringify(this.state)) {
-          this.state = newState;
+          // Safely merge new state, ensuring arrays are properly initialized
+          this.state = {
+            ...this.state,
+            ...newState,
+            hands: newState.hands || [],
+            scores: newState.scores || [0, 0],
+            players: newState.players || this.state.players || [],
+            teams: newState.teams || this.state.teams || ['Team 1', 'Team 2']
+          };
           this.notifyStateChange();
 
-          // Update localStorage
-          localStorage.setItem('currentGame', JSON.stringify(newState));
+          // Update localStorage with the safely merged state
+          localStorage.setItem('currentGame', JSON.stringify(this.state));
 
           // Call UI update callback if set
           if (this.uiUpdateCallback) {
-            this.uiUpdateCallback(newState);
+            this.uiUpdateCallback(this.state);
           }
         }
       }
@@ -665,6 +685,16 @@ export class FirebaseGameManager extends GameManager {
         return existingSeriesId;
       }
 
+      // Get current game data to preserve player info
+      const currentGameRef = ref(database, `games/${this.gameId}`);
+      const currentGameSnapshot = await get(currentGameRef);
+
+      if (!currentGameSnapshot.exists()) {
+        console.error('Current game not found when creating series');
+        return '';
+      }
+
+      const currentGameData = currentGameSnapshot.val() as FirebaseGameData;
       const seriesId = push(ref(database, 'series')).key!;
 
       const seriesData: FirebaseSeriesData = {
@@ -673,7 +703,8 @@ export class FirebaseGameManager extends GameManager {
           createdAt: Date.now(),
           status: 'active'
         },
-        players: this.getFirebasePlayersArray(),
+        // Use actual player data from the current game instead of generic array
+        players: currentGameData.players,
         teams: this.state.teams as [string, string],
         currentGameId: this.gameId,
         gameIds: [this.gameId],
@@ -725,15 +756,19 @@ export class FirebaseGameManager extends GameManager {
 
   // Notify UI about new game in series
   private notifyNewGameInSeries(newGameId: string) {
+    // Remove any existing game notifications to avoid spam
+    const existingNotifications = document.querySelectorAll('.new-game-notification');
+    existingNotifications.forEach(notif => notif.remove());
+
     const notification = document.createElement('div');
-    notification.className = 'fixed top-4 right-4 bg-blue-600 text-white p-4 rounded-lg shadow-lg z-50';
+    notification.className = 'new-game-notification fixed top-4 right-4 bg-blue-600 text-white p-4 rounded-lg shadow-lg z-50 animate-bounce';
     notification.innerHTML = `
       <div class="flex items-center space-x-3">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
         </svg>
         <div>
-          <p class="font-medium">New Game Started!</p>
+          <p class="font-medium">🎮 New Game Started!</p>
           <p class="text-sm">A new game has been started in this series.</p>
         </div>
         <button onclick="this.parentElement.parentElement.remove()" class="text-white hover:text-gray-200">
@@ -743,10 +778,10 @@ export class FirebaseGameManager extends GameManager {
         </button>
       </div>
       <div class="mt-3 flex space-x-2">
-        <button onclick="window.location.href='${getPath('/game?id=' + newGameId)}'" class="bg-white text-blue-600 px-3 py-1 rounded text-sm font-medium">
+        <button onclick="window.location.href='${getPath('/game?id=' + newGameId)}'" class="bg-white text-blue-600 px-3 py-1 rounded text-sm font-medium hover:bg-gray-100 transition-colors">
           Join Game
         </button>
-        <button onclick="this.parentElement.parentElement.remove()" class="bg-blue-700 text-white px-3 py-1 rounded text-sm">
+        <button onclick="this.parentElement.parentElement.remove()" class="bg-blue-700 text-white px-3 py-1 rounded text-sm hover:bg-blue-800 transition-colors">
           Dismiss
         </button>
       </div>
@@ -754,19 +789,19 @@ export class FirebaseGameManager extends GameManager {
 
     document.body.appendChild(notification);
 
-    // Auto-dismiss after 10 seconds
+    // Auto-dismiss after 20 seconds (longer for important notifications)
     setTimeout(() => {
       if (notification.parentElement) {
         notification.remove();
       }
-    }, 10000);
+    }, 20000);
   }
 
   // Override convertToSeries to create Firebase series
-  override convertToSeries(): void {
+  override convertToSeries(): Promise<void> {
     // Create Firebase series if we don't have one
     if (!this.seriesId) {
-      this.createFirebaseSeries().then(seriesId => {
+      return this.createFirebaseSeries().then(seriesId => {
         if (seriesId) {
           console.log('Firebase series ready:', seriesId);
           // Only call super.convertToSeries() and sync after Firebase series is ready
@@ -786,6 +821,7 @@ export class FirebaseGameManager extends GameManager {
       // Series already exists, just convert locally
       super.convertToSeries();
       this.syncToFirebase();
+      return Promise.resolve();
     }
   }
 
@@ -820,6 +856,17 @@ export class FirebaseGameManager extends GameManager {
     if (!database || !currentUser) return '';
 
     try {
+      // Get the original game data to preserve player authentication info
+      const originalGameRef = ref(database, `games/${this.gameId}`);
+      const originalGameSnapshot = await get(originalGameRef);
+
+      if (!originalGameSnapshot.exists()) {
+        console.error('Original game not found when creating next game in series');
+        return '';
+      }
+
+      const originalGameData = originalGameSnapshot.val() as FirebaseGameData;
+
       // Progress the series locally first to get updated state
       super.startNextGame();
 
@@ -833,7 +880,8 @@ export class FirebaseGameManager extends GameManager {
           status: 'active',
           seriesId: this.seriesId
         },
-        players: this.getFirebasePlayersArray(),
+        // Preserve original player authentication info
+        players: originalGameData.players,
         teams: this.state.teams as [string, string],
         gameState: this.state
       };
@@ -841,6 +889,26 @@ export class FirebaseGameManager extends GameManager {
       // Save new game
       const gameRef = ref(database, `games/${newGameId}`);
       await set(gameRef, gameData);
+
+      // Add the new game to all original participants' userGames collections
+      // This is the critical fix - ensures all players can see the new series game
+      const userGameUpdates: Promise<void>[] = [];
+
+      for (const player of originalGameData.players) {
+        if (player.userId) {
+          const userGameRef = ref(database, `userGames/${player.userId}/${newGameId}`);
+          userGameUpdates.push(set(userGameRef, true));
+        }
+      }
+
+      // Also ensure the series creator is included
+      if (!originalGameData.players.some(p => p.userId === currentUser.uid)) {
+        const creatorGameRef = ref(database, `userGames/${currentUser.uid}/${newGameId}`);
+        userGameUpdates.push(set(creatorGameRef, true));
+      }
+
+      // Wait for all user game additions to complete
+      await Promise.all(userGameUpdates);
 
       // Update series to point to new game
       const seriesRef = ref(database, `series/${this.seriesId}`);
@@ -906,6 +974,7 @@ export class FirebaseGameManager extends GameManager {
         // If a seriesId was added and we don't have one yet, another player created the series
         if (metadata.seriesId && !this.seriesId) {
           this.seriesId = metadata.seriesId;
+          this.setupVictoryOverlaySeriesWatcher(); // Set up series monitoring
           this.updateVictoryOverlayForExistingSeries(metadata.seriesId);
         }
       }
@@ -913,6 +982,36 @@ export class FirebaseGameManager extends GameManager {
 
     // Store the listener for cleanup
     this.listeners.push(() => off(gameMetadataRef, 'value', unsubscribe));
+
+    // Also listen for changes in series data if we already have a series
+    if (this.seriesId) {
+      this.setupVictoryOverlaySeriesWatcher();
+    }
+  }
+
+  // Enhanced series watcher specifically for victory overlay updates
+  private setupVictoryOverlaySeriesWatcher() {
+    if (!isFirebaseConfigured() || !this.seriesId) return;
+
+    const database = getFirebaseDatabase();
+    if (!database) return;
+
+    const seriesRef = ref(database, `series/${this.seriesId}`);
+
+    const unsubscribe = onValue(seriesRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const seriesData = snapshot.val() as FirebaseSeriesData;
+
+        // Check if a new game has been started in this series
+        if (seriesData.currentGameId !== this.gameId) {
+          // Another browser started the next game!
+          this.showNextGameModal(seriesData.currentGameId);
+        }
+      }
+    });
+
+    // Store the listener for cleanup
+    this.listeners.push(() => off(seriesRef, 'value', unsubscribe));
   }
 
   // Update victory overlay when series already exists
@@ -920,6 +1019,9 @@ export class FirebaseGameManager extends GameManager {
     try {
       const database = getFirebaseDatabase();
       if (!database) return;
+
+      // Show notification that series was created
+      this.showSeriesCreatedNotification(seriesId);
 
       // Get the series data to find the current game
       const seriesRef = ref(database, `series/${seriesId}`);
@@ -964,6 +1066,18 @@ export class FirebaseGameManager extends GameManager {
       });
     };
 
+    // Function to update a button to show series is being created
+    const updateToSeriesCreatingButton = (button: HTMLElement | null) => {
+      if (!button) return;
+
+      button.textContent = 'Another player is creating the series...';
+      button.className = 'px-6 py-3 bg-yellow-600 text-white rounded-lg opacity-75 cursor-not-allowed';
+
+      // Remove click handler
+      const newButton = button.cloneNode(true) as HTMLElement;
+      button.parentNode?.replaceChild(newButton, button);
+    };
+
     // Check if current game is different from our game (meaning next game started)
     if (currentGameId !== this.gameId) {
       // Update all series buttons to "Join Next Game"
@@ -976,15 +1090,10 @@ export class FirebaseGameManager extends GameManager {
       this.showSeriesJoinNotification(currentGameId);
     } else {
       // Series was created but we're still on the first game
-      // Update buttons to indicate series mode
+      // Update "make it a series" buttons to indicate someone else is creating the series
       [victorySeriesBtn, postVictorySeriesBtn].forEach(button => {
-        if (button) {
-          button.textContent = 'Series Created!';
-          button.className = 'px-6 py-3 bg-green-600 text-white rounded-lg opacity-75 cursor-not-allowed';
-
-          // Remove click handler
-          const newButton = button.cloneNode(true) as HTMLElement;
-          button.parentNode?.replaceChild(newButton, button);
+        if (button && (button.textContent === 'Make it a Series' || button.textContent === 'Make it a Series!')) {
+          updateToSeriesCreatingButton(button);
         }
       });
     }
@@ -992,31 +1101,40 @@ export class FirebaseGameManager extends GameManager {
 
   // Show notification about joining the next game in series
   private showSeriesJoinNotification(newGameId: string) {
+    // Remove any existing notifications to avoid duplicates
+    const existingNotifications = document.querySelectorAll('.series-join-notification');
+    existingNotifications.forEach(notif => notif.remove());
+
     const notification = document.createElement('div');
-    notification.className = 'fixed top-4 left-1/2 transform -translate-x-1/2 bg-purple-600 text-white p-4 rounded-lg shadow-lg z-50 max-w-md';
+    notification.className = 'series-join-notification fixed top-4 left-1/2 transform -translate-x-1/2 bg-purple-600 text-white p-4 rounded-lg shadow-lg z-50 max-w-md animate-pulse';
     notification.innerHTML = `
       <div class="text-center">
         <div class="flex items-center justify-center space-x-2 mb-2">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
           </svg>
-          <p class="font-medium">Series Started!</p>
+          <p class="font-medium">🎮 New Game Started!</p>
         </div>
         <p class="text-sm mb-3">Another player started the next game in your series.</p>
-        <button onclick="window.location.href='${getPath('/game?id=' + newGameId)}'" class="bg-white text-purple-600 px-4 py-2 rounded font-medium hover:bg-gray-100 transition-colors">
-          Join Next Game
-        </button>
+        <div class="flex space-x-2 justify-center">
+          <button onclick="window.location.href='${getPath('/game?id=' + newGameId)}'" class="bg-white text-purple-600 px-4 py-2 rounded font-medium hover:bg-gray-100 transition-colors">
+            Join Next Game
+          </button>
+          <button onclick="this.parentElement.parentElement.parentElement.remove()" class="bg-purple-700 text-white px-4 py-2 rounded font-medium hover:bg-purple-800 transition-colors">
+            Dismiss
+          </button>
+        </div>
       </div>
     `;
 
     document.body.appendChild(notification);
 
-    // Auto-dismiss after 15 seconds
+    // Auto-dismiss after 30 seconds (longer for important notifications)
     setTimeout(() => {
       if (notification.parentElement) {
         notification.remove();
       }
-    }, 15000);
+    }, 30000);
   }
 
   // Helper method to convert local players to Firebase format
@@ -1026,5 +1144,118 @@ export class FirebaseGameManager extends GameManager {
       isAuthenticated: false, // Will be updated when auth players join
       position: index
     }));
+  }
+
+  // Add a method to show notification when series is created by another player
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
+  private showSeriesCreatedNotification(_seriesId: string) {
+    // Remove any existing series notifications to avoid duplicates
+    const existingNotifications = document.querySelectorAll('.series-created-notification');
+    existingNotifications.forEach(notif => notif.remove());
+
+    const notification = document.createElement('div');
+    notification.className = 'series-created-notification fixed top-4 left-1/2 transform -translate-x-1/2 bg-green-600 text-white p-4 rounded-lg shadow-lg z-50 max-w-md';
+    notification.innerHTML = `
+      <div class="text-center">
+        <div class="flex items-center justify-center space-x-2 mb-2">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"></path>
+          </svg>
+          <p class="font-medium">🎯 Series Created!</p>
+        </div>
+        <p class="text-sm mb-3">Another player converted this game to a series.</p>
+        <button onclick="this.parentElement.parentElement.remove()" class="bg-white text-green-600 px-4 py-2 rounded font-medium hover:bg-gray-100 transition-colors">
+          Got it!
+        </button>
+      </div>
+    `;
+
+    document.body.appendChild(notification);
+
+    // Auto-dismiss after 10 seconds
+    setTimeout(() => {
+      if (notification.parentElement) {
+        notification.remove();
+      }
+    }, 10000);
+  }
+
+  // Show modal when next game starts in series
+  private showNextGameModal(newGameId: string) {
+    // Remove any existing modals to avoid duplicates
+    const existingModals = document.querySelectorAll('.next-game-modal');
+    existingModals.forEach(modal => modal.remove());
+
+    const modal = document.createElement('div');
+    modal.className = 'next-game-modal fixed inset-0 bg-gray-900 bg-opacity-75 z-50 flex items-center justify-center';
+    modal.innerHTML = `
+      <div class="bg-white rounded-lg p-8 max-w-md mx-4 text-center shadow-2xl">
+        <div class="mb-6">
+          <div class="mx-auto w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
+            <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+            </svg>
+          </div>
+          <h3 class="text-xl font-bold text-gray-900 mb-2">🎮 Next Game Started!</h3>
+          <p class="text-gray-600 mb-6">Another player has started the next game in your series.</p>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-3 justify-center">
+          <button
+            onclick="window.location.href='${getPath('/game?id=' + newGameId)}'"
+            class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+          >
+            Join Next Game
+          </button>
+          <button
+            onclick="this.closest('.next-game-modal').remove()"
+            class="px-6 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors font-medium"
+          >
+            Stay Here
+          </button>
+        </div>
+
+        <p class="text-xs text-gray-500 mt-4">You can also refresh this page to join the new game.</p>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Auto-dismiss after 30 seconds if no action taken
+    setTimeout(() => {
+      if (modal.parentElement) {
+        modal.remove();
+      }
+    }, 30000);
+
+    // Also update the victory overlay buttons
+    this.updateVictoryButtonsForNextGame(newGameId);
+  }
+
+  // Update victory overlay buttons when next game is available
+  private updateVictoryButtonsForNextGame(newGameId: string) {
+    const buttonsToUpdate = [
+      'victory-series-btn',
+      'victory-new-series-btn',
+      'post-victory-series-btn',
+      'post-victory-new-series-btn'
+    ];
+
+    buttonsToUpdate.forEach(buttonId => {
+      const button = document.getElementById(buttonId);
+      if (button && button.textContent?.includes('Series')) {
+        button.textContent = 'Join Next Game';
+        button.className = 'px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors';
+
+        // Remove existing event listeners by cloning
+        const newButton = button.cloneNode(true) as HTMLElement;
+        button.parentNode?.replaceChild(newButton, button);
+
+        // Add new click handler
+        newButton.addEventListener('click', () => {
+          window.location.href = getPath(`/game?id=${newGameId}`);
+        });
+      }
+    });
   }
 }
