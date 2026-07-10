@@ -132,6 +132,25 @@ export function isOutbid(state: AuctionState, seat: number): boolean {
   return resolve(state).highSeat !== seat;
 }
 
+// "Bogus" bid: a revealed non-pass bid the player could never have LEGALLY placed, because an
+// EARLIER seat in dealer order already holds a revealed bid of equal-or-higher value. In a live
+// sequential auction that player would simply have passed, never revealing the value — so we
+// display it as a pass to avoid broadcasting information that wouldn't normally be available.
+// (Note: this is exactly the set of bids `resolve` treats as passes; a legit bid that is only
+// beaten by a *later* seat is NOT demoted and still shows its value.)
+export function isDemoted(state: AuctionState, seat: number): boolean {
+  if (!isRevealed(state, seat)) return false;
+  const e = state.entries[seat];
+  if (!e || e.value === 'PASS') return false;
+  const myRank = bidRank(e.value);
+  const myIdx = state.order.indexOf(seat);
+  for (let i = 0; i < myIdx; i++) {
+    const earlier = state.entries[state.order[i]!];
+    if (earlier && earlier.value !== 'PASS' && bidRank(earlier.value) >= myRank) return true;
+  }
+  return false;
+}
+
 // May this seat set (pick or change) its trump right now? Trump has a longer window than the bid:
 // it stays open until the seat is revealed as the winner or as outbid, whichever first. Before
 // completion the current high seat may keep changing it; at completion only the winner may still

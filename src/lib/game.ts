@@ -9,6 +9,7 @@ import {
   isBidLocked,
   isComplete as auctionIsComplete,
   isOutbid,
+  isDemoted,
   canSetTrump,
   resolve as resolveAuction,
   auctionResult,
@@ -72,8 +73,8 @@ function hostVerbForPhase(phase: string): string {
     case 'bidder': return 'record who won the bid';
     case 'bid': return 'enter the bid';
     case 'trump': return 'pick trump';
-    case 'decision': return 'make the play/fold decision';
-    case 'tricks': return 'enter the tricks';
+    case 'decision': return 'record the play/fold decision';
+    case 'tricks': return 'record the tricks';
     default: return 'play the hand';
   }
 }
@@ -426,11 +427,17 @@ export function renderAuction(gm: GameManager, mp: MultiplayerManager) {
         let detail: string;
         let cls: string;
         if (isRevealed(auction, seat) && entry) {
-            const outbid = isOutbid(auction, seat);
-            detail = entry.value === 'PASS' ? 'passed' : `bid ${bidToString(entry.value)}`;
-            cls = entry.value === 'PASS' ? 'text-gray-500'
-                : outbid ? 'text-gray-400 line-through'
-                : 'text-blue-700 font-medium';
+            // A pass, or a "bogus" bid that couldn't have been legally placed (an earlier seat
+            // already bid >=), shows as "passed" so we don't broadcast a value that a live
+            // sequential auction would never expose. A legit bid only beaten by a LATER seat
+            // still shows its value (struck through).
+            if (entry.value === 'PASS' || isDemoted(auction, seat)) {
+                detail = 'passed';
+                cls = 'text-gray-500';
+            } else {
+                detail = `bid ${bidToString(entry.value)}`;
+                cls = isOutbid(auction, seat) ? 'text-gray-400 line-through' : 'text-blue-700 font-medium';
+            }
         } else if (entry) {
             detail = 'bid logged ✓';
             cls = 'text-green-600';
@@ -449,24 +456,29 @@ export function renderAuction(gm: GameManager, mp: MultiplayerManager) {
         ? `Current high: <strong>${bidToString(auction.entries[highSeat]!.value)}</strong> by ${esc(auctionSeatName(gm, mp, highSeat))}`
         : (revealedCount(auction) > 0 ? 'All passed so far' : 'No bids revealed yet');
 
-    // Reusable menus.
+    // Reusable menus. These buttons are built dynamically (game.astro's scoped <style> can't
+    // reach them), so they carry their own utility classes for a legible, well-spaced look.
+    const bidBtn = 'btn-auction-bid px-4 py-4 rounded-lg border border-blue-300 bg-blue-50 text-blue-800 text-xl font-bold shadow-sm hover:bg-blue-100 active:bg-blue-200 transition-colors';
+    const passBtn = 'btn-auction-pass px-4 py-4 rounded-lg border border-gray-300 bg-gray-100 text-gray-700 text-lg font-semibold shadow-sm hover:bg-gray-200 active:bg-gray-300 transition-colors';
+    const suitBtn = 'btn-auction-suit px-4 py-4 rounded-lg border border-blue-300 bg-blue-50 text-2xl shadow-sm hover:bg-blue-100 active:bg-blue-200 transition-colors';
+
     const bidMenu = (heading: string, showCancel: boolean) => `
-        <p class="text-gray-800 font-medium mb-2">${heading}</p>
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <p class="text-gray-800 font-medium mb-3">${heading}</p>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
             ${(['4', '5', '6', 'M', 'D'] as BidValue[])
-                .map(v => `<button class="btn-auction-bid" data-bidval="${v}">${bidToString(v)}</button>`).join('')}
-            <button class="btn-auction-pass" data-bidval="PASS">Pass</button>
+                .map(v => `<button class="${bidBtn}" data-bidval="${v}">${bidToString(v)}</button>`).join('')}
+            <button class="${passBtn}" data-bidval="PASS">Pass</button>
         </div>
-        ${showCancel ? '<div class="mt-2"><button id="auction-edit-cancel" class="text-sm text-gray-500 underline">Keep current bid</button></div>' : ''}`;
+        ${showCancel ? '<div class="mt-3"><button id="auction-edit-cancel" class="text-sm text-gray-500 underline">Keep current bid</button></div>' : ''}`;
 
     const trumpMenu = (heading: string, showCancel: boolean) => `
-        <p class="text-gray-800 mb-2">${heading}</p>
-        <div class="grid grid-cols-3 md:grid-cols-5 gap-3">
-            <button class="btn-auction-suit" data-suit="C">♣️</button>
-            <button class="btn-auction-suit" data-suit="D">♦️</button>
-            <button class="btn-auction-suit" data-suit="H">♥️</button>
-            <button class="btn-auction-suit" data-suit="S">♠️</button>
-            <button class="btn-auction-suit" data-suit="N"><span class="text-xl font-mathematical">∅</span></button>
+        <p class="text-gray-800 mb-3">${heading}</p>
+        <div class="grid grid-cols-3 md:grid-cols-5 gap-4">
+            <button class="${suitBtn}" data-suit="C">♣️</button>
+            <button class="${suitBtn}" data-suit="D">♦️</button>
+            <button class="${suitBtn}" data-suit="H">♥️</button>
+            <button class="${suitBtn}" data-suit="S">♠️</button>
+            <button class="${suitBtn}" data-suit="N"><span class="text-xl font-mathematical">∅</span></button>
         </div>
         ${showCancel ? '<div class="mt-2"><button id="auction-trump-cancel" class="text-sm text-gray-500 underline">Keep current trump</button></div>' : ''}`;
 
@@ -521,8 +533,23 @@ export function renderAuction(gm: GameManager, mp: MultiplayerManager) {
         }
     }
 
+    // Final-reveal banner: shown once the auction is complete (the hand pauses on this briefly
+    // before advancing, so everyone can see who bid what).
+    const completeBanner = complete
+        ? `<div class="auction-reveal mb-3 p-3 rounded-lg border text-center ${result?.thrownIn
+              ? 'bg-gray-50 border-gray-200 text-gray-700'
+              : 'bg-blue-50 border-blue-200 text-blue-900'}">
+              ${result?.thrownIn
+                ? '<strong>Thrown in</strong> — everyone passed.'
+                : `<strong>${esc(auctionSeatName(gm, mp, highSeat!))}</strong> won the bid: `
+                  + `<strong>${bidToString(auction.entries[highSeat!]!.value)}</strong>`
+                  + `${result?.winningSuit ? ` in <strong>${trumpToString(result.winningSuit)}</strong>` : ''}`}
+           </div>`
+        : '';
+
     container.innerHTML = `
         <h3 class="text-lg font-medium text-gray-900">Bidding</h3>
+        ${completeBanner}
         <p class="text-sm text-gray-600">${highText}</p>
         <div class="space-y-1">${strip}</div>
         <div class="pt-2">${action}</div>`;

@@ -369,6 +369,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 </style>
 
+<!-- Global styles for elements rendered dynamically by game.ts (scoped <style> above can't reach them). -->
+<style is:global>
+  @keyframes auction-reveal {
+    0%   { opacity: 0; transform: translateY(6px) scale(0.98); }
+    100% { opacity: 1; transform: translateY(0)   scale(1); }
+  }
+  .auction-reveal { animation: auction-reveal 0.4s ease-out; }
+</style>
+
 <script>
   import { loadGameState, startGameplay } from '../lib/game';
 

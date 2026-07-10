@@ -10,6 +10,7 @@ import {
   isBidLocked,
   resolve,
   isOutbid,
+  isDemoted,
   canSetTrump,
   enterBid,
   setTrump,
@@ -221,5 +222,45 @@ describe('mutator guards', () => {
     let s = createAuction(1, 4)
     s = enterBid(s, 2, 'PASS')
     expect(() => setTrump(s, 2, 'C')).toThrow()
+  })
+})
+
+describe('isDemoted (bogus bid hidden as a pass)', () => {
+  it('demotes a bid an earlier seat already matched (the user example)', () => {
+    // order [2,3,4,1]. Seat 3 (later) locked 4; seat 2 (earlier) also entered 4.
+    let s = createAuction(1, 4)
+    s = enterBid(s, 2, '4')
+    s = enterBid(s, 3, '4')
+    expect(isDemoted(s, 3)).toBe(true)  // couldn't legally bid 4 after seat 2's 4
+    expect(isDemoted(s, 2)).toBe(false) // legit opening bid (and the winner on ties)
+  })
+
+  it('demotes a bid lower than an earlier seat', () => {
+    let s = createAuction(1, 4)
+    s = enterBid(s, 2, '6')
+    s = enterBid(s, 3, '4')
+    expect(isDemoted(s, 3)).toBe(true)
+  })
+
+  it('does NOT demote a legit escalation that is only beaten by a LATER seat', () => {
+    // order [2,3,4,1]: 2->4, 3->5, 4->6. Seat 3's 5 and seat 2's 4 were legal when placed.
+    let s = createAuction(1, 4)
+    s = enterBid(s, 2, '4')
+    s = enterBid(s, 3, '5')
+    s = enterBid(s, 4, '6')
+    expect(isDemoted(s, 2)).toBe(false) // shown (outbid by a later seat, but legit)
+    expect(isDemoted(s, 3)).toBe(false)
+    expect(isDemoted(s, 4)).toBe(false) // the high
+    // The winner is seat 4; seats 2 & 3 are outbid but not demoted.
+    expect(isOutbid(s, 2)).toBe(true)
+    expect(isOutbid(s, 3)).toBe(true)
+  })
+
+  it('never demotes a pass or an unrevealed bid', () => {
+    let s = createAuction(1, 4) // order [2,3,4,1]
+    s = enterBid(s, 2, 'PASS')
+    s = enterBid(s, 4, '5') // entered but hidden (seat 3 missing)
+    expect(isDemoted(s, 2)).toBe(false) // a pass
+    expect(isDemoted(s, 4)).toBe(false) // not revealed yet
   })
 })

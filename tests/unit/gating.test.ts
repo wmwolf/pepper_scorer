@@ -70,7 +70,7 @@ describe('evaluateGating — host-based model', () => {
     expect(block).not.toBeNull()
     expect(block!.spectator).toBe(false)
     expect(block!.responsibleName).toBe('Bob')
-    expect(block!.verb).toBe('make the play/fold decision')
+    expect(block!.verb).toBe('record the play/fold decision')
   })
 
   it('drops gating when presence is known and the host is offline', () => {

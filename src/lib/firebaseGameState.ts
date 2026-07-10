@@ -828,15 +828,23 @@ export class FirebaseGameManager extends GameManager {
     if (committed) await this.maybeApplyAuction(committed, handIndex);
   }
 
+  // How long the completed auction stays on screen (final reveal) before the hand advances.
+  private static readonly AUCTION_REVEAL_MS = 2800;
+
   // Apply a completed auction to the hand once its outcome is fully determined: a throw-in, or a
   // winner that has picked a trump. A completed auction whose winner still owes a trump is held
-  // until setTrump provides it.
+  // until setTrump provides it. When ready, hold briefly so every device shows the final reveal
+  // (who bid what) instead of snapping straight to the decision phase — especially when the winner
+  // pre-picked trump and the hand would otherwise resolve instantly. applyAuctionToHand is guarded
+  // against double application, so the delayed call is safe.
   private async maybeApplyAuction(state: AuctionState, handIndex: number): Promise<void> {
     if (!auctionIsComplete(state)) return;
     const result = auctionResult(state);
     if (!result) return;
     if (!result.thrownIn && result.winningSuit === null) return; // winner still owes a trump
-    await this.applyAuctionToHand(state, handIndex);
+    setTimeout(() => {
+      this.applyAuctionToHand(state, handIndex).catch(err => console.error('applyAuctionToHand:', err));
+    }, FirebaseGameManager.AUCTION_REVEAL_MS);
   }
 
   // Translate a completed auction into the hand encoding: bidder + bid (+ pre-picked trump),
