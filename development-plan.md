@@ -108,7 +108,10 @@ independent and can be scheduled around the critical path.
    - Realtime Database (was "test mode"; those time-limited rules have since expired — see Phase 11 / current-status note above)
    - Authentication with Google sign-in provider
 3. **Configuration Complete** ✅ - Environment variables configured
-4. **Authorized Domains** ✅ - localhost and billwolf.space configured
+4. **Authorized Domains** ⚠️ - `localhost` is authorized (default). NOTE (corrected 2026-07-10):
+   `billwolf.space` was NOT actually in Firebase Auth → Settings → Authorized domains despite an
+   earlier claim here — production Google sign-in failed with "The requested action is invalid" /
+   `auth/popup-blocked` until it was added. Add any new serving domain there (Console-only step).
 
 #### Code Implementation Complete:
 1. **Firebase SDK Integration** ✅ - Dependencies installed and configured
