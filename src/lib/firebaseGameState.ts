@@ -1,5 +1,5 @@
 // src/lib/firebaseGameState.ts
-import { ref, set, get, push, onValue, off, remove, type DatabaseReference } from 'firebase/database';
+import { ref, set, get, push, onValue, off, remove, runTransaction, type DatabaseReference } from 'firebase/database';
 import { getFirebaseDatabase, isFirebaseConfigured } from './firebase';
 import { getCurrentUser } from './auth';
 import { GameManager, type GameState } from './gameState';
@@ -59,18 +59,92 @@ export class FirebaseGameManager extends GameManager {
   private gameId: string | null = null;
   private gameRef: DatabaseReference | null = null;
   private listeners: Array<() => void> = [];
-  private lastSyncTime = 0;
   private uiUpdateCallback: ((_state: GameState) => void) | null = null;
   private seriesId: string | null = null;
   private seriesListener: (() => void) | null = null;
+  private connectionListener: (() => void) | null = null;
+  private online = true;
 
   constructor(players: string[], teams: [string, string], gameId?: string) {
     super(players, teams);
+
+    // Brand-new local state starts at version 0; every sync bumps it monotonically.
+    this.state.version = 0;
 
     if (gameId) {
       this.gameId = gameId;
       this.setupFirebaseListeners();
     }
+  }
+
+  // Read the monotonic sync version from any state-like value; missing/invalid => 0.
+  static versionOf(state: unknown): number {
+    if (state && typeof state === 'object' && typeof (state as GameState).version === 'number') {
+      return (state as GameState).version as number;
+    }
+    return 0;
+  }
+
+  // Is `remote` strictly newer than `local` by sync version? Single source of truth for
+  // both the write guard (syncToFirebase) and the read guard (applyRemoteState).
+  static isRemoteNewer(remote: unknown, local: unknown): boolean {
+    return FirebaseGameManager.versionOf(remote) > FirebaseGameManager.versionOf(local);
+  }
+
+  // Pure conflict-resolution decision for a sync write. Given the current remote state
+  // and our local state, either defer to a strictly-newer remote, or commit our state
+  // stamped with a bumped, monotonically-increasing version. Exposed static for testing.
+  static resolveSyncWrite(
+    remote: GameState | null,
+    local: GameState
+  ): { defer: true } | { commit: GameState } {
+    if (remote && FirebaseGameManager.isRemoteNewer(remote, local)) {
+      return { defer: true };
+    }
+    const nextVersion = Math.max(
+      FirebaseGameManager.versionOf(local),
+      FirebaseGameManager.versionOf(remote)
+    ) + 1;
+    return { commit: { ...local, version: nextVersion } };
+  }
+
+  // Apply a remote game state to this manager if (and only if) it is strictly newer
+  // than what we currently hold. Centralizes the merge, local persistence, and UI
+  // notification so every listener path behaves identically. Returns true if adopted.
+  //
+  // The version guard replaces the old wall-clock "skip our own update within 1s"
+  // heuristic: our own committed writes echo back with a version equal to ours and are
+  // ignored, while genuinely newer remote state is always accepted.
+  private applyRemoteState(newState: GameState | null): boolean {
+    if (!newState) return false;
+
+    if (!FirebaseGameManager.isRemoteNewer(newState, this.state)) return false;
+
+    const remoteVersion = FirebaseGameManager.versionOf(newState);
+
+    this.state = {
+      ...this.state,
+      ...newState,
+      hands: newState.hands || [],
+      scores: newState.scores || [0, 0],
+      players: newState.players || this.state.players || [],
+      teams: newState.teams || this.state.teams || ['Team 1', 'Team 2'],
+      version: remoteVersion
+    };
+
+    this.notifyStateChange();
+
+    try {
+      localStorage.setItem('currentGame', JSON.stringify(this.state));
+    } catch {
+      // localStorage may be unavailable (private mode / quota); non-fatal.
+    }
+
+    if (this.uiUpdateCallback) {
+      this.uiUpdateCallback(this.state);
+    }
+
+    return true;
   }
 
   // Create Firebase game for this instance
@@ -196,7 +270,8 @@ export class FirebaseGameManager extends GameManager {
           scores: [0, 0] as [number, number],
           isComplete: false,
           isSeries: false,
-          startTime: Date.now()
+          startTime: Date.now(),
+          version: 0
         }
       };
 
@@ -261,7 +336,8 @@ export class FirebaseGameManager extends GameManager {
         isComplete: false,
         isSeries: false,
         startTime: Date.now(),
-        firebaseGameId: gameId
+        firebaseGameId: gameId,
+        version: 0
       };
 
       // Safely merge game state, ensuring arrays exist
@@ -296,46 +372,25 @@ export class FirebaseGameManager extends GameManager {
 
     this.gameRef = ref(database, `games/${this.gameId}`);
 
-    // Listen for game state changes with UI update support
+    // Listen for game state changes. applyRemoteState uses the monotonic version to
+    // ignore our own echoes and any stale state, so no wall-clock heuristic is needed.
     const gameStateRef = ref(database, `games/${this.gameId}/gameState`);
     const unsubscribeGameState = onValue(gameStateRef, (snapshot) => {
       if (snapshot.exists()) {
-        const newState = snapshot.val() as GameState;
-        const now = Date.now();
-
-        // Skip if this is likely our own update (within 1 second of our last sync)
-        if (this.lastSyncTime && (now - this.lastSyncTime) < 1000) {
-          return;
-        }
-
-        // Only update if this is different from our current state
-        if (JSON.stringify(newState) !== JSON.stringify(this.state)) {
-          // Safely merge new state, ensuring arrays are properly initialized
-          this.state = {
-            ...this.state,
-            ...newState,
-            hands: newState.hands || [],
-            scores: newState.scores || [0, 0],
-            players: newState.players || this.state.players || [],
-            teams: newState.teams || this.state.teams || ['Team 1', 'Team 2']
-          };
-          this.notifyStateChange();
-
-          // Update localStorage with the safely merged state
-          localStorage.setItem('currentGame', JSON.stringify(this.state));
-
-          // Call UI update callback if set
-          if (this.uiUpdateCallback) {
-            this.uiUpdateCallback(this.state);
-          }
-        }
+        this.applyRemoteState(snapshot.val() as GameState);
       }
     });
 
     this.listeners.push(() => off(gameStateRef, 'value', unsubscribeGameState));
   }
 
-  // Sync state to Firebase
+  // Sync state to Firebase using an atomic, version-guarded transaction.
+  //
+  // This is the core fix for the "manual sync reverts newer -> older" bug and for
+  // races between multiple devices. Rather than blindly `set()`-ing our local state
+  // (last-writer-wins), we run a transaction that refuses to overwrite a strictly-newer
+  // remote state and instead pulls it in. When our state is the newest, we write it with
+  // a bumped version so other devices can order it deterministically.
   private async syncToFirebase() {
     if (!this.gameId || !isFirebaseConfigured()) {
       return;
@@ -346,12 +401,47 @@ export class FirebaseGameManager extends GameManager {
       return;
     }
 
+    const gameStateRef = ref(database, `games/${this.gameId}/gameState`);
+
     try {
-      this.lastSyncTime = Date.now();
-      const gameStateRef = ref(database, `games/${this.gameId}/gameState`);
-      await set(gameStateRef, this.state);
+      const result = await runTransaction(
+        gameStateRef,
+        (remote: GameState | null) => {
+          const decision = FirebaseGameManager.resolveSyncWrite(remote, this.state);
+          // defer => return undefined to abort (remote is newer; adopted below).
+          // commit => write our state stamped with a bumped version.
+          return 'defer' in decision ? undefined : decision.commit;
+        },
+        // Don't optimistically apply locally; wait for the confirmed server value so
+        // our own onValue echo carries the committed version and stays idempotent.
+        { applyLocally: false }
+      );
+
+      if (result.committed && result.snapshot.exists()) {
+        // Track the version we just committed so our echo is recognized as our own.
+        this.state.version = FirebaseGameManager.versionOf(result.snapshot.val());
+        this.touchLastUpdated();
+      } else if (!result.committed && result.snapshot.exists()) {
+        // A newer remote state won the transaction; pull it in rather than reverting it.
+        this.applyRemoteState(result.snapshot.val() as GameState);
+      }
     } catch (error) {
       console.error('Error syncing to Firebase:', error);
+    }
+  }
+
+  // Best-effort bump of the game's lastUpdated timestamp (used by active-game listing
+  // and abandoned-game cleanup). Never blocks or fails the primary sync.
+  private async touchLastUpdated(): Promise<void> {
+    if (!this.gameId || !isFirebaseConfigured()) return;
+
+    const database = getFirebaseDatabase();
+    if (!database) return;
+
+    try {
+      await set(ref(database, `games/${this.gameId}/metadata/lastUpdated`), Date.now());
+    } catch {
+      // Non-fatal; the game state itself already synced.
     }
   }
 
@@ -442,35 +532,7 @@ export class FirebaseGameManager extends GameManager {
 
     const unsubscribe = onValue(gameStateRef, (snapshot) => {
       if (snapshot.exists()) {
-        const newState = snapshot.val() as GameState;
-        const now = Date.now();
-
-        // Skip if this is likely our own update (within 1 second of our last sync)
-        if (this.lastSyncTime && (now - this.lastSyncTime) < 1000) {
-          return;
-        }
-
-        // Only update if the state is actually different
-        if (JSON.stringify(newState) !== JSON.stringify(this.state)) {
-          // Safely merge new state, ensuring arrays are properly initialized
-          this.state = {
-            ...this.state,
-            ...newState,
-            hands: newState.hands || [],
-            scores: newState.scores || [0, 0],
-            players: newState.players || this.state.players || [],
-            teams: newState.teams || this.state.teams || ['Team 1', 'Team 2']
-          };
-          this.notifyStateChange();
-
-          // Update localStorage with the safely merged state
-          localStorage.setItem('currentGame', JSON.stringify(this.state));
-
-          // Call UI update callback if set
-          if (this.uiUpdateCallback) {
-            this.uiUpdateCallback(this.state);
-          }
-        }
+        this.applyRemoteState(snapshot.val() as GameState);
       }
     });
 
@@ -478,6 +540,33 @@ export class FirebaseGameManager extends GameManager {
     this.listeners.push(() => off(gameStateRef, 'value', unsubscribe));
 
     return () => off(gameStateRef, 'value', unsubscribe);
+  }
+
+  // Monitor realtime-database connection state (Phase 7). Fires the callback with the
+  // current connectivity whenever it changes. While offline, Firebase queues writes and
+  // flushes them on reconnect; local state is also persisted to localStorage on every
+  // change, so play continues seamlessly. Returns an unsubscribe function.
+  public monitorConnection(callback?: (_connected: boolean) => void): () => void {
+    if (!isFirebaseConfigured()) return () => {};
+
+    const database = getFirebaseDatabase();
+    if (!database) return () => {};
+
+    const connectedRef = ref(database, '.info/connected');
+    const unsubscribe = onValue(connectedRef, (snapshot) => {
+      const connected = snapshot.val() === true;
+      this.online = connected;
+      if (callback) callback(connected);
+    });
+
+    this.connectionListener = () => off(connectedRef, 'value', unsubscribe);
+    this.listeners.push(this.connectionListener);
+    return this.connectionListener;
+  }
+
+  // Current connectivity as last reported by monitorConnection (defaults to online).
+  public getOnlineStatus(): boolean {
+    return this.online;
   }
 
   // Clean up listeners
@@ -828,7 +917,13 @@ export class FirebaseGameManager extends GameManager {
   // Override startNextGame to create new Firebase game in series
   override startNextGame(): void {
     if (!this.state.isSeries || !this.seriesId) {
+      // Fallback path: the new game re-uses the current game node, so carry the sync
+      // version forward. super.startNextGame() rebuilds state without a version, and
+      // without this the transaction would treat the (higher-versioned) completed game
+      // still on the node as "newer" and revert our fresh game.
+      const prevVersion = FirebaseGameManager.versionOf(this.state);
       super.startNextGame();
+      this.state.version = prevVersion;
       this.syncToFirebase();
       return;
     }
@@ -839,8 +934,11 @@ export class FirebaseGameManager extends GameManager {
         // Navigate to new game
         window.location.href = getPath('/game?id=' + newGameId);
       } else {
-        // Fallback to local series progression
+        // Fallback to local series progression on the same game node — carry the
+        // version forward for the same reason as above.
+        const prevVersion = FirebaseGameManager.versionOf(this.state);
         super.startNextGame();
+        this.state.version = prevVersion;
         this.syncToFirebase();
         window.location.reload();
       }
@@ -951,9 +1049,11 @@ export class FirebaseGameManager extends GameManager {
       this.seriesListener = null;
     }
 
-    // Clean up game listeners
+    // Clean up game listeners (this also unsubscribes the connection monitor, which is
+    // registered in this.listeners by monitorConnection).
     this.listeners.forEach(unsubscribe => unsubscribe());
     this.listeners = [];
+    this.connectionListener = null;
     this.stateChangeListeners = [];
   }
 

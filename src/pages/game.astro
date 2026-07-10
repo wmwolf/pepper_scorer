@@ -351,30 +351,29 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     let gameData;
 
-    if (gameId) {
-      // Load Firebase game by ID
-      try {
-        const { FirebaseGameManager } = await import('../lib/firebaseGameState');
-        const firebaseGame = await FirebaseGameManager.loadFirebaseGame(gameId);
-        if (firebaseGame) {
-          gameData = firebaseGame.state;
-          // Save to localStorage for consistency
-          localStorage.setItem('currentGame', JSON.stringify(gameData));
-        } else {
-          console.error('Failed to load Firebase game');
-          alert('Game not found or you do not have access to it.');
-          window.location.href = '/';
-          return;
-        }
-      } catch (error) {
-        console.error('Error loading Firebase game:', error);
-        alert('Error loading game. Redirecting to home.');
+    // Determine the Firebase game id from the URL, or from a locally-stored game.
+    let firebaseGameId = gameId;
+    if (!firebaseGameId) {
+      gameData = loadGameState();
+      firebaseGameId = gameData?.firebaseGameId || null;
+    }
+
+    // Set up Firebase ONCE if this is a cloud game. setupFirebaseSync loads the
+    // FirebaseGameManager, wires the live listeners/connection monitor, and returns it,
+    // so we no longer load the game twice (which previously leaked a listener set).
+    if (firebaseGameId) {
+      const firebaseGame = await setupFirebaseSync(firebaseGameId);
+      if (firebaseGame) {
+        gameData = firebaseGame.state;
+        // Save to localStorage for consistency / offline fallback.
+        localStorage.setItem('currentGame', JSON.stringify(gameData));
+      } else if (!gameData) {
+        // No cloud game loaded and no local fallback available.
+        console.error('Failed to load Firebase game');
+        alert('Game not found or you do not have access to it.');
         window.location.href = '/';
         return;
       }
-    } else {
-      // Load from localStorage as before
-      gameData = loadGameState();
     }
 
     if (gameData) {
@@ -408,12 +407,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // Expose GameManager to window for use in victory functions
       window.GameManager = { fromJSON: (json) => startGameplay(JSON.parse(json)).constructor.fromJSON(json) };
 
-      // Set up Firebase sync FIRST if this is a Firebase game
-      if (gameData.firebaseGameId) {
-        await setupFirebaseSync(gameData);
-      }
-
-      // THEN start gameplay (this will use window.firebaseGame if available)
+      // Firebase sync (if any) was already set up above; window.firebaseGame is ready.
+      // Start gameplay (this will use window.firebaseGame if available).
       startGameplay(gameData);
     }
 
@@ -431,50 +426,61 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   });
 
-  // Firebase synchronization setup
-  async function setupFirebaseSync(gameData) {
+  // Firebase synchronization setup. Loads the FirebaseGameManager for `gameId`, wires
+  // the live UI-update callback, connection monitor, and manual-sync button, and returns
+  // the manager (or null if Firebase is unavailable / the game can't be loaded, in which
+  // case the caller falls back to localStorage).
+  async function setupFirebaseSync(gameId) {
     try {
-      // Check if this game has Firebase metadata (firebaseGameId)
-      if (!gameData.firebaseGameId) {
-        return;
-      }
-
       // Import Firebase dependencies
       const { FirebaseGameManager } = await import('../lib/firebaseGameState');
       const { getCurrentUser } = await import('../lib/auth');
       const { isFirebaseConfigured } = await import('../lib/firebase');
 
       if (!isFirebaseConfigured()) {
-        updateConnectionStatus('offline', 'Cloud not configured - local mode');
-        return;
+        // Not an error: run in local-only mode using localStorage.
+        return null;
       }
 
       // Show connection status
       showConnectionStatus();
       updateConnectionStatus('connecting', 'Connecting to cloud...');
 
-      // Load the existing Firebase game
-      const firebaseGame = await FirebaseGameManager.loadFirebaseGame(gameData.firebaseGameId);
+      // Load the existing Firebase game (single load for the whole page).
+      const firebaseGame = await FirebaseGameManager.loadFirebaseGame(gameId);
 
       if (!firebaseGame) {
         updateConnectionStatus('error', 'Failed to load game - using local mode');
-        return;
+        return null;
       }
 
       window.firebaseGame = firebaseGame; // Make available globally
 
-      // Set UI update callback on the FirebaseGameManager's internal listener
-      firebaseGame.setUIUpdateCallback((updatedGameData) => {
+      // Set UI update callback: fires whenever a newer state arrives from another device.
+      firebaseGame.setUIUpdateCallback(() => {
         if (typeof window.updateUI === 'function') {
           window.updateUI();
-          updateSyncInfo('Synced from remote');
+          updateSyncInfo('Synced from another device');
         }
       });
 
-      // Update connection status
+      // Monitor connectivity (Phase 7): reflect online/offline state in the UI. While
+      // offline, Firebase queues writes and local state is still saved to localStorage.
+      firebaseGame.monitorConnection((connected) => {
+        if (connected) {
+          updateConnectionStatus('connected', 'Synced with cloud');
+          const user = getCurrentUser();
+          updateSyncInfo(user ? `Connected as ${user.displayName}` : 'Connected');
+        } else {
+          updateConnectionStatus('offline', 'Offline — changes saved locally');
+        }
+      });
+
+      // Initial optimistic status (monitorConnection will correct this on its first tick).
       updateConnectionStatus('connected', 'Synced with cloud');
 
-      // Show manual sync button
+      // Show manual sync button. Now safe: forceSyncToFirebase runs the same
+      // version-guarded transaction as automatic syncs and can never revert newer state.
       const manualSyncBtn = document.getElementById('manual-sync-btn');
       if (manualSyncBtn) {
         manualSyncBtn.classList.remove('hidden');
@@ -505,10 +511,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         updateSyncInfo(`Connected as ${currentUser.displayName}`);
       }
 
+      return firebaseGame;
     } catch (error) {
       console.error('Error setting up Firebase sync:', error);
       updateConnectionStatus('error', 'Connection failed - using local mode');
       updateSyncInfo(error.message);
+      return null;
     }
   }
 
@@ -557,10 +565,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
   }
 
-  // Cleanup on page unload
+  // Cleanup on page unload: tear down all Firebase listeners (game state, series,
+  // and connection monitor) to avoid leaking subscriptions across navigations.
   window.addEventListener('beforeunload', () => {
-    if (window.firebaseUnsubscribe) {
-      window.firebaseUnsubscribe();
+    if (window.firebaseGame && typeof window.firebaseGame.destroy === 'function') {
+      window.firebaseGame.destroy();
     }
   });
 

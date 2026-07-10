@@ -13,6 +13,7 @@ export interface GameState {
   seriesWinner?: number;            // Index of team that won the series
   completedGames?: GameSummary[];   // Array of completed games in the series
   firebaseGameId?: string;          // Optional Firebase game ID for real-time sync
+  version?: number;                 // Monotonic sync version for Firebase conflict resolution (see firebaseGameState.ts)
 }
 
 interface GameSummary {

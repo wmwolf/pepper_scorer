@@ -54,7 +54,8 @@ Modernizing the Pepper card game scoring application by moving from Bootstrap 4 
 
 ## Current Phase: Firebase Integration 🔥
 
-**Phase 5 Complete!** Authentication and infrastructure are working. Ready for Phase 6.
+**Phases 5, 6 & 7 Complete!** Authentication, infrastructure, and version-based
+real-time sync are working. Ready for Phase 8 (mobile bidding interface).
 
 ### Status update (since Phase 5)
 `main` has been merged into `firebase-integration`, bringing in a body of core-logic
@@ -65,7 +66,7 @@ hardening done on `main`:
 
 Two things to carry forward:
 - **`fromJSON` diverges by branch**: `main` validates strictly (throws on missing fields); this branch fills defaults permissively for partial Firestore payloads. Pick one when this branch merges back to `main`.
-- **Known bug (Phase 6)**: manual sync can revert newer state to older state (documented below). The Firebase layer (`firebaseGameState.ts`, `auth.ts`) has **no automated tests** — verification is manual by design.
+- **Known bug (Phase 6): FIXED.** Manual sync reverting newer→older state is resolved by version-based transactional sync (see Phase 6 completion note below). The rest of the Firebase layer (`firebaseGameState.ts`, `auth.ts`) still has **no automated tests** and is verified manually — but the pure conflict-resolution decision now has unit coverage (`tests/unit/firebase-sync.test.ts`). When adding a new field to `GameState` that must sync, remember it flows through the transaction untouched; the new `version` field is managed exclusively by `FirebaseGameManager` and defaults to 0.
 
 ### Session planning guidance (how to batch the remaining phases)
 The remaining phases need very different context loaded, so batch them by the subsystem
@@ -135,14 +136,20 @@ independent and can be scheduled around the critical path.
 - ✅ **Account Page Loading**: Eliminated jarring flash of "authentication required" message with smooth loading state
 - ✅ **Display Name Persistence**: Custom display names now persist properly and don't revert to Google data on page refresh
 
-### Phase 6: Database Schema & Core Data Migration
+### Phase 6: Database Schema & Core Data Migration ✅
 **Goal**: Replace localStorage with Firebase, maintain backward compatibility, implement robust real-time synchronization
 
 #### Critical Real-time Sync Improvements:
-- **Firebase Transactions**: Implement atomic updates using `runTransaction()` to prevent race conditions
-- **Conflict Resolution**: Handle multiple browsers updating the same game simultaneously
-- **State Consistency**: Ensure all connected devices stay in perfect sync even with rapid actions
-- **Manual Sync Fix**: Resolve issue where manual sync can revert newer state to older state
+- **Firebase Transactions** ✅: `syncToFirebase()` now writes via `runTransaction()` on `games/{id}/gameState` (with `applyLocally: false`) instead of a blind `set()`.
+- **Conflict Resolution** ✅: A monotonic `version` counter (`GameState.version`) orders writes. The transaction refuses to overwrite a strictly-newer remote state and instead pulls it in. Decision logic is the pure static `FirebaseGameManager.resolveSyncWrite()` / `isRemoteNewer()` / `versionOf()`.
+- **State Consistency** ✅: The read path (`applyRemoteState()`, used by every listener) adopts remote state **iff** its version is strictly greater than ours — this replaced the fragile wall-clock "skip our own update within 1s" heuristic (`lastSyncTime` removed), so echoes and stale updates can no longer race.
+- **Manual Sync Fix** ✅: `forceSyncToFirebase()` routes through the same version-guarded transaction, so the "Sync Now" button can never revert newer state to older.
+
+**Implementation notes / gotchas:**
+- `version` starts at 0 on creation (both create paths + `loadFirebaseGame`) and is bumped on every committed write. `versionOf()` treats a missing version as 0, so pre-version legacy games (none expected pre-launch) degrade to last-writer-wins rather than erroring.
+- Base `startNextGame()` rebuilds `this.state` without a version; the Firebase fallback paths that re-use the same game node re-seed `this.state.version` before syncing so the fresh game supersedes the completed game still on the node (otherwise the guard would "revert" it). The series path writes to a brand-new node, so no re-seed is needed there.
+- `undo()` is a forward version bump (not a revert): `super.undo()` mutates state in place, then the sync commits a higher version that propagates the undo to other devices.
+- Unit coverage: `tests/unit/firebase-sync.test.ts` (9 tests) locks in the conflict-resolution decision.
 
 #### Database Structure:
 ```
@@ -195,15 +202,19 @@ games/{gameId}/
 userGames/{userId}/{gameId}: true  // Quick lookup for active games
 ```
 
-### Phase 7: Real-time Game Synchronization
+### Phase 7: Real-time Game Synchronization ✅
 **Goal**: Multiple devices stay in sync during manual play
 
 #### Features:
-- Game state listeners for live score updates
-- Automatic UI refresh when host updates scores
-- Connection status indicators
-- Graceful handling of network interruptions
-- Fallback to localStorage when offline
+- **Game state listeners for live score updates** ✅: `setupFirebaseListeners()` subscribes to `games/{id}/gameState` and funnels every snapshot through `applyRemoteState()`.
+- **Automatic UI refresh when host updates scores** ✅: the manager's `uiUpdateCallback` (wired in `game.astro`) calls `window.updateUI()` whenever a newer remote state is adopted.
+- **Connection status indicators** ✅: `monitorConnection()` subscribes to Firebase's special `.info/connected` ref and drives the connection banner (connected / connecting / offline). `getOnlineStatus()` exposes the latest value.
+- **Graceful handling of network interruptions** ✅: while offline, Firebase queues writes and flushes them on reconnect; the connection banner reflects offline state.
+- **Fallback to localStorage when offline** ✅: `applyRemoteState()` and `updateUI()` persist to `localStorage.currentGame` on every change, and the game page falls back to the local copy when the cloud is unconfigured/unreachable.
+
+**Also fixed here:** `game.astro` previously loaded the `FirebaseGameManager` twice (URL-`?id=` path + `setupFirebaseSync`), leaking a full listener set and running two managers for one game. It now loads once and reuses the instance; `beforeunload` calls `firebaseGame.destroy()` (was calling a never-defined `window.firebaseUnsubscribe`) to tear down all listeners including the connection monitor.
+
+**Still TODO for a later hardening pass:** richer reconnect UX (e.g. surfacing queued-write count), and automated coverage of the DOM/listener wiring (currently manual).
 
 ### Phase 8: Mobile Bidding Interface
 **Goal**: Players can bid via their phones
