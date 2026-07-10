@@ -1,7 +1,7 @@
 // src/lib/firebase.ts
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getDatabase } from 'firebase/database';
+import { getDatabase, connectDatabaseEmulator } from 'firebase/database';
 
 // Firebase configuration interface
 interface FirebaseConfig {
@@ -58,6 +58,13 @@ export const initializeFirebase = () => {
       app = initializeApp(firebaseConfig);
       auth = getAuth(app);
       database = getDatabase(app);
+
+      // Test seam (Phase 11 emulator harness): when the emulator flag is set, point the RTDB
+      // client at the local Firebase emulator instead of production. Enabled only by the
+      // emulator Vitest project (see vitest.emulator.config.ts), never in the app build.
+      if (import.meta.env.PUBLIC_FIREBASE_EMULATOR === 'true') {
+        connectDatabaseEmulator(database, '127.0.0.1', 9000);
+      }
     }
     return { app, auth, database };
   } catch (error) {

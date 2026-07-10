@@ -7,9 +7,8 @@ import { getPath } from './path-utils';
 import { resolveSeat } from './multiplayer';
 import {
   createAuction,
-  submitInTurn,
-  preCommit,
-  cancelPreCommit,
+  enterBid,
+  setTrump,
   isComplete as auctionIsComplete,
   auctionResult,
   type AuctionState,
@@ -689,14 +688,13 @@ export class FirebaseGameManager extends GameManager {
     return this.auctionState;
   }
 
-  // RTDB drops empty objects/arrays, so a round-tripped auction may be missing `actions`
+  // RTDB drops empty objects/arrays, so a round-tripped auction may be missing `entries`
   // or `order`. Restore the shape the pure engine expects.
   private normalizeAuction(raw: AuctionState): AuctionState {
     return {
       handIndex: raw.handIndex,
       order: raw.order || [],
-      pointer: raw.pointer || 0,
-      actions: raw.actions || {},
+      entries: raw.entries || {},
     };
   }
 
@@ -760,32 +758,33 @@ export class FirebaseGameManager extends GameManager {
     return null;
   }
 
-  // Submit the current in-turn bidder's action (bid value or 'PASS'), optionally with a
-  // pre-picked trump. When this action completes the auction, this (online) device applies
-  // the result to the hand exactly once.
-  public async submitBid(seat: number, value: ActionValue, suit?: TrumpSuit): Promise<void> {
+  // Enter (or re-enter / edit) this seat's bid, optionally with a pre-picked trump. Concurrent:
+  // any seated player may enter at any time; the engine rejects an edit once the seat's bid is
+  // locked (aborting the transaction). If this entry completes the auction with a trump-bearing
+  // winner (or a throw-in), this (online) device applies the result to the hand exactly once.
+  public async enterBid(seat: number, value: ActionValue, suit?: TrumpSuit): Promise<void> {
     const handIndex = this.state.hands.length - 1;
-    const committed = await this.mutateAuction(handIndex, s => submitInTurn(s, seat, value, suit));
-    if (committed && auctionIsComplete(committed)) {
-      await this.applyAuctionToHand(committed, handIndex);
-    }
+    const committed = await this.mutateAuction(handIndex, s => enterBid(s, seat, value, suit));
+    if (committed) await this.maybeApplyAuction(committed, handIndex);
   }
 
-  // Record or replace an out-of-turn pre-commit (hidden, editable until the pointer reaches
-  // the seat). If it is actually the seat's turn, the engine treats it as an in-turn submit,
-  // which can complete the auction — so apply the result in that case too.
-  public async preCommitBid(seat: number, value: ActionValue, suit?: TrumpSuit): Promise<void> {
+  // Set or change this seat's trump on its existing non-pass bid (a separate, longer window than
+  // the bid edit). Setting the winner's trump is what finishes a hand whose bidding filled first.
+  public async setTrump(seat: number, suit: TrumpSuit): Promise<void> {
     const handIndex = this.state.hands.length - 1;
-    const committed = await this.mutateAuction(handIndex, s => preCommit(s, seat, value, suit));
-    if (committed && auctionIsComplete(committed)) {
-      await this.applyAuctionToHand(committed, handIndex);
-    }
+    const committed = await this.mutateAuction(handIndex, s => setTrump(s, seat, suit));
+    if (committed) await this.maybeApplyAuction(committed, handIndex);
   }
 
-  // Cancel a not-yet-resolved pre-commit for a seat.
-  public async cancelPreCommitBid(seat: number): Promise<void> {
-    const handIndex = this.state.hands.length - 1;
-    await this.mutateAuction(handIndex, s => cancelPreCommit(s, seat));
+  // Apply a completed auction to the hand once its outcome is fully determined: a throw-in, or a
+  // winner that has picked a trump. A completed auction whose winner still owes a trump is held
+  // until setTrump provides it.
+  private async maybeApplyAuction(state: AuctionState, handIndex: number): Promise<void> {
+    if (!auctionIsComplete(state)) return;
+    const result = auctionResult(state);
+    if (!result) return;
+    if (!result.thrownIn && result.winningSuit === null) return; // winner still owes a trump
+    await this.applyAuctionToHand(state, handIndex);
   }
 
   // Translate a completed auction into the hand encoding: bidder + bid (+ pre-picked trump),

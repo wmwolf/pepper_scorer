@@ -2,32 +2,22 @@ import { describe, it, expect } from 'vitest'
 import {
   createAuction,
   biddingOrder,
-  currentBidderSeat,
-  legalBids,
-  highSeat,
-  highRank,
-  submitInTurn,
-  preCommit,
-  cancelPreCommit,
-  hasPendingPreCommit,
-  auctionResult,
-  isComplete,
   bidRank,
-  type AuctionState,
+  hasEntered,
+  revealedCount,
+  isRevealed,
+  isComplete,
+  isBidLocked,
+  resolve,
+  isOutbid,
+  canSetTrump,
+  enterBid,
+  setTrump,
+  auctionResult,
 } from '../../src/lib/auction'
 
-// Drive the whole auction in dealer order via in-turn submits.
-function playInOrder(state: AuctionState, actions: Array<[string, string?]>): AuctionState {
-  let s = state
-  for (const [value, suit] of actions) {
-    const seat = currentBidderSeat(s)!
-    s = submitInTurn(s, seat, value as any, suit as any)
-  }
-  return s
-}
-
 describe('biddingOrder', () => {
-  it('starts left of the dealer and goes clockwise', () => {
+  it('starts left of the dealer and goes clockwise, dealer last', () => {
     expect(biddingOrder(1)).toEqual([2, 3, 4, 1])
     expect(biddingOrder(2)).toEqual([3, 4, 1, 2])
     expect(biddingOrder(4)).toEqual([1, 2, 3, 4])
@@ -43,143 +33,193 @@ describe('bidRank', () => {
   })
 })
 
-describe('createAuction / current bidder', () => {
-  it('opens with the player left of the dealer', () => {
-    const s = createAuction(1, 4) // dealer seat 1
-    expect(s.pointer).toBe(0)
-    expect(currentBidderSeat(s)).toBe(2)
+describe('createAuction', () => {
+  it('opens empty with the full dealer-order and nothing revealed', () => {
+    const s = createAuction(1, 4) // dealer seat 1 -> order [2,3,4,1]
+    expect(s.order).toEqual([2, 3, 4, 1])
+    expect(s.handIndex).toBe(4)
+    expect(s.entries).toEqual({})
+    expect(revealedCount(s)).toBe(0)
     expect(isComplete(s)).toBe(false)
-    expect(legalBids(s)).toEqual(['4', '5', '6', 'M', 'D'])
   })
 })
 
-describe('in-turn auction', () => {
-  it('resolves a normal ascending auction to the highest bidder', () => {
-    // dealer 1 -> order [2,3,4,1]. 2 bids 4, 3 bids 5, 4 passes, 1 bids 6.
+describe('concurrent entry + dealer-prefix reveal', () => {
+  it('does not reveal an entered bid until everyone ahead has entered', () => {
+    // order [2,3,4,1]. Seat 4 (3rd) enters first; nothing is revealed (2 and 3 missing).
     let s = createAuction(1, 4)
-    s = playInOrder(s, [['4'], ['5'], ['PASS'], ['6']])
+    s = enterBid(s, 4, '5', 'H')
+    expect(hasEntered(s, 4)).toBe(true)
+    expect(revealedCount(s)).toBe(0)
+    expect(isRevealed(s, 4)).toBe(false)
+  })
+
+  it('cascade-reveals several already-entered later seats when the gap fills', () => {
+    // Seats 3, 4, 1 (order positions 1,2,3) enter first, hidden. Seat 2 (position 0) entering
+    // last reveals the whole prefix at once.
+    let s = createAuction(1, 4) // order [2,3,4,1]
+    s = enterBid(s, 3, '4')
+    s = enterBid(s, 4, '5')
+    s = enterBid(s, 1, '6')
+    expect(revealedCount(s)).toBe(0) // seat 2 (first in order) still missing
+    s = enterBid(s, 2, 'PASS')
+    expect(revealedCount(s)).toBe(4)
     expect(isComplete(s)).toBe(true)
+  })
+
+  it('reveals a growing prefix as the front seats fill in order', () => {
+    let s = createAuction(1, 4) // order [2,3,4,1]
+    s = enterBid(s, 2, '4')
+    expect(revealedCount(s)).toBe(1)
+    s = enterBid(s, 3, '5')
+    expect(revealedCount(s)).toBe(2)
+    expect(isRevealed(s, 2)).toBe(true)
+    expect(isRevealed(s, 3)).toBe(true)
+    expect(isRevealed(s, 4)).toBe(false)
+  })
+})
+
+describe('resolution (high bid)', () => {
+  it('resolves a normal ascending auction to the highest bidder', () => {
+    // order [2,3,4,1]: 2->4, 3->5, 4 passes, 1->6.
+    let s = createAuction(1, 4)
+    s = enterBid(s, 2, '4')
+    s = enterBid(s, 3, '5')
+    s = enterBid(s, 4, 'PASS')
+    s = enterBid(s, 1, '6', 'S')
     const r = auctionResult(s)!
     expect(r.thrownIn).toBe(false)
     expect(r.winnerSeat).toBe(1)
     expect(r.winningBid).toBe('6')
-    expect(r.winningSuit).toBeNull()
+    expect(r.winningSuit).toBe('S')
   })
 
   it('throws in the hand when everyone passes', () => {
-    let s = createAuction(3, 5)
-    s = playInOrder(s, [['PASS'], ['PASS'], ['PASS'], ['PASS']])
+    let s = createAuction(3, 5) // order [4,1,2,3]
+    for (const seat of [4, 1, 2, 3]) s = enterBid(s, seat, 'PASS')
     const r = auctionResult(s)!
     expect(r.thrownIn).toBe(true)
     expect(r.winnerSeat).toBeNull()
     expect(r.winningBid).toBeNull()
   })
 
-  it('only offers legal (strictly higher) bids to later bidders', () => {
+  it('treats a revealed bid at or below the high as a pass (auto-pass)', () => {
+    // order [2,3,4,1]: 2 bids 6, 3 bids 5 (<=6 -> loses), 4 & 1 pass. Winner is seat 2.
     let s = createAuction(1, 4)
-    s = submitInTurn(s, 2, '5')       // seat 2 bids 5
-    expect(currentBidderSeat(s)).toBe(3)
-    expect(legalBids(s)).toEqual(['6', 'M', 'D']) // must beat 5
-    expect(highSeat(s)).toBe(2)
-    expect(highRank(s)).toBe(5)
+    s = enterBid(s, 2, '6')
+    s = enterBid(s, 3, '5')
+    s = enterBid(s, 4, 'PASS')
+    s = enterBid(s, 1, 'PASS')
+    expect(resolve(s).highSeat).toBe(2)
+    expect(isOutbid(s, 3)).toBe(true)
+    expect(auctionResult(s)!.winnerSeat).toBe(2)
   })
 
-  it('coerces a raced in-turn bid at or below the high to a pass', () => {
-    // A UI wouldn't offer it, but a race might submit a stale bid; it must not stand.
+  it('gives a tie (equal bids) to the earlier seat in dealer order', () => {
+    // order [2,3,4,1]: 2 and 3 both bid 5; 4 and 1 pass. Earlier seat (2) wins.
     let s = createAuction(1, 4)
-    s = submitInTurn(s, 2, '6')       // high is now 6
-    s = submitInTurn(s, 3, '5')       // stale 5 <= 6 -> becomes PASS
-    expect(s.actions[3]!.value).toBe('PASS')
-    expect(highSeat(s)).toBe(2)
-  })
-
-  it('records a pre-picked trump on the winning in-turn bid', () => {
-    let s = createAuction(1, 4)
-    s = submitInTurn(s, 2, '5', 'H')
-    s = playInOrder(s, [['PASS'], ['PASS'], ['PASS']])
-    const r = auctionResult(s)!
-    expect(r.winnerSeat).toBe(2)
-    expect(r.winningSuit).toBe('H')
+    s = enterBid(s, 2, '5')
+    s = enterBid(s, 3, '5')
+    s = enterBid(s, 4, 'PASS')
+    s = enterBid(s, 1, 'PASS')
+    expect(auctionResult(s)!.winnerSeat).toBe(2)
+    expect(isOutbid(s, 3)).toBe(true)
   })
 })
 
-describe('pre-commit layer', () => {
-  it('holds an out-of-turn pre-commit hidden and editable until reached', () => {
-    let s = createAuction(1, 4) // order [2,3,4,1], pointer at seat 2
-    s = preCommit(s, 1, 'PASS') // seat 1 (last) pre-commits a pass
-    expect(hasPendingPreCommit(s, 1)).toBe(true)
-    expect(s.actions[1]!.committed).toBe(false)
-    // Editing before resolution replaces it.
-    s = preCommit(s, 1, '6', 'S')
-    expect(s.actions[1]!.value).toBe('6')
-    expect(s.actions[1]!.suit).toBe('S')
-    // Cancelling removes it.
-    s = cancelPreCommit(s, 1)
-    expect(hasPendingPreCommit(s, 1)).toBe(false)
+describe('bid lock (edit window)', () => {
+  it('keeps a bid editable until its successor is revealed, then locks it', () => {
+    // order [2,3,4,1]. Seat 2 enters; still editable (successor 3 not revealed).
+    let s = createAuction(1, 4)
+    s = enterBid(s, 2, '4')
+    expect(isRevealed(s, 2)).toBe(true)
+    expect(isBidLocked(s, 2)).toBe(false) // successor (seat 3) not revealed yet
+    s = enterBid(s, 2, '5') // audible correction: still allowed
+    expect(s.entries[2]!.value).toBe('5')
+    // Successor reveals -> seat 2 locks.
+    s = enterBid(s, 3, 'PASS')
+    expect(isRevealed(s, 3)).toBe(true)
+    expect(isBidLocked(s, 2)).toBe(true)
+    expect(() => enterBid(s, 2, '6')).toThrow()
   })
 
-  it('auto-passes a pre-commit that is <= the high when the pointer reaches it', () => {
-    // seat 4 pre-commits 5; then 2 bids 6, 3 passes -> when pointer hits 4, 5 <= 6 -> PASS.
-    let s = createAuction(1, 4) // order [2,3,4,1]
-    s = preCommit(s, 4, '5')
-    s = submitInTurn(s, 2, '6')   // pointer -> 3
-    s = submitInTurn(s, 3, 'PASS') // pointer -> 4 which is seat 4, cascade resolves the pre-commit
-    expect(s.actions[4]!.committed).toBe(true)
-    expect(s.actions[4]!.value).toBe('PASS') // 5 <= 6
-    // seat 1 still to act
-    expect(currentBidderSeat(s)).toBe(1)
-  })
-
-  it('enters a pre-commit that is still high when reached', () => {
-    let s = createAuction(1, 4) // order [2,3,4,1]
-    s = preCommit(s, 4, '6', 'C') // seat 4 pre-commits 6 with clubs
-    s = submitInTurn(s, 2, '4')   // pointer -> 3
-    s = submitInTurn(s, 3, '5')   // pointer -> 4, cascade: 6 > 5 -> stands
-    expect(s.actions[4]!.value).toBe('6')
-    expect(s.actions[4]!.suit).toBe('C')
-    expect(highSeat(s)).toBe(4)
-  })
-
-  it('cascades through several consecutive pre-commits at once', () => {
-    // Everyone but seat 2 pre-commits a pass; seat 2 bids and the rest auto-resolve.
-    let s = createAuction(1, 4) // order [2,3,4,1]
-    s = preCommit(s, 3, 'PASS')
-    s = preCommit(s, 4, 'PASS')
-    s = preCommit(s, 1, 'PASS')
-    s = submitInTurn(s, 2, '4') // seat 2 bids 4, cascade resolves 3,4,1 as passes
+  it('lets the dealer (last seat) edit until auction completion', () => {
+    // order [2,3,4,1]: seat 1 is dealer/last. It can edit while others are outstanding.
+    let s = createAuction(1, 4)
+    s = enterBid(s, 1, '4')      // entered but hidden (not first in order)
+    expect(isBidLocked(s, 1)).toBe(false)
+    s = enterBid(s, 1, '5')      // still editable
+    expect(s.entries[1]!.value).toBe('5')
+    // Fill the rest so the auction completes; now the dealer locks.
+    s = enterBid(s, 2, 'PASS')
+    s = enterBid(s, 3, 'PASS')
+    s = enterBid(s, 4, 'PASS')
     expect(isComplete(s)).toBe(true)
-    const r = auctionResult(s)!
-    expect(r.winnerSeat).toBe(2)
-    expect(r.winningBid).toBe('4')
+    expect(isBidLocked(s, 1)).toBe(true)
+    expect(() => enterBid(s, 1, '6')).toThrow()
+  })
+})
+
+describe('trump decoupled from bid', () => {
+  it('lets a bidder enter a bid and set trump separately', () => {
+    let s = createAuction(1, 4)
+    s = enterBid(s, 2, '5')            // no trump yet
+    expect(s.entries[2]!.suit).toBeUndefined()
+    s = setTrump(s, 2, 'D')
+    expect(s.entries[2]!.suit).toBe('D')
+    s = setTrump(s, 2, 'H')           // change it while still editable
+    expect(s.entries[2]!.suit).toBe('H')
   })
 
-  it('gives a tie (equal pre-bids) to the earlier seat', () => {
-    // seats 3 and 4 both pre-commit 5; seat 2 passes. 3 enters 5 (beats 0), 4's 5 <= 5 -> PASS.
-    let s = createAuction(1, 4) // order [2,3,4,1]
-    s = preCommit(s, 3, '5')
-    s = preCommit(s, 4, '5')
-    s = submitInTurn(s, 2, 'PASS') // pointer -> 3, cascade resolves 3 then 4
-    // seat 1 still to act; kill it with a pass to finish
-    s = submitInTurn(s, 1, 'PASS')
-    const r = auctionResult(s)!
-    expect(r.winnerSeat).toBe(3)   // earlier seat wins the tie
-    expect(s.actions[4]!.value).toBe('PASS')
+  it('completes with winningSuit null until the winner picks trump, then resolves', () => {
+    // order [2,3,4,1]: 2 bids 6 (no trump), everyone else passes. Auction fills but no trump yet.
+    let s = createAuction(1, 4)
+    s = enterBid(s, 2, '6')
+    s = enterBid(s, 3, 'PASS')
+    s = enterBid(s, 4, 'PASS')
+    s = enterBid(s, 1, 'PASS')
+    expect(isComplete(s)).toBe(true)
+    expect(auctionResult(s)!.winningSuit).toBeNull()
+    // Winner may still pick a trump post-completion.
+    expect(canSetTrump(s, 2)).toBe(true)
+    s = setTrump(s, 2, 'C')
+    expect(auctionResult(s)!.winningSuit).toBe('C')
   })
 
-  it('treats a pre-commit for the seat whose turn it already is as an in-turn submit', () => {
-    let s = createAuction(1, 4) // pointer at seat 2
-    s = preCommit(s, 2, '4')    // seat 2 is current -> commits immediately
-    expect(s.actions[2]!.committed).toBe(true)
-    expect(currentBidderSeat(s)).toBe(3)
+  it('locks the winner trump once picked and the auction is complete', () => {
+    let s = createAuction(1, 4)
+    s = enterBid(s, 2, '6', 'C')
+    s = enterBid(s, 3, 'PASS')
+    s = enterBid(s, 4, 'PASS')
+    s = enterBid(s, 1, 'PASS')
+    expect(canSetTrump(s, 2)).toBe(false) // revealed as winner with a trump -> locked
+    expect(() => setTrump(s, 2, 'H')).toThrow()
   })
 
-  it('rejects pre-committing for a seat not in the auction', () => {
+  it('discards trump for an outbid seat and disallows setting it', () => {
+    let s = createAuction(1, 4)
+    s = enterBid(s, 2, '6', 'C') // will be the high
+    s = enterBid(s, 3, '5', 'H') // revealed and outbid
+    expect(isOutbid(s, 3)).toBe(true)
+    expect(canSetTrump(s, 3)).toBe(false)
+    expect(() => setTrump(s, 3, 'S')).toThrow()
+  })
+})
+
+describe('mutator guards', () => {
+  it('rejects entering a bid for a seat not in the auction', () => {
     const s = createAuction(1, 4)
-    expect(() => preCommit(s, 9, '4')).toThrow()
+    expect(() => enterBid(s, 9, '4')).toThrow()
   })
 
-  it('rejects submitting out of turn', () => {
-    const s = createAuction(1, 4) // seat 2's turn
-    expect(() => submitInTurn(s, 3, '4')).toThrow()
+  it('rejects setting trump for a seat that has not entered', () => {
+    const s = createAuction(1, 4)
+    expect(() => setTrump(s, 2, 'C')).toThrow()
+  })
+
+  it('rejects setting trump on a pass', () => {
+    let s = createAuction(1, 4)
+    s = enterBid(s, 2, 'PASS')
+    expect(() => setTrump(s, 2, 'C')).toThrow()
   })
 })

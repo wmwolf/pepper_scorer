@@ -10,6 +10,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
+    "test:emulator": "firebase emulators:exec --only database --project demo-pepper \"vitest run --config vitest.emulator.config.ts\"",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts"
   },
@@ -22,9 +23,11 @@
     "tailwindcss": "^3.4.17"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@typescript-eslint/eslint-plugin": "^8.18.2",
     "@typescript-eslint/parser": "^8.18.2",
     "@vitest/ui": "^3.2.4",
+    "jsdom": "^29.1.1",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.26.1",
     "vitest": "^3.2.4"

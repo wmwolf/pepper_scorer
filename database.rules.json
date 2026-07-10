@@ -1,0 +1,61 @@
+{
+  "rules": {
+    "users": {
+      ".read": true,
+      "$userId": {
+        ".write": "auth != null && $userId === auth.uid"
+      }
+    },
+
+    "userGames": {
+      "$uid": {
+        ".read": "auth != null && $uid === auth.uid",
+        "$gameId": {
+          ".write": "auth != null && ($uid === auth.uid || root.child('games').child($gameId).child('metadata').child('createdBy').val() === auth.uid)"
+        }
+      }
+    },
+
+    "games": {
+      ".read": "auth != null",
+      ".indexOn": ["metadata/roomCode"],
+
+      "$gameId": {
+        ".write": "auth != null && !data.exists() && newData.child('metadata/createdBy').val() === auth.uid",
+
+        "gameState": {
+          ".write": "auth != null && (root.child('games').child($gameId).child('players').child('0').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('1').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('2').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('3').child('userId').val() === auth.uid)"
+        },
+
+        "bidding": {
+          ".write": "auth != null && (root.child('games').child($gameId).child('players').child('0').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('1').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('2').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('3').child('userId').val() === auth.uid)"
+        },
+
+        "presence": {
+          "$uid": {
+            ".write": "auth != null && $uid === auth.uid"
+          }
+        },
+
+        "metadata": {
+          "lastUpdated": {
+            ".write": "auth != null && (root.child('games').child($gameId).child('players').child('0').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('1').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('2').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('3').child('userId').val() === auth.uid)"
+          },
+          "status": {
+            ".write": "auth != null && (root.child('games').child($gameId).child('players').child('0').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('1').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('2').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('3').child('userId').val() === auth.uid)"
+          },
+          "seriesId": {
+            ".write": "auth != null && (root.child('games').child($gameId).child('players').child('0').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('1').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('2').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('3').child('userId').val() === auth.uid)"
+          }
+        }
+      }
+    },
+
+    "series": {
+      "$seriesId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    }
+  }
+}

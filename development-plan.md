@@ -221,22 +221,36 @@ userGames/{userId}/{gameId}: true  // Quick lookup for active games
 ### Phase 8: Mobile Bidding Interface ✅ (8a + 8b implemented; needs real-device QA)
 **Goal**: Players can bid via their phones
 
-**Status (2026-07-10):** Both the 8a foundation (identity, turn-gating, presence + manual
-fallback, room codes) and the 8b hybrid auction (sequential pass + optimistic pre-commit +
-optional pre-picked trump) are implemented, CI-green, and verified in-browser by driving the
-**real** auction engine through a simulated multiplayer manager. Remaining before launch:
-- **Real multi-device QA**: the flows were exercised via simulation (headless Google sign-in
+**Status (2026-07-10, updated):** 8a foundation (identity, turn-gating, presence + manual
+fallback, room codes) and the 8b auction are implemented and CI-green. The 8b auction was
+**redesigned** from the sequential pass + pre-commit model to **concurrent entry + dealer-prefix
+reveal** (see "8b redesign spec" below) — that concurrent model is what now ships. Verified via
+the pure engine tests and a jsdom test that drives the real `renderAuction` + wiring over the real
+engine. Remaining before launch:
+- **Real multi-device QA**: the flows were exercised via simulation/jsdom (headless Google sign-in
   isn't possible here). Needs a manual pass with 4 signed-in devices against live Firebase.
 - **The Firebase auction wiring (`firebaseGameState.ts`) is not covered by CI** — only the pure
-  `auction.ts` engine is (16 tests). The Phase 11 emulator harness should cover the wiring.
-- **Mid-auction disconnect**: the auction requires all four seats *authenticated* (not
-  necessarily present); if a seated player is offline when it's their turn, the auction waits
-  on them and the **manual-override** escape hatch is the current remedy. Auto-abort-to-manual
-  mid-auction is a possible refinement. (8a presence-fallback already covers trump/decision/tricks.)
-- Security rules (Phase 11) must cover the new `presence`/`bidding` nodes and the
-  `metadata/roomCode` index, and widen `.write` to any seated player — see the Phase 11 note.
+  `auction.ts` engine (19 tests) and the DOM render (`auction-ui.test.ts`, 7 tests) are. The
+  Phase 11 emulator harness is scaffolded to cover the wiring (orchestration tests still TODO —
+  see Phase 11 status).
+- **Mid-auction stall**: the auction requires all four seats *authenticated*. In the concurrent
+  model there is no turn pointer, but a seat that never enters a bid **stalls completion**; the
+  **manual-override** escape hatch is the current remedy (and ties into the deferred mixed-device
+  feature). Auto-abort-to-manual is a possible refinement.
+- Security rules (Phase 11) now cover the `presence`/`bidding` nodes, the `metadata/roomCode`
+  index, and seated-player `.write` — **written** in `database.rules.json`; see the Phase 11 status.
 
-#### 8b redesign spec (2026-07-10 — CONFIRMED with user; build in a FRESH session, NOT yet built)
+#### 8b redesign spec (2026-07-10 — ✅ IMPLEMENTED, CI-green, jsdom-verified)
+**Status:** Built. `auction.ts` is now the concurrent-entry engine below; the Firebase wiring
+(`firebaseGameState.ts`: `enterBid`/`setTrump`/`maybeApplyAuction`) and the auction UI
+(`game.ts`: `renderAuction`/`wireAuctionButtons`) were rewritten to match. The old sequential-turn
+model (commits 8b-1…8b-4) and the trump-as-part-of-bid change (`cfff20c`) are **superseded**.
+Coverage: `tests/unit/auction.test.ts` (19, pure engine) + `tests/unit/auction-ui.test.ts` (7,
+jsdom drives the real `renderAuction` + wiring over the real engine — the DOM path was previously
+manual-only). Still needs real multi-device QA against live Firebase (headless sign-in impossible
+here). Mixed phone/non-phone players remains DEFERRED (see that section).
+
+The spec that was built (kept for reference):
 A rewrite of `auction.ts` + the Firebase auction wiring + the auction UI — **not** a tweak. It
 **supersedes the sequential-turn auction** (commits 8b-1…8b-4) and the trump-as-part-of-bid
 change (`cfff20c`). The current sequential-turn model must be consciously discarded.
@@ -286,6 +300,10 @@ turn-gating and auction UI to support "act on behalf of an absent seat." Moderat
 design pass.
 
 #### Chosen bidding model (decided 2026-07-09): hybrid sequential auction with optimistic pre-commit
+> ⚠️ **SUPERSEDED (2026-07-10) by the concurrent-entry 8b redesign above.** This sequential
+> model was fully discarded and replaced; the text below is retained only as historical context
+> for the decision trail. The shipped model is concurrent entry + dealer-prefix reveal.
+
 The **live sequential ascending auction is the source of truth** (start left of the dealer,
 each player bids higher or passes, auction ends when three pass; pepper rounds auto-bid 4 for
 the player left of the dealer). On top of that sits an **optimistic pre-commit layer**:
@@ -361,7 +379,33 @@ the player left of the dealer). On top of that sits an **optimistic pre-commit l
 ### Phase 11: Security & Production Features
 **Goal**: Secure, scalable deployment ready for public use
 
-#### Security Implementation:
+#### Status (2026-07-10): security rules WRITTEN + emulator harness SCAFFOLDED (not yet deployed)
+- ✅ **`database.rules.json` written** (repo root) — coarse, node-level grants. `/users` public
+  read + self-write; `/games` readable by any authed user (room-code spectators) with
+  `.indexOn: ["metadata/roomCode"]`; game **creation** gated to `createdBy === auth.uid`;
+  `gameState`/`bidding` writable by any **seated** player (4-way `players/N/userId` check);
+  `metadata/status` + `metadata/lastUpdated` writable by seated players while `createdBy` (and the
+  rest of metadata) stays immutable; `presence/$uid` self-write; `userGames` self-managed, with the
+  creator allowed to seed other players' lists. This is the widening the notes below called for.
+- ✅ **Emulator harness scaffolded**: `firebase.json` + `.firebaserc` (project `pepper-score`,
+  demo project `demo-pepper` for offline runs), a DB test seam in `src/lib/firebase.ts`
+  (`connectDatabaseEmulator` when `PUBLIC_FIREBASE_EMULATOR === 'true'`), a separate
+  `vitest.emulator.config.ts` (jsdom), `tests/emulator/rules.test.ts` (8 rules tests via
+  `@firebase/rules-unit-testing`), the `test:emulator` npm script, and a dedicated CI job
+  (`emulator`) that installs Temurin + `firebase-tools`. Kept OUT of the fast `npm run test:run`.
+- ⏳ **CANNOT run locally**: this machine has only a Java *stub* (`java -version` fails), so the
+  emulator tests are CI-only. They collect cleanly locally (`vitest list`) but have not been
+  executed against a live emulator yet.
+- ⏳ **REMAINING**:
+  1. **Deploy the rules** (`firebase deploy --only database`) — this re-closes the currently
+     wide-open dev DB. Must happen before real users; outside this environment.
+  2. **FirebaseGameManager-orchestration emulator tests** (version monotonicity, two-manager
+     convergence, `startNextGame` version carry-forward) — deferred: they need a signed-in
+     **Auth-emulator** context so the strict rules permit the manager's writes, best authored
+     with a live emulator to iterate. `tests/unit/firebase-sync.test.ts` still covers the pure
+     conflict-resolution decision.
+
+#### Security Implementation (original draft — now realized in `database.rules.json`):
 ```javascript
 // Firebase Security Rules
 {
