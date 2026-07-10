@@ -1,6 +1,8 @@
 // src/lib/auth.ts
 import {
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider,
   signOut,
   onAuthStateChanged,
@@ -62,7 +64,15 @@ const createDefaultStats = () => ({
 let currentUser: PepperUser | null = null;
 const authStateListeners: ((_user: PepperUser | null) => void)[] = [];
 
-// Google sign-in
+const buildGoogleProvider = (): GoogleAuthProvider => {
+  const provider = new GoogleAuthProvider();
+  provider.addScope('profile');
+  provider.addScope('email');
+  return provider;
+};
+
+// Google sign-in via popup. Works on desktop (all browsers), but iOS Safari blocks the OAuth
+// popup — use the redirect flow there (see prefersRedirectSignIn / signInWithGoogleRedirect).
 export const signInWithGoogle = async (): Promise<PepperUser | null> => {
   if (!isFirebaseConfigured()) {
     console.warn('Firebase not configured. Cannot sign in.');
@@ -73,21 +83,52 @@ export const signInWithGoogle = async (): Promise<PepperUser | null> => {
     const auth = getFirebaseAuth();
     if (!auth) throw new Error('Firebase Auth not initialized');
 
-    const provider = new GoogleAuthProvider();
-    provider.addScope('profile');
-    provider.addScope('email');
-
-    // Simple popup authentication works in all browsers when domains are properly configured
-    const result = await signInWithPopup(auth, provider);
-    const user = result.user;
-
-    // Create or update user in database
-    const pepperUser = await createOrUpdateUser(user);
+    const result = await signInWithPopup(auth, buildGoogleProvider());
+    const pepperUser = await createOrUpdateUser(result.user);
     return pepperUser;
   } catch (error) {
     console.error('Error signing in with Google:', error);
     return null;
   }
+};
+
+// Google sign-in via full-page redirect. Preferred on mobile (especially iOS Safari, which blocks
+// the OAuth popup). This NAVIGATES AWAY; the result is picked up by completeRedirectSignIn() when
+// the browser returns to the app on the next load. Throws so the caller can fall back if needed.
+export const signInWithGoogleRedirect = async (): Promise<void> => {
+  if (!isFirebaseConfigured()) return;
+  const auth = getFirebaseAuth();
+  if (!auth) throw new Error('Firebase Auth not initialized');
+  await signInWithRedirect(auth, buildGoogleProvider());
+};
+
+// Deprecated name kept for older call sites (was referenced but never defined).
+export const signInWithGoogleAlternative = signInWithGoogleRedirect;
+
+// Call on page load to complete a pending redirect sign-in. Returns the user if a redirect just
+// resolved, else null. Safe to call on every load (getRedirectResult is null when none pending).
+export const completeRedirectSignIn = async (): Promise<PepperUser | null> => {
+  if (!isFirebaseConfigured()) return null;
+  const auth = getFirebaseAuth();
+  if (!auth) return null;
+  try {
+    const result = await getRedirectResult(auth);
+    if (result?.user) return await createOrUpdateUser(result.user);
+  } catch (error) {
+    console.error('Error completing redirect sign-in:', error);
+  }
+  return null;
+};
+
+// Should this device use the redirect flow instead of the popup? iOS (incl. iPadOS reporting as
+// Mac) and Android block or mishandle the OAuth popup; redirect (full-page navigation) is reliable.
+export const prefersRedirectSignIn = (): boolean => {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const iOS = /iPhone|iPad|iPod/.test(ua) ||
+    (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+  const android = /Android/.test(ua);
+  return iOS || android;
 };
 
 

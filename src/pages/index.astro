@@ -192,7 +192,7 @@ import ResumeGameModal from '../components/resume-modal.astro';
 <script>
   import { GameManager } from '../lib/gameState';
   import { getPath } from '../lib/path-utils';
-  import { signInWithGoogle, signOutUser, onAuthStateChange, getCurrentUser, searchUsers } from '../lib/auth';
+  import { signInWithGoogle, signInWithGoogleRedirect, completeRedirectSignIn, prefersRedirectSignIn, signOutUser, onAuthStateChange, getCurrentUser, searchUsers } from '../lib/auth';
 
   // Check for unfinished game on load
   document.addEventListener('DOMContentLoaded', async () => {
@@ -481,6 +481,10 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
   // Set up auth state listener
   onAuthStateChange(updateAuthUI);
 
+  // Complete a pending redirect sign-in (mobile flow returns here after Google). The auth-state
+  // listener updates the UI once it resolves; getRedirectResult is a no-op when none is pending.
+  completeRedirectSignIn().catch((err) => console.error('Redirect sign-in completion failed:', err));
+
   // Check current user on load
   const currentUser = getCurrentUser();
   if (currentUser) {
@@ -527,6 +531,15 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
           authSection.appendChild(loadingDiv);
         }
 
+        // Mobile (esp. iOS Safari) blocks the OAuth popup — use a full-page redirect. This
+        // navigates away and returns to this page, where completeRedirectSignIn() (on load)
+        // finishes the sign-in. Nothing after this runs (the page unloads).
+        if (prefersRedirectSignIn()) {
+          signInBtn.textContent = 'Redirecting to Google…';
+          await signInWithGoogleRedirect();
+          return;
+        }
+
         const user = await signInWithGoogle();
 
         // Clean up loading state
@@ -539,9 +552,7 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
           // Success will be handled by the auth state change listener
           // No need to reset UI here - it will update automatically
         } else {
-          // Sign-in was cancelled or failed
-
-          // Restore the original sign-in UI
+          // Sign-in was cancelled or failed — restore the original sign-in UI.
           if (loggedOutSection) {
             loggedOutSection.style.display = 'block';
           }
@@ -550,34 +561,21 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
         }
       } catch (error) {
         console.error('Error signing in:', error);
-        console.log('Error details:', {
-          message: error.message,
-          stack: error.stack,
-          code: error.code
-        });
 
-        signInBtn.disabled = false;
-        signInBtn.textContent = 'Sign in with Google';
-
-        // Show user-friendly error message with workaround options
-        const message = `Google Sign-In failed in Safari/DuckDuckGo.\n\nOptions:\n1. Use Chrome (works perfectly)\n2. Continue without authentication (local-only mode)\n3. Try alternative auth method\n\nWhat would you like to do?`;
-
-        const choice = prompt(message + '\n\nEnter 1, 2, or 3:', '2');
-
-        if (choice === '1') {
-          alert('Please open this app in Chrome for the best authentication experience.');
-        } else if (choice === '2') {
-          console.log('User chose to continue without authentication');
-          alert('Continuing in local-only mode. Your games will be saved locally but not synced across devices.');
-        } else if (choice === '3') {
-          try {
-            const { signInWithGoogleAlternative } = await import('../lib/auth');
-            const result = await signInWithGoogleAlternative();
-            console.log('Alternative sign-in result:', result);
-          } catch (alternativeError) {
-            console.error('Alternative sign-in also failed:', alternativeError);
-            alert('Alternative method also failed. Please use Chrome or continue in local-only mode.');
-          }
+        // Popup failed (blocked, COOP, etc.) — fall back to the redirect flow, which navigates
+        // the whole page and is far more robust. This is the automatic recovery path.
+        try {
+          signInBtn.textContent = 'Redirecting to Google…';
+          await signInWithGoogleRedirect();
+          return;
+        } catch (redirectError) {
+          console.error('Redirect sign-in also failed:', redirectError);
+          if (loggedOutSection) loggedOutSection.style.display = 'block';
+          const loadingDiv = document.getElementById('auth-loading');
+          if (loadingDiv) loadingDiv.remove();
+          signInBtn.disabled = false;
+          signInBtn.textContent = 'Sign in with Google';
+          alert('Google sign-in failed. Please try again, or use another browser.');
         }
       } finally {
         // Allow a fresh attempt once this one settles (success transitions the UI via the auth
