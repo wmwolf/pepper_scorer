@@ -25,6 +25,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </div>
   </div>
 
+  <!-- Player Identity Badge (Phase 8 multiplayer) -->
+  <div id="player-identity" class="hidden mb-4 px-3 py-2 rounded-lg border text-sm flex items-center gap-2"></div>
+
   <!-- Score Display -->
   <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
     <!-- Mobile Layout -->
@@ -434,8 +437,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     try {
       // Import Firebase dependencies
       const { FirebaseGameManager } = await import('../lib/firebaseGameState');
-      const { getCurrentUser } = await import('../lib/auth');
+      const { getCurrentUser, onAuthStateChange } = await import('../lib/auth');
       const { isFirebaseConfigured } = await import('../lib/firebase');
+      const { teamOfSeat } = await import('../lib/multiplayer');
 
       if (!isFirebaseConfigured()) {
         // Not an error: run in local-only mode using localStorage.
@@ -478,6 +482,39 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
       // Initial optimistic status (monitorConnection will correct this on its first tick).
       updateConnectionStatus('connected', 'Synced with cloud');
+
+      // Render the "you are seat N" identity badge, and re-render whenever auth resolves
+      // (getCurrentUser() is often null on first paint until onAuthStateChanged fires).
+      const renderPlayerIdentity = () => {
+        const badge = document.getElementById('player-identity');
+        if (!badge) return;
+
+        const user = getCurrentUser();
+        if (!user) {
+          // Signed out: no seat identity to show (playing on a shared device).
+          badge.classList.add('hidden');
+          return;
+        }
+
+        const seat = firebaseGame.getMySeat();
+        badge.classList.remove('hidden');
+
+        if (seat === null) {
+          badge.className = 'mb-4 px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-gray-600 text-sm flex items-center gap-2';
+          badge.innerHTML = '<span>👀</span><span>Spectating — you are not seated in this game.</span>';
+          return;
+        }
+
+        const players = firebaseGame.getFirebasePlayers();
+        const name = players[seat]?.displayName || firebaseGame.state.players[seat] || 'You';
+        const teamIndex = teamOfSeat(seat);
+        const teamName = firebaseGame.state.teams[teamIndex] || `Team ${teamIndex + 1}`;
+        badge.className = 'mb-4 px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-sm flex items-center gap-2';
+        badge.innerHTML = `<span>🎴</span><span>You are <strong>${name}</strong> · Seat ${seat + 1} · ${teamName}</span>`;
+      };
+
+      renderPlayerIdentity();
+      onAuthStateChange(() => renderPlayerIdentity());
 
       // Show manual sync button. Now safe: forceSyncToFirebase runs the same
       // version-guarded transaction as automatic syncs and can never revert newer state.

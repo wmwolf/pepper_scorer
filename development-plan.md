@@ -218,21 +218,44 @@ userGames/{userId}/{gameId}: true  // Quick lookup for active games
 
 **Still TODO for a later hardening pass:** richer reconnect UX (e.g. surfacing queued-write count), and automated coverage of the DOM/listener wiring (currently manual).
 
-### Phase 8: Mobile Bidding Interface
+### Phase 8: Mobile Bidding Interface 🚧 (in progress)
 **Goal**: Players can bid via their phones
 
-#### Bidding Flow:
-1. Host creates game → generates gameId
-2. Players join via username lookup or room code
-3. When bidding phase starts, authenticated players see bid interface
-4. Bids revealed in dealer order with re-prompt for matched bids
-5. Trump selection by bid winner
-6. Automatic fallback to manual mode if any player disconnects
+#### Chosen bidding model (decided 2026-07-09): hybrid sequential auction with optimistic pre-commit
+The **live sequential ascending auction is the source of truth** (start left of the dealer,
+each player bids higher or passes, auction ends when three pass; pepper rounds auto-bid 4 for
+the player left of the dealer). On top of that sits an **optimistic pre-commit layer**:
+- A player may lock in a bid **out of turn** (most often a pass) so they can step away. Their
+  screen then shows only "bid logged" — the value is hidden so a phone left in view doesn't
+  leak it. The pre-committed bid stays **editable until the auction pointer passes that seat**.
+- Alternatively a player may **wait** and bid in sequence; the bid screen indicates whose turn
+  it currently is, with a directional arrow to that seat **relative to the viewer** (partner =
+  across, opponents = left/right).
+- When the pointer reaches a seat with a pre-committed bid, it is applied automatically. A
+  numeric pre-bid that is no longer valid (someone already met/exceeded it) **auto-passes**
+  (we cannot reliably re-prompt an absent player). This edge rule may be refined after testing.
+- Winner picks trump; defending team then gets the play/fold/negotiate decision.
+
+#### Session sequencing (decided 2026-07-09): foundation first, then the auction
+- **8a — foundation (model-agnostic), build + commit incrementally:**
+  1. In-game player identity: resolve signed-in user → seat via `games/{id}/players[].userId`;
+     spectator if not a participant. Surface "You are {name} (Seat N, {team})".
+  2. Turn-gating framework + waiting states, applied first to the phases that map cleanly to a
+     real player and survive the auction rework: **trump → bid winner**, **decision → defending
+     team**, **tricks → bidder/scorekeeper**. `bidder`/`bid` stay open to all participants until
+     8b replaces them with the auction. Spectators are always read-only.
+  3. Presence tracking (`games/{id}/presence/{uid}` via `onDisconnect`) + a "play this manually"
+     override when the responsible player is offline → automatic fallback to manual mode.
+  4. Room-code display (shareable) + join-by-room-code (`findGameByRoomCode`, needs an
+     `.indexOn` on `metadata/roomCode` — fold into Phase 11 rules).
+- **8b — the hybrid auction itself**, writing/consuming the `bidding` sub-tree declared on
+  `FirebaseGameData` (currently an empty scaffold), integrated into the 8a turn-gating framework
+  and feeding the resulting `bidWinner`+`bid` into the existing hand encoding.
 
 #### Mobile UI Components:
 - Responsive bid selection interface
 - Trump selection with suit symbols
-- "Waiting for your turn" states
+- "Waiting for your turn" states (with relative-seat directional indicator)
 - Real-time connection status
 - Game viewer mode for non-participants
 

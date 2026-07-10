@@ -4,6 +4,7 @@ import { getFirebaseDatabase, isFirebaseConfigured } from './firebase';
 import { getCurrentUser } from './auth';
 import { GameManager, type GameState } from './gameState';
 import { getPath } from './path-utils';
+import { resolveSeat } from './multiplayer';
 
 export interface FirebaseGameMetadata {
   createdBy: string;
@@ -64,6 +65,12 @@ export class FirebaseGameManager extends GameManager {
   private seriesListener: (() => void) | null = null;
   private connectionListener: (() => void) | null = null;
   private online = true;
+
+  // Phase 8 multiplayer identity: the full player roster (with userId/position) and the
+  // room code, kept alongside the display-name-only GameState.players so we can answer
+  // "which seat is the signed-in user?" and surface a shareable room code.
+  private firebasePlayers: FirebaseGamePlayer[] = [];
+  private roomCode: string | null = null;
 
   constructor(players: string[], teams: [string, string], gameId?: string) {
     super(players, teams);
@@ -172,13 +179,14 @@ export class FirebaseGameManager extends GameManager {
     }
 
     try {
+      const roomCode = generateRoomCode();
       // Create game data
       const gameData: FirebaseGameData = {
         metadata: {
           createdBy: gameCreator,
           createdAt: Date.now(),
           status: 'setup',
-          roomCode: generateRoomCode()
+          roomCode
         },
         players: this.state.players.map((playerName, index) => {
           const authPlayer = authenticatedPlayers.find(p => p.position === index);
@@ -203,6 +211,8 @@ export class FirebaseGameManager extends GameManager {
       // Set this instance as Firebase-enabled
       this.gameId = gameId;
       this.state.firebaseGameId = gameId;
+      this.firebasePlayers = gameData.players;
+      this.roomCode = roomCode;
 
       // Add to creator's active games
       const userGameRef = ref(database, `userGames/${gameCreator}/${gameId}`);
@@ -349,6 +359,10 @@ export class FirebaseGameManager extends GameManager {
         players: gameData.gameState?.players || gameData.players?.map(p => p.displayName) || [],
         teams: gameData.gameState?.teams || gameData.teams || ['Team 1', 'Team 2']
       };
+
+      // Preserve the full player roster and room code for the multiplayer identity layer.
+      manager.firebasePlayers = gameData.players || [];
+      manager.roomCode = gameData.metadata?.roomCode || null;
 
       // Check if this game is part of a series
       if (gameData.metadata.seriesId) {
@@ -503,6 +517,31 @@ export class FirebaseGameManager extends GameManager {
   // Check if this is a Firebase game
   public isFirebaseGame(): boolean {
     return this.gameId !== null && isFirebaseConfigured();
+  }
+
+  // Multiplayer identity (Phase 8)
+  // ===============================
+
+  // The full player roster (with userId/position), as loaded from Firebase.
+  public getFirebasePlayers(): FirebaseGamePlayer[] {
+    return this.firebasePlayers;
+  }
+
+  // Shareable room code for this game (null for local games or older records).
+  public getRoomCode(): string | null {
+    return this.roomCode;
+  }
+
+  // The 0-based seat of the currently signed-in user, or null if they are not seated
+  // (a spectator, or not signed in). Used to gate turn-based controls and to render
+  // "you are seat N" / relative-direction indicators.
+  public getMySeat(): number | null {
+    return resolveSeat(this.firebasePlayers, getCurrentUser()?.uid ?? null);
+  }
+
+  // Is the signed-in user one of the four seated players?
+  public isParticipant(): boolean {
+    return this.getMySeat() !== null;
   }
 
   // Public method to force sync current state to Firebase
