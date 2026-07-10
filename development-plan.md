@@ -309,6 +309,18 @@ the player left of the dealer). On top of that sits an **optimistic pre-commit l
 }
 ```
 
+**Phase 8 additions the rules must account for (added while building 8a):**
+- **`games` needs `".indexOn": ["metadata/roomCode"]`.** `FirebaseGameManager.findGameByRoomCode`
+  queries `/games` ordered by `metadata/roomCode`; without the index Firebase downloads all
+  of `/games` and logs a warning.
+- **New per-game child nodes**: `games/{id}/presence/{uid}` (online tracking, written by each
+  present player via `onDisconnect`) and `games/{id}/bidding` (the 8b auction sub-tree). Both
+  need to be writable by any *seated* player, not just `metadata/createdBy`.
+- **The `.write` rule above is too strict for multiplayer**: turn-based bidding and per-seat
+  scoring require every seated player to write `gameState`/`bidding`/`presence`, so the rule
+  must widen from "creator only" to "any authenticated user listed in `players`" (while still
+  protecting `metadata`). Reconcile this when writing `database.rules.json`.
+
 #### Production Features:
 - Error monitoring and logging
 - Performance optimization

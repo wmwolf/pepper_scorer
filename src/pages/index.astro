@@ -42,6 +42,26 @@ import ResumeGameModal from '../components/resume-modal.astro';
             <!-- Active games will be populated here -->
           </div>
         </div>
+
+        <!-- Join by Room Code (Phase 8) -->
+        <div id="join-room-section" class="mt-4">
+          <h3 class="text-blue-800 font-medium mb-2">Join a Game by Room Code</h3>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <input
+              id="room-code-input"
+              type="text"
+              inputmode="text"
+              autocomplete="off"
+              maxlength="6"
+              placeholder="e.g. AB12CD"
+              class="flex-1 px-3 py-2 border border-blue-200 rounded-md uppercase tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            <button id="join-room-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50">
+              Join
+            </button>
+          </div>
+          <p id="join-room-error" class="text-red-600 text-sm mt-1 hidden"></p>
+        </div>
       </div>
     </div>
 
@@ -189,6 +209,9 @@ import ResumeGameModal from '../components/resume-modal.astro';
 
       // Setup user autocomplete for player inputs
       setupUserAutocomplete();
+
+      // Setup "join by room code" (Phase 8)
+      setupJoinByRoomCode();
 
     } catch (error) {
       console.error('Error during initialization:', error);
@@ -769,6 +792,49 @@ function setupUserAutocomplete() {
 
   // Make selectedUsers accessible for game creation
   window.getSelectedUsers = () => selectedUsers;
+}
+
+// Join a game by its shareable room code (Phase 8).
+function setupJoinByRoomCode() {
+  const input = document.getElementById('room-code-input');
+  const btn = document.getElementById('join-room-btn');
+  const errorEl = document.getElementById('join-room-error');
+  if (!input || !btn) return;
+
+  const showError = (msg) => {
+    if (errorEl) { errorEl.textContent = msg; errorEl.classList.remove('hidden'); }
+  };
+  const clearError = () => { if (errorEl) errorEl.classList.add('hidden'); };
+
+  const join = async () => {
+    const code = (input.value || '').trim().toUpperCase();
+    clearError();
+    if (code.length < 4) { showError('Enter a valid room code.'); return; }
+
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Joining…';
+    try {
+      const { isFirebaseConfigured } = await import('../lib/firebase');
+      if (!isFirebaseConfigured()) { showError('Cloud play is not available right now.'); return; }
+
+      const { FirebaseGameManager } = await import('../lib/firebaseGameState');
+      const gameId = await FirebaseGameManager.findGameByRoomCode(code);
+      if (!gameId) { showError('No game found with that room code.'); return; }
+
+      window.location.href = getPath(`/game?id=${gameId}`);
+    } catch (e) {
+      console.error('Error joining by room code:', e);
+      showError('Something went wrong. Please try again.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
+  };
+
+  btn.addEventListener('click', join);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); join(); } });
+  input.addEventListener('input', clearError);
 }
 
 // Load active games for signed-in user

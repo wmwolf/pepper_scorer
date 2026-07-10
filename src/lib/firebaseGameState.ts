@@ -1,5 +1,5 @@
 // src/lib/firebaseGameState.ts
-import { ref, set, get, push, onValue, off, remove, onDisconnect, runTransaction, type DatabaseReference } from 'firebase/database';
+import { ref, set, get, push, onValue, off, remove, onDisconnect, query, orderByChild, equalTo, runTransaction, type DatabaseReference } from 'firebase/database';
 import { getFirebaseDatabase, isFirebaseConfigured } from './firebase';
 import { getCurrentUser } from './auth';
 import { GameManager, type GameState } from './gameState';
@@ -316,6 +316,35 @@ export class FirebaseGameManager extends GameManager {
     } catch (error) {
       console.error('Error creating Firebase game:', error);
       return new FirebaseGameManager(players, teams);
+    }
+  }
+
+  // Resolve a shareable room code to its game id, so players can join by code instead of
+  // a raw push id. Room codes are effectively unique; the first match is returned.
+  //
+  // NOTE (Phase 11 rules): this query orders by the nested `metadata/roomCode`. Add
+  //   "games": { ".indexOn": ["metadata/roomCode"] }
+  // to database.rules.json — without the index Firebase falls back to a full download of
+  // /games and logs a warning.
+  static async findGameByRoomCode(roomCode: string): Promise<string | null> {
+    if (!isFirebaseConfigured() || !roomCode) return null;
+
+    const database = getFirebaseDatabase();
+    if (!database) return null;
+
+    try {
+      const code = roomCode.trim().toUpperCase();
+      const gamesRef = ref(database, 'games');
+      const snapshot = await get(query(gamesRef, orderByChild('metadata/roomCode'), equalTo(code)));
+
+      if (!snapshot.exists()) return null;
+
+      const matches = snapshot.val() as Record<string, unknown>;
+      const ids = Object.keys(matches);
+      return ids[0] || null;
+    } catch (error) {
+      console.error('Error finding game by room code:', error);
+      return null;
     }
   }
 

@@ -28,6 +28,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <!-- Player Identity Badge (Phase 8 multiplayer) -->
   <div id="player-identity" class="hidden mb-4 px-3 py-2 rounded-lg border text-sm flex items-center gap-2"></div>
 
+  <!-- Room Code (Phase 8): shareable code so others can join this game -->
+  <div id="room-code-chip" class="hidden mb-4 px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-gray-700 text-sm flex items-center gap-2">
+    <span>🔑</span>
+    <span>Room code: <strong id="room-code-value" class="tracking-widest"></strong></span>
+    <button id="room-code-copy" class="ml-1 px-2 py-0.5 text-xs rounded bg-gray-200 hover:bg-gray-300 transition-colors">Copy</button>
+  </div>
+
   <!-- Score Display -->
   <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
     <!-- Mobile Layout -->
@@ -527,6 +534,27 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         badge.className = 'mb-4 px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-sm flex items-center gap-2';
         badge.innerHTML = `<span>🎴</span><span>You are <strong>${name}</strong> · Seat ${seat + 1} · ${teamName}</span>`;
       };
+
+      // Surface the shareable room code (static for the life of the game).
+      const roomCode = firebaseGame.getRoomCode();
+      if (roomCode) {
+        const chip = document.getElementById('room-code-chip');
+        const valueEl = document.getElementById('room-code-value');
+        const copyBtn = document.getElementById('room-code-copy');
+        if (valueEl) valueEl.textContent = roomCode;
+        if (chip) chip.classList.remove('hidden');
+        if (copyBtn) {
+          copyBtn.addEventListener('click', async () => {
+            try {
+              await navigator.clipboard?.writeText(roomCode);
+              copyBtn.textContent = 'Copied!';
+              setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+            } catch {
+              copyBtn.textContent = roomCode;
+            }
+          });
+        }
+      }
 
       // Begin presence tracking (announce this client, watch who else is online). Safe to
       // call now and again on auth changes; it re-announces once a user is known.
