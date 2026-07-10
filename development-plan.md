@@ -236,31 +236,44 @@ optional pre-picked trump) are implemented, CI-green, and verified in-browser by
 - Security rules (Phase 11) must cover the new `presence`/`bidding` nodes and the
   `metadata/roomCode` index, and widen `.write` to any seated player — see the Phase 11 note.
 
-#### Requested 8b refinements (2026-07-10 — NOT yet built; needs a follow-up session)
-User feedback after the first 8b pass. These change the auction interaction model, so treat
-them as a redesign of `auction.ts` + the auction UI, not a tweak. **Confirm the open question
-below before building.**
+#### 8b redesign spec (2026-07-10 — CONFIRMED with user; build in a FRESH session, NOT yet built)
+A rewrite of `auction.ts` + the Firebase auction wiring + the auction UI — **not** a tweak. It
+**supersedes the sequential-turn auction** (commits 8b-1…8b-4) and the trump-as-part-of-bid
+change (`cfff20c`). The current sequential-turn model must be consciously discarded.
 
-1. **Decouple bid entry from trump.** Entering a bid value must **advance control to the next
-   bidder immediately** — the current build blocks control until trump is picked (bid+trump
-   submit together). Trump becomes a *separate*, deferrable choice.
-2. **Trump: deferrable + editable, masked.** After bidding, a masked **"Edit trump"** button
-   lets a player set/change their trump at any time until they are outbid or the winner is
-   decided. It must **not display** the current trump (phone may be face-up on the table). A
-   pre-set (out-of-turn) trump is likewise editable until it locks.
-3. **Bid: masked + editable, revealed in dealer order.** A player's bid value stays hidden on
-   their own device ("bid logged") after entry, with a masked **"Edit bid"** button to reopen
-   the bidding interface, until the bid **locks** — which happens as the dealer-order reveal
-   reaches them (i.e., once the neighbor who bids just before them is revealed). Bids reveal
-   progressively in dealer order; the auto-pass rule resolves anything no longer high.
-4. **OPEN QUESTION that drives the engine** — while a later player decides, do they see the
-   **running high** (true ascending auction; "you've been outbid" is meaningful) or are bids
-   **fully sealed** until the reveal (enter blind, reveal-in-order resolves, ties to earlier
-   seat)? The feedback points both ways. Leading interpretation: **running high is public, but
-   each individual bid value is masked on-device** until its dealer-order reveal. Get a decision
-   before implementing.
-5. Note: this **supersedes** the "trump is chosen as part of the bid / no decide-later" commit
-   (`cfff20c`) — that coupling is exactly what refinement #1 undoes.
+- **Concurrent entry.** After the deal, *all four* players may enter a bid at any time, in any
+  order. There is **no turn-gating on entry** — drop the "currentBidderSeat / it's your turn"
+  pointer entirely. A player enters a bid value (4/5/6/M/D) or Pass.
+- **Reveal = dealer-order prefix.** Order is dealer's-left first, clockwise, dealer last. A bid
+  is revealed to all once it has been entered AND every player *ahead* of it in that order is
+  already revealed — i.e. reveal the maximal prefix in which everyone has entered. Entering the
+  first still-missing player can cascade-reveal several already-entered later players at once.
+- **Hidden until revealed** — from everyone, *including the author* (shows only "bid logged"
+  on-device; phones may be face-up on the table).
+- **Edit bid; lock trigger = the *next* player's reveal.** An "Edit bid" button reopens the menu
+  (never showing the current value) to change/re-enter the bid. A bid stays editable until the
+  player who bids *after* them (successor in dealer order) has their bid **revealed**. Rationale
+  (user): mirrors oral bidding — freely fix a genuine misspeak ("4, er, 6"), but once the next
+  player's bid is on the table, changing yours would be abusing that knowledge, so you lock at
+  that moment. **This intentionally means a bid can stay editable for a window *after* it is
+  already revealed to the table** (you reveal at your slot; you lock when your successor
+  reveals) — that's the audible-correction case, and it's wanted. Edge case: the last player
+  (dealer) has no successor → lock on auction completion (their own reveal).
+- **Resolution.** At/after reveal, a revealed bid whose value is ≤ the current revealed high
+  becomes a Pass (auto-pass); equal bids go to the earlier seat. Because a revealed bid may still
+  be edited until its successor reveals, resolution is provisional until locks settle.
+- **Trump, decoupled + masked.** Entering a *non-pass* bid immediately shows a trump menu — it
+  does **not** block the bid (already entered) or anyone else. The menu stays until the player
+  picks a trump OR is revealed to be outbid, whichever first. After picking, a masked **"Edit
+  trump"** button allows changes until they are revealed as the winner (or outbid); it never
+  displays the current trump. A Pass has no trump. A winner who never picked keeps the trump menu
+  until they do — this replaces the separate gated trump phase *for auction hands*.
+- **Completion → hand.** Once all four are revealed and resolved and the winner has a trump, feed
+  winner + winning bid + trump into the hand encoding (bidder+bid+trump → decision phase); a
+  throw-in if all passed. If the winner hasn't picked trump yet, the hand waits on their pick.
+- **Unchanged:** pepper rounds bypass the auction (auto-bid); 8a turn-gating still drives
+  decision/tricks. A seat that never enters a bid **stalls** the auction → ties into the
+  mixed-device / presence feature below (a central device may need to enter for absent seats).
 
 #### Requested feature: mixed phone / non-phone players (2026-07-10 — NOT built)
 Today the auction is all-or-nothing: it activates only when **all four seats are
