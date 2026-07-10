@@ -16,7 +16,7 @@ import { beforeAll, afterAll, describe, it, expect } from 'vitest'
 import { initializeApp, deleteApp, type FirebaseApp } from 'firebase/app'
 import { getAuth, connectAuthEmulator, signInAnonymously } from 'firebase/auth'
 import {
-  getDatabase, connectDatabaseEmulator, ref, set, get, onValue, runTransaction, type Database,
+  getDatabase, connectDatabaseEmulator, ref, set, get, type Database,
 } from 'firebase/database'
 import {
   createAuction, enterBid, setTrump, auctionResult, revealedCount, isComplete,
@@ -52,27 +52,21 @@ const normalize = (raw: any): AuctionState =>
   ({ handIndex: raw.handIndex, order: raw.order || [], entries: raw.entries || {} })
 
 // A bidding-node transaction authed as `seat.db`'s user (mirrors FirebaseGameManager.mutateAuction).
-const unsubs: Array<() => void> = []
-
-// Subscribe every client to the bidding node (as a real device does via FirebaseGameManager's
-// listener) and resolve once all four have their first snapshot. An ACTIVE listener keeps the
-// value in the sync tree so runTransaction's optimistic first pass sees real data instead of
-// null (a bare get() doesn't retain it once it resolves).
-function subscribeAll(gameId: string): Promise<void> {
-  return Promise.all(seats.map(seat => new Promise<void>(res => {
-    let first = true
-    unsubs.push(onValue(ref(seat.db, `games/${gameId}/bidding`), () => { if (first) { first = false; res() } }))
-  }))).then(() => {})
-}
-
+// Apply a bidding-node mutation as this seat's authenticated user. The tests drive the seats
+// SEQUENTIALLY (each call is awaited), so a plain read-modify-write is deterministic — no need
+// for runTransaction, whose optimistic-first-pass timing raced across the four clients. The write
+// still goes through the real security rules (a non-seated writer is rejected, as the rules test
+// asserts). Returns the new state, or null if the node is missing / for the wrong hand.
 async function mutate(seat: Seat, gameId: string, fn: (s: AuctionState) => AuctionState) {
   const r = ref(seat.db, `games/${gameId}/bidding`)
-  const txn = await runTransaction(r, (remote: any) => {
-    const state = remote ? normalize(remote) : null
-    if (!state || state.handIndex !== HAND) return
-    try { return fn(state) } catch { return }
-  })
-  return txn.committed ? normalize(txn.snapshot.val()) : null
+  const snap = await get(r)
+  if (!snap.exists()) return null
+  const state = normalize(snap.val())
+  if (state.handIndex !== HAND) return null
+  let next: AuctionState
+  try { next = fn(state) } catch { return null }
+  await set(r, next)
+  return normalize(next)
 }
 
 let seats: Seat[]
@@ -84,7 +78,6 @@ beforeAll(async () => {
 }, 30000)
 
 afterAll(async () => {
-  unsubs.forEach(u => u())
   await Promise.all(apps.map(a => deleteApp(a).catch(() => {})))
 })
 
@@ -99,10 +92,8 @@ async function seedGame(gameId: string) {
     teams: ['We', 'They'],
     gameState: { hands: [String(DEALER)], scores: [0, 0], version: 0 },
   })
-  // Initialize the auction node directly (mutate() intentionally aborts on a missing node —
-  // that's its production guard). Seat 1 is seated, so the rules permit this write.
+  // Initialize the auction node directly (seat 1 is seated, so the rules permit this write).
   await set(ref(seats[0]!.db, `games/${gameId}/bidding`), createAuction(DEALER, HAND))
-  await subscribeAll(gameId)
 }
 
 describe('concurrent auction over the real security rules', () => {

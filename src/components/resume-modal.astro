@@ -53,10 +53,7 @@ const { isVisible } = Astro.props;
       hand.length === 6 || (hand.length >= 2 && hand[1] === '0')
     ).length;
 
-    console.log('Game data in modal:', gameData);
-    console.log('startTime:', gameData.startTime);
     const startDate = new Date(gameData.startTime);
-    console.log('parsed date:', startDate);
 
     content.innerHTML = `
       <p class="text-gray-600">

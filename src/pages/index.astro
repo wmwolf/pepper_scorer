@@ -487,19 +487,7 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
     updateAuthUI(currentUser);
   }
 
-  // Sign in button - with comprehensive debugging and multiple approaches
-      console.log('Sign-in button properties:', {
-    id: signInBtn?.id,
-    className: signInBtn?.className,
-    disabled: signInBtn?.disabled,
-    style: signInBtn?.style?.cssText,
-    parentElement: signInBtn?.parentElement?.tagName
-  });
-  console.log('Browser info:', {
-    userAgent: navigator.userAgent,
-    isSafari: /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
-  });
-
+  // Sign in button
   if (signInBtn) {
     // Guard against overlapping sign-in attempts. Previously the button was bound THREE ways
     // (addEventListener + .onclick + a document-level click delegation), so a single tap fired
