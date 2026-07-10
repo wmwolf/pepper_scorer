@@ -219,12 +219,14 @@ export class FirebaseGameManager extends GameManager {
         gameState: this.state
       };
 
-      // Save to Firebase
+      // Save to Firebase. RTDB rejects `undefined`, so strip it — an unlinked player seat has
+      // `userId: undefined`, which would otherwise fail the whole write (mixed phone/non-phone
+      // games are the normal case).
       const gamesRef = ref(database, 'games');
       const newGameRef = push(gamesRef);
       const gameId = newGameRef.key!;
 
-      await set(newGameRef, gameData);
+      await set(newGameRef, JSON.parse(JSON.stringify(gameData)));
 
       // Set this instance as Firebase-enabled
       this.gameId = gameId;
@@ -304,12 +306,12 @@ export class FirebaseGameManager extends GameManager {
         }
       };
 
-      // Save to Firebase
+      // Save to Firebase (strip undefined — unlinked player seats have userId: undefined).
       const gamesRef = ref(database, 'games');
       const newGameRef = push(gamesRef);
       const gameId = newGameRef.key!;
 
-      await set(newGameRef, gameData);
+      await set(newGameRef, JSON.parse(JSON.stringify(gameData)));
 
       // Add to user's active games
       const userGameRef = ref(database, `userGames/${currentUser.uid}/${gameId}`);

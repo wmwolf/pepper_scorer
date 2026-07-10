@@ -36,8 +36,14 @@ Then:
 3. Play. You'll see host gating (host enters decisions; others get **Enter this myself**), the
    presence fallback, and — once all four are signed in — the per-seat concurrent auction.
 
+## Fake accounts persist across restarts
+`dev:emulator` saves the emulator's Auth + DB state to `./emulator-data/` on exit and reloads it
+next time (via `--export-on-exit` / `--import`, and `emulator-data/` is git-ignored). So you only
+create your four fake accounts **once** — click **Add new account** for each on the first run,
+`Ctrl-C`, and every later `dev:emulator` starts with them already signed-up. Delete `emulator-data/`
+to reset to a clean slate.
+
 ## Notes
-- Emulator data is in-memory and wiped when you stop `dev:emulator` — every run is a clean slate.
 - The emulators run project `pepper-scorer` (from `.firebaserc`), matching `.env`, so namespaces
   line up. Nothing here reaches the live database.
 - For a fully automated (headless) check of the auction over the real rules, see

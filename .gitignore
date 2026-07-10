@@ -19,6 +19,7 @@ database-debug.log*
 firestore-debug.log*
 ui-debug.log*
 .firebase/
+emulator-data/
 
 # Environment variables
 .env

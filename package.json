@@ -11,7 +11,7 @@
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
     "test:emulator": "firebase emulators:exec --only auth,database --project demo-pepper \"vitest run --config vitest.emulator.config.ts\"",
-    "dev:emulator": "firebase emulators:exec --only auth,database \"PUBLIC_FIREBASE_EMULATOR=true npm run dev\"",
+    "dev:emulator": "firebase emulators:exec --only auth,database $([ -d ./emulator-data ] && echo --import=./emulator-data) --export-on-exit=./emulator-data \"PUBLIC_FIREBASE_EMULATOR=true npm run dev\"",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts"
   },

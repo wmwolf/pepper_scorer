@@ -166,8 +166,10 @@ const createOrUpdateUser = async (firebaseUser: User): Promise<PepperUser> => {
     };
   }
 
-  // Save to database
-  await set(userRef, pepperUser);
+  // Save to database. RTDB rejects `undefined` values, so drop any unset optional fields
+  // (e.g. photoURL/email for an account with no photo) before writing — a Google account
+  // without a photo would otherwise fail to save its profile.
+  await set(userRef, JSON.parse(JSON.stringify(pepperUser)));
 
   currentUser = pepperUser;
   notifyAuthStateListeners(pepperUser);

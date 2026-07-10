@@ -18,7 +18,7 @@ export default defineConfig({
       PUBLIC_FIREBASE_EMULATOR: 'true',
       PUBLIC_FIREBASE_API_KEY: 'demo-key',
       PUBLIC_FIREBASE_AUTH_DOMAIN: 'demo-pepper.firebaseapp.com',
-      PUBLIC_FIREBASE_DATABASE_URL: 'http://127.0.0.1:9000?ns=demo-pepper',
+      PUBLIC_FIREBASE_DATABASE_URL: 'https://demo-pepper-default-rtdb.firebaseio.com',
       PUBLIC_FIREBASE_PROJECT_ID: 'demo-pepper',
       PUBLIC_FIREBASE_STORAGE_BUCKET: 'demo-pepper.appspot.com',
       PUBLIC_FIREBASE_MESSAGING_SENDER_ID: 'demo-sender',
