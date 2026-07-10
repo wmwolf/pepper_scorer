@@ -293,6 +293,54 @@ userGames/{userId}/{gameId}: true  // Quick lookup for active games
 - Offline functionality
 - Data backup and recovery
 
+#### Firebase Emulator Test Harness (do alongside the security rules)
+**Goal**: repeatable, hermetic, CI-friendly coverage of the Firebase integration layer —
+and of the security rules themselves — without touching a live DB.
+
+**Why now / why here**: the pure sync conflict-resolution logic is already unit-tested
+(`tests/unit/firebase-sync.test.ts`), and the real-RTDB `runTransaction` semantics were
+verified once manually (see below). What remains uncovered is the `FirebaseGameManager`
+*orchestration* — the override methods, version carry-forward across `startNextGame()`,
+`applyRemoteState()` merge behavior, and listener wiring — which is exactly the risky part
+before go-live. The emulator is the only faithful way to test it (mocks can't replicate
+transaction/abort behavior). Pair it with the rules work because `@firebase/rules-unit-testing`
+drives the same emulator and lets us also test `database.rules.json`.
+
+**Do NOT** put live-DB tests in CI. The one-off live verification script
+(`scratchpad/live-sync-test.mjs` from the 2026-07-09 session) is a **manual pre-launch
+smoke test only** — non-hermetic, needs network + open rules + credentials. Retire it from
+any automated path.
+
+**Prerequisites (must land before the first emulator test runs):**
+1. **DB test seam** in `src/lib/firebase.ts`: call `connectDatabaseEmulator(db, '127.0.0.1', 9000)`
+   when an env flag (e.g. `PUBLIC_FIREBASE_EMULATOR` / `import.meta.env.MODE === 'test'`) is set,
+   so tests point at the local emulator instead of prod.
+2. **DOM globals in the test env**: `FirebaseGameManager` touches `localStorage`, `window`,
+   and `document` (the notification/DOM code). Either switch the emulator test project to the
+   `jsdom` environment or extend the mocks in `tests/setup.ts`. (Note: the class also reads
+   `import.meta.env` transitively via `./firebase` — fine under Vitest/Vite, throws under plain
+   node, which is why the manual script duplicates the decision logic instead of importing it.)
+3. **Separate Vitest project** for emulator tests (`vitest --project emulator`), kept OUT of the
+   default fast unit run so `npm run test:run` stays Java-free and quick.
+
+**Wiring:**
+- Run via `firebase emulators:exec --only database "vitest run --project emulator"`.
+- Needs `firebase-tools` (dev dep or `npx`) + a `firebase.json` with a `database` emulator block
+  + a `.firebaserc`.
+- **Java dependency**: GitHub `ubuntu` runners ship Java and `firebase-tools` installs cleanly,
+  so CI is straightforward (add a dedicated job). Local dev on this machine currently has **no
+  Java** — running the emulator locally needs `brew install --cask temurin` (or similar) first.
+
+**Coverage targets (the tests to write):**
+- `addHandPart`/`undo`/`completeGame` each commit a strictly-higher version; undo propagates
+  as a forward version bump (not a revert).
+- Two managers on the same game node converge (stale device's write is deferred, not applied).
+- `startNextGame()` fallback path re-uses the same node and its fresh game supersedes the
+  completed game (version carry-forward), while the series path writes a new node.
+- `applyRemoteState()` adopts only strictly-newer remote state and merges arrays safely.
+- Rules tests (`@firebase/rules-unit-testing`): unauth denied; a player can read/write their
+  own game; a non-participant cannot; users can only edit their own profile.
+
 ## Technical Details
 
 ### Game State Encoding
