@@ -544,6 +544,27 @@ export class FirebaseGameManager extends GameManager {
     return this.getMySeat() !== null;
   }
 
+  // Viewer status for turn-gating: whether anyone is signed in on this device, and if so
+  // which seat they hold (null = signed-in spectator). When nobody is signed in we treat
+  // the device as a shared/host scoreboard and apply no gating.
+  public getViewerSeatInfo(): { signedIn: boolean; seat: number | null } {
+    const uid = getCurrentUser()?.uid ?? null;
+    return { signedIn: uid !== null, seat: resolveSeat(this.firebasePlayers, uid) };
+  }
+
+  // Manual-override ("score on one device") flag. This is a per-device preference, NOT
+  // part of the synced game state, so it never leaves this client. When on, turn-gating
+  // is bypassed and any input on this device is accepted.
+  private manualOverride = false;
+
+  public isManualOverride(): boolean {
+    return this.manualOverride;
+  }
+
+  public setManualOverride(value: boolean): void {
+    this.manualOverride = value;
+  }
+
   // Public method to force sync current state to Firebase
   public async forceSyncToFirebase(): Promise<void> {
     return this.syncToFirebase();

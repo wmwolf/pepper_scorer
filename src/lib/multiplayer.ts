@@ -69,3 +69,40 @@ export function directionLabel(dir: SeatDirection | null): string {
 export function teamOfSeat(seat: number): 0 | 1 {
   return (seat % 2) as 0 | 1;
 }
+
+// Which seats may act during a given phase, plus a human verb for the waiting message.
+export interface TurnGate {
+  seats: number[]; // 0-based seats permitted to act
+  verb: string;    // e.g. "pick trump"
+}
+
+// Turn responsibility for the current phase, derived from the in-progress hand string
+// (`${dealer}${bidWinner}${bid}${trump}${decision}${tricks}`, 1-based seat digits).
+//
+// Returns null for phases that are NOT turn-gated in the 8a foundation — the `bidder`
+// and `bid` phases stay open to every seated participant until the 8b auction replaces
+// them. For the phases that map cleanly onto a real player it returns the responsible
+// seat(s):
+//   - trump   -> the bid winner picks trump
+//   - decision-> the defending team decides play/fold
+//   - tricks  -> the bid winner records the defenders' trick count (scorekeeper)
+export function turnGateFor(currentHand: string, phase: string): TurnGate | null {
+  const bidWinner = parseInt(currentHand[1] || '0'); // 1-based seat, 0 = throw-in
+  if (!bidWinner) return null; // no bid winner yet / thrown in — nothing seat-specific
+  const bidWinnerSeat = bidWinner - 1;
+
+  switch (phase) {
+    case 'trump':
+      return { seats: [bidWinnerSeat], verb: 'pick trump' };
+    case 'decision': {
+      const biddingTeam = (bidWinner - 1) % 2;
+      const defendingTeam = 1 - biddingTeam;
+      const seats = [0, 1, 2, 3].filter(i => teamOfSeat(i) === defendingTeam);
+      return { seats, verb: 'decide to play or fold' };
+    }
+    case 'tricks':
+      return { seats: [bidWinnerSeat], verb: 'enter the tricks won' };
+    default:
+      return null; // bidder, bid — open to all participants in 8a
+  }
+}

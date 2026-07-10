@@ -5,6 +5,7 @@ import {
   directionArrow,
   directionLabel,
   teamOfSeat,
+  turnGateFor,
   type SeatPlayer,
 } from '../../src/lib/multiplayer'
 
@@ -92,5 +93,40 @@ describe('teamOfSeat', () => {
     expect(teamOfSeat(2)).toBe(0)
     expect(teamOfSeat(1)).toBe(1)
     expect(teamOfSeat(3)).toBe(1)
+  })
+})
+
+describe('turnGateFor', () => {
+  // Hand: dealer=1, bidWinner=2 (seat 1, team 1), bid=5 -> trump/decision/tricks
+  it('gates trump to the bid winner seat', () => {
+    const gate = turnGateFor('125', 'trump')
+    expect(gate).toEqual({ seats: [1], verb: 'pick trump' })
+  })
+
+  it('gates the decision to the defending team seats', () => {
+    // bidWinner seat 1 is team 1, so defenders are team 0 = seats 0 & 2
+    const gate = turnGateFor('125S', 'decision')
+    expect(gate?.seats).toEqual([0, 2])
+    expect(gate?.verb).toBe('decide to play or fold')
+  })
+
+  it('gates tricks entry to the bid winner (scorekeeper)', () => {
+    const gate = turnGateFor('125SP', 'tricks')
+    expect(gate).toEqual({ seats: [1], verb: 'enter the tricks won' })
+  })
+
+  it('flips defenders when the bid winner is on team 0', () => {
+    // bidWinner=1 (seat 0, team 0) -> defenders team 1 = seats 1 & 3
+    const gate = turnGateFor('114', 'decision')
+    expect(gate?.seats).toEqual([1, 3])
+  })
+
+  it('does not gate the bidder or bid phases (open to all in 8a)', () => {
+    expect(turnGateFor('1', 'bidder')).toBeNull()
+    expect(turnGateFor('12', 'bid')).toBeNull()
+  })
+
+  it('returns null for a thrown-in hand (no bid winner)', () => {
+    expect(turnGateFor('10', 'trump')).toBeNull()
   })
 })

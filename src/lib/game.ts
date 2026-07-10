@@ -2,6 +2,98 @@
 
 import { GameManager, getCurrentPhase, isPepperRound, calculateScore, isHandComplete } from './gameState';
 import { getPath } from './path-utils';
+import {
+  turnGateFor,
+  relativeDirection,
+  directionArrow,
+  directionLabel,
+  teamOfSeat,
+  type SeatPlayer,
+} from './multiplayer';
+
+// Duck-typed view of the multiplayer (Firebase) manager. game.ts stays decoupled from
+// the concrete FirebaseGameManager (a heavy, network-touching module) — it only needs
+// these accessors to gate turn-based input. A local GameManager lacks them, so
+// asMultiplayer() returns null and no gating applies.
+interface MultiplayerManager {
+  isFirebaseGame(): boolean;
+  getGameId(): string | null;
+  getMySeat(): number | null;
+  getFirebasePlayers(): SeatPlayer[];
+  getViewerSeatInfo(): { signedIn: boolean; seat: number | null };
+  isManualOverride(): boolean;
+  // eslint-disable-next-line no-unused-vars
+  setManualOverride(value: boolean): void;
+  isSeatPresent?(_seat: number): boolean; // added in the presence pass (8a commit 3)
+}
+
+function asMultiplayer(gm: GameManager): MultiplayerManager | null {
+  const candidate = gm as unknown as Partial<MultiplayerManager>;
+  if (
+    typeof candidate.isFirebaseGame === 'function' &&
+    typeof candidate.getViewerSeatInfo === 'function' &&
+    candidate.isFirebaseGame()
+  ) {
+    return candidate as MultiplayerManager;
+  }
+  return null;
+}
+
+// A blocked turn: the current viewer must wait for someone else to act.
+interface GatingBlock {
+  spectator: boolean;      // true = signed-in non-participant
+  responsibleName: string; // player or team we're waiting on
+  verb: string;            // what they need to do
+  arrow: string;           // relative-direction glyph (may be empty)
+  directionText: string;   // e.g. "on your left" (may be empty)
+}
+
+// Decide whether the current viewer may act in `phase`, or must wait. Returns null when
+// no gating applies: a local game, a shared/host device with nobody signed in, manual
+// override on, an ungated phase (bidder/bid), or the viewer is the responsible seat.
+function evaluateGating(gm: GameManager, currentHand: string, phase: string): GatingBlock | null {
+  const mp = asMultiplayer(gm);
+  if (!mp) return null;
+
+  const { signedIn, seat } = mp.getViewerSeatInfo();
+  if (!signedIn) return null;          // shared/host device — full control
+  if (mp.isManualOverride()) return null;
+
+  const gate = turnGateFor(currentHand, phase);
+
+  // Spectator (signed in, not seated): read-only for every phase.
+  if (seat === null) {
+    const verb = gate?.verb || (phase === 'bidder' || phase === 'bid' ? 'bid' : 'play the hand');
+    return { spectator: true, responsibleName: 'the players', verb, arrow: '', directionText: '' };
+  }
+
+  if (!gate) return null;               // bidder/bid: any participant may act
+  if (gate.seats.includes(seat)) return null; // I'm responsible — show controls
+
+  // Fall back to manual mode automatically if nobody who can act is present (8a commit 3).
+  if (typeof mp.isSeatPresent === 'function' && !gate.seats.some(s => mp.isSeatPresent!(s))) {
+    return null;
+  }
+
+  // Blocked: describe who we're waiting on and where they sit relative to us.
+  const players = mp.getFirebasePlayers();
+  const teams = gm.state.teams;
+  let responsibleName: string;
+  let arrow = '';
+  let directionText = '';
+  if (gate.seats.length === 1) {
+    const target = gate.seats[0]!;
+    responsibleName = players[target]?.displayName || gm.state.players[target] || `Seat ${target + 1}`;
+    const dir = relativeDirection(seat, target);
+    arrow = directionArrow(dir);
+    directionText = directionLabel(dir);
+  } else {
+    // The defending team (two seats) — name the team rather than a single seat.
+    const teamIndex = teamOfSeat(gate.seats[0]!);
+    responsibleName = teams[teamIndex] || `Team ${teamIndex + 1}`;
+  }
+  return { spectator: false, responsibleName, verb: gate.verb, arrow, directionText };
+}
 
 // Extend window interface for global properties
 declare global {
@@ -82,11 +174,71 @@ function trumpToString(trump: string): string {
   }
 
 function hideAllControls() {
-    ['player-controls', 'bid-controls', 'trump-controls', 
-     'decision-controls', 'tricks-controls', 'end-game-controls'].forEach(id => {
+    ['player-controls', 'bid-controls', 'trump-controls',
+     'decision-controls', 'tricks-controls', 'end-game-controls', 'waiting-panel'].forEach(id => {
         const element = document.getElementById(id);
         if (element) element.classList.add('hidden');
     });
+}
+
+// Render the "waiting for your turn" panel in place of the phase controls.
+function showWaitingPanel(block: GatingBlock) {
+    const panel = document.getElementById('waiting-panel');
+    const arrowEl = document.getElementById('waiting-arrow');
+    const messageEl = document.getElementById('waiting-message');
+    const manualBtn = document.getElementById('waiting-manual-btn');
+    if (!panel) return;
+
+    if (arrowEl) arrowEl.textContent = block.arrow;
+    if (messageEl) {
+        if (block.spectator) {
+            messageEl.textContent = `Spectating — waiting for ${block.responsibleName} to ${block.verb}.`;
+        } else {
+            const where = block.directionText ? ` (${block.directionText})` : '';
+            messageEl.textContent = `Waiting for ${block.responsibleName}${where} to ${block.verb}…`;
+        }
+    }
+    // Spectators can't take over scoring; only seated players see the manual escape hatch.
+    if (manualBtn) manualBtn.classList.toggle('hidden', block.spectator);
+
+    panel.classList.remove('hidden');
+    updateInstructions(block.spectator ? 'Spectating' : 'Waiting for your turn');
+}
+
+// Per-device, per-game localStorage key for the manual-scoring override preference.
+function overrideStorageKey(mp: MultiplayerManager): string {
+    return `pepperOverride:${mp.getGameId() || 'local'}`;
+}
+
+// Show or hide the "manual scoring on" bar to match the manager's override flag.
+function renderOverrideBar(gameManager: GameManager) {
+    const bar = document.getElementById('manual-override-bar');
+    if (!bar) return;
+    const mp = asMultiplayer(gameManager);
+    bar.classList.toggle('hidden', !(mp && mp.isManualOverride()));
+}
+
+// Wire the manual-override toggles (waiting-panel "take over" link and the bar's "Turn
+// off" button) once. Also restores any saved override preference for this game.
+function setupMultiplayerControls(gameManager: GameManager, updateUI: () => void) {
+    const mp = asMultiplayer(gameManager);
+    if (!mp) return;
+
+    // Restore saved preference (per device, per game).
+    try {
+        if (localStorage.getItem(overrideStorageKey(mp)) === 'true') {
+            mp.setManualOverride(true);
+        }
+    } catch { /* localStorage unavailable — ignore */ }
+
+    const setOverride = (value: boolean) => {
+        mp.setManualOverride(value);
+        try { localStorage.setItem(overrideStorageKey(mp), String(value)); } catch { /* ignore */ }
+        updateUI();
+    };
+
+    document.getElementById('waiting-manual-btn')?.addEventListener('click', () => setOverride(true));
+    document.getElementById('manual-override-off')?.addEventListener('click', () => setOverride(false));
 }
 
 function updateInstructions(text: string) {
@@ -156,6 +308,16 @@ function updateHandInfo(gameManager: GameManager) {
 function showPhaseControls(gameManager: GameManager) {
     const currentHand = gameManager.getCurrentHand();
     const phase = getCurrentPhase(currentHand);
+
+    // Multiplayer turn-gating: if it isn't this viewer's turn, show a waiting panel
+    // instead of the phase controls (and don't run this case's auto-advance side effects,
+    // e.g. pepper/clubs, so only a responsible device drives them).
+    const block = evaluateGating(gameManager, currentHand, phase);
+    if (block) {
+        showWaitingPanel(block);
+        return;
+    }
+
     switch (phase) {
         case 'bidder': {
             const dealerIndex = parseInt(currentHand[0] || '1') - 1;
@@ -572,6 +734,7 @@ export function startGameplay(gameData: Record<string, unknown>) {
         
         rebuildScoreLog(gameManager, reverseHistory);
 
+        renderOverrideBar(gameManager);
         showPhaseControls(gameManager);
         
         // Save current state
@@ -627,6 +790,7 @@ export function startGameplay(gameData: Record<string, unknown>) {
         setupDecisionButtons(gameManager, updateUI);
         setupTricksButtons(gameManager, updateUI);
         setupUndoButton(gameManager, updateUI);
+        setupMultiplayerControls(gameManager, updateUI);
         
         // Setup history toggle button
         const reverseButton = document.getElementById('reverse-history-button');

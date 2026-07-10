@@ -122,6 +122,21 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         </div>
         <!-- Game Controls -->
         <div class="bg-white rounded-lg shadow-sm p-6">
+          <!-- Manual-scoring override bar (Phase 8): shown when turn-gating is bypassed -->
+          <div id="manual-override-bar" class="hidden mb-4 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-sm flex items-center justify-between gap-2">
+            <span class="flex items-center gap-2"><span>✍️</span><span>Manual scoring — anyone on this device can enter.</span></span>
+            <button id="manual-override-off" class="px-2 py-1 text-xs rounded bg-amber-600 text-white hover:bg-amber-700 transition-colors">Turn off</button>
+          </div>
+
+          <!-- Waiting-for-your-turn panel (Phase 8 multiplayer) -->
+          <div id="waiting-panel" class="hidden space-y-4 text-center py-4">
+            <div id="waiting-arrow" class="text-5xl leading-none text-blue-500"></div>
+            <p id="waiting-message" class="text-lg text-gray-700"></p>
+            <button id="waiting-manual-btn" class="text-sm text-gray-500 underline hover:text-gray-700">
+              Enter scores on this device instead
+            </button>
+          </div>
+
           <!-- Player Selection -->
           <div id="player-controls" class="hidden space-y-4">
             <h3 class="text-lg font-medium text-gray-900 mb-4">Select Player</h3>
@@ -514,7 +529,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       };
 
       renderPlayerIdentity();
-      onAuthStateChange(() => renderPlayerIdentity());
+      onAuthStateChange(() => {
+        renderPlayerIdentity();
+        // Re-run the UI so turn-gating re-evaluates now that we know who is signed in
+        // (getMySeat() depends on the resolved auth state).
+        if (typeof window.updateUI === 'function') window.updateUI();
+      });
 
       // Show manual sync button. Now safe: forceSyncToFirebase runs the same
       // version-guarded transaction as automatic syncs and can never revert newer state.
