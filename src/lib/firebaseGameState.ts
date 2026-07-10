@@ -77,6 +77,8 @@ export class FirebaseGameManager extends GameManager {
   // "which seat is the signed-in user?" and surface a shareable room code.
   private firebasePlayers: FirebaseGamePlayer[] = [];
   private roomCode: string | null = null;
+  // The uid of the game creator (metadata.createdBy) — the "host" who may enter every decision.
+  private hostUid: string | null = null;
 
   // Phase 8 presence: uids currently connected to this game (via onDisconnect-backed
   // writes under games/{id}/presence). Drives the "fall back to manual when the seat
@@ -229,6 +231,7 @@ export class FirebaseGameManager extends GameManager {
       this.state.firebaseGameId = gameId;
       this.firebasePlayers = gameData.players;
       this.roomCode = roomCode;
+      this.hostUid = gameCreator;
 
       // Add to creator's active games
       const userGameRef = ref(database, `userGames/${gameCreator}/${gameId}`);
@@ -408,6 +411,7 @@ export class FirebaseGameManager extends GameManager {
       // Preserve the full player roster and room code for the multiplayer identity layer.
       manager.firebasePlayers = gameData.players || [];
       manager.roomCode = gameData.metadata?.roomCode || null;
+      manager.hostUid = gameData.metadata?.createdBy || null;
 
       // Check if this game is part of a series
       if (gameData.metadata.seriesId) {
@@ -620,6 +624,30 @@ export class FirebaseGameManager extends GameManager {
   public getViewerSeatInfo(): { signedIn: boolean; seat: number | null } {
     const uid = getCurrentUser()?.uid ?? null;
     return { signedIn: uid !== null, seat: resolveSeat(this.firebasePlayers, uid) };
+  }
+
+  // Host = the game creator (metadata.createdBy). The host may enter every decision; other
+  // signed-in players are gated to a waiting panel with a manual-override escape hatch.
+  public isHost(): boolean {
+    const uid = getCurrentUser()?.uid ?? null;
+    return uid !== null && this.hostUid !== null && uid === this.hostUid;
+  }
+
+  // The host's 0-based seat, or null if the host isn't among the seated players.
+  public getHostSeat(): number | null {
+    return this.hostUid ? resolveSeat(this.firebasePlayers, this.hostUid) : null;
+  }
+
+  // Display name for the host, for the "waiting for {host}" message.
+  public getHostName(): string {
+    const seat = this.getHostSeat();
+    return (seat !== null && this.firebasePlayers[seat]?.displayName) || 'the host';
+  }
+
+  // Is the host currently connected? Drives the presence fallback: if the host is offline,
+  // gating drops so the remaining players aren't stuck waiting on an absent host.
+  public isHostPresent(): boolean {
+    return this.hostUid ? this.presentUids.has(this.hostUid) : false;
   }
 
   // Manual-override ("score on one device") flag. This is a per-device preference, NOT

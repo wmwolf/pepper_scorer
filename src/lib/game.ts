@@ -2,14 +2,7 @@
 
 import { GameManager, getCurrentPhase, isPepperRound, calculateScore, isHandComplete } from './gameState';
 import { getPath } from './path-utils';
-import {
-  turnGateFor,
-  relativeDirection,
-  directionArrow,
-  directionLabel,
-  teamOfSeat,
-  type SeatPlayer,
-} from './multiplayer';
+import { type SeatPlayer } from './multiplayer';
 import {
   revealedCount,
   isRevealed,
@@ -39,6 +32,10 @@ interface MultiplayerManager {
   setManualOverride(value: boolean): void;
   isSeatPresent?(_seat: number): boolean;
   hasPresenceData?(): boolean;
+  // Host-based gating: the creator may enter every decision; others wait + override.
+  isHost?(): boolean;
+  getHostName?(): string;
+  isHostPresent?(): boolean;
   // Auction (8b concurrent-entry redesign)
   getAuction(): AuctionState | null;
   ensureAuctionForCurrentHand(): Promise<void>;
@@ -69,55 +66,58 @@ interface GatingBlock {
   directionText: string;   // e.g. "on your left" (may be empty)
 }
 
-// Decide whether the current viewer may act in `phase`, or must wait. Returns null when
-// no gating applies: a local game, a shared/host device with nobody signed in, manual
-// override on, an ungated phase (bidder/bid), or the viewer is the responsible seat.
-function evaluateGating(gm: GameManager, currentHand: string, phase: string): GatingBlock | null {
+// Human verb for what the host does in each tap-flow phase (used in the waiting message).
+function hostVerbForPhase(phase: string): string {
+  switch (phase) {
+    case 'bidder': return 'record who won the bid';
+    case 'bid': return 'enter the bid';
+    case 'trump': return 'pick trump';
+    case 'decision': return 'make the play/fold decision';
+    case 'tricks': return 'enter the tricks';
+    default: return 'play the hand';
+  }
+}
+
+// Exported as a test seam (tests/unit/gating.test.ts drives it with a fake manager).
+// Decide whether the current viewer may act in `phase`, or must wait. Host-based model:
+// the game creator (host) may enter every decision; other signed-in players wait with a
+// manual-override escape hatch. The concurrent auction (all four signed in) is handled
+// earlier by auctionEligible()/renderAuction, so this only governs the single-device tap
+// flow. Returns null when no gating applies (local game, host, or override on).
+export function evaluateGating(gm: GameManager, currentHand: string, phase: string): GatingBlock | null {
   const mp = asMultiplayer(gm);
-  if (!mp) return null;
+  if (!mp) return null;                 // local game — full control
 
   const { signedIn, seat } = mp.getViewerSeatInfo();
-  if (!signedIn) return null;          // shared/host device — full control
+  const verb = hostVerbForPhase(phase);
+
+  // Not signed in on a Firebase game: the security rules forbid reading/writing it, so this
+  // device can't participate — read-only, no override (an override write would be rejected).
+  if (!signedIn) {
+    return { spectator: true, responsibleName: 'the host', verb, arrow: '', directionText: '' };
+  }
+
   if (mp.isManualOverride()) return null;
 
-  const gate = turnGateFor(currentHand, phase);
+  // The host can enter everything.
+  if (typeof mp.isHost === 'function' && mp.isHost()) return null;
 
-  // Spectator (signed in, not seated): read-only for every phase.
+  // Signed-in spectator (not seated): read-only.
   if (seat === null) {
-    const verb = gate?.verb || (phase === 'bidder' || phase === 'bid' ? 'bid' : 'play the hand');
     return { spectator: true, responsibleName: 'the players', verb, arrow: '', directionText: '' };
   }
 
-  if (!gate) return null;               // bidder/bid: any participant may act
-  if (gate.seats.includes(seat)) return null; // I'm responsible — show controls
-
-  // Automatic fallback: once presence is known, if nobody who could act is online, drop
-  // gating so the remaining players aren't stuck waiting on an absent seat. Guarded by
-  // hasPresenceData() so the first paint (before presence loads) keeps gating intact.
+  // Presence fallback: once presence is known, if the host is offline, drop gating so the
+  // seated players aren't stuck waiting on an absent host. Guarded by hasPresenceData() so
+  // the first paint (before presence loads) keeps gating intact.
   const presenceKnown = typeof mp.hasPresenceData === 'function' && mp.hasPresenceData();
-  if (presenceKnown && typeof mp.isSeatPresent === 'function' &&
-      !gate.seats.some(s => mp.isSeatPresent!(s))) {
+  if (presenceKnown && typeof mp.isHostPresent === 'function' && !mp.isHostPresent()) {
     return null;
   }
 
-  // Blocked: describe who we're waiting on and where they sit relative to us.
-  const players = mp.getFirebasePlayers();
-  const teams = gm.state.teams;
-  let responsibleName: string;
-  let arrow = '';
-  let directionText = '';
-  if (gate.seats.length === 1) {
-    const target = gate.seats[0]!;
-    responsibleName = players[target]?.displayName || gm.state.players[target] || `Seat ${target + 1}`;
-    const dir = relativeDirection(seat, target);
-    arrow = directionArrow(dir);
-    directionText = directionLabel(dir);
-  } else {
-    // The defending team (two seats) — name the team rather than a single seat.
-    const teamIndex = teamOfSeat(gate.seats[0]!);
-    responsibleName = teams[teamIndex] || `Team ${teamIndex + 1}`;
-  }
-  return { spectator: false, responsibleName, verb: gate.verb, arrow, directionText };
+  // Blocked: a seated non-host player waits on the host (or overrides).
+  const hostName = typeof mp.getHostName === 'function' ? mp.getHostName() : 'the host';
+  return { spectator: false, responsibleName: hostName, verb, arrow: '', directionText: '' };
 }
 
 // Extend window interface for global properties
