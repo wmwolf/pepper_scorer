@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { 
+import {
   selectGameAwards,
+  selectSeriesAwards,
   gameAwards
 } from '../../src/lib/pepper-awards'
 import { 
@@ -210,22 +211,41 @@ describe('New Awards System', () => {
       expect(footprintsAward).toBeFalsy()
     })
 
-    it('works with negative net points', () => {
+    it('awards the player who carried despite a net-negative partner', () => {
       const awardData = initializeAwardTracking(players, teams)
-      
-      // Both players have negative points, but Alice's losses dominated
-      awardData.playerStats.Alice.netPoints = -12 // 80% of total contribution
-      awardData.playerStats.Charlie.netPoints = -3 // 20% of total contribution
+
+      // Alice carried the team (+20) while her partner was a net drag (-5).
+      // Signed contribution: Alice 20/15 ≈ 133%, Charlie -5/15 ≈ -33% (<= 25%).
+      awardData.playerStats.Alice.netPoints = 20
+      awardData.playerStats.Charlie.netPoints = -5
       awardData.playerStats.Bob.netPoints = 8
       awardData.playerStats.Dana.netPoints = 10
-      awardData.winningTeam = 0 // Team 1 still wins overall
+      awardData.winningTeam = 0 // Team 1 wins
       awardData.winningTeamName = 'Team 1'
-      
+
       const selectedAwards = selectGameAwards(awardData)
-      
+
       const footprintsAward = selectedAwards.find(award => award.id === 'footprints_in_the_sand')
       expect(footprintsAward).toBeTruthy()
-      expect(footprintsAward?.winner).toBe('Alice') // Alice dominated the contribution even if negative
+      expect(footprintsAward?.winner).toBe('Alice')
+    })
+
+    it('does not award when both partners had net-negative contributions', () => {
+      const awardData = initializeAwardTracking(players, teams)
+
+      // Neither player "carried" anyone: both are net-negative, so combined
+      // contribution is non-positive and no one earns the award.
+      awardData.playerStats.Alice.netPoints = -12
+      awardData.playerStats.Charlie.netPoints = -3
+      awardData.playerStats.Bob.netPoints = 8
+      awardData.playerStats.Dana.netPoints = 10
+      awardData.winningTeam = 0
+      awardData.winningTeamName = 'Team 1'
+
+      const selectedAwards = selectGameAwards(awardData)
+
+      const footprintsAward = selectedAwards.find(award => award.id === 'footprints_in_the_sand')
+      expect(footprintsAward).toBeFalsy()
     })
 
     it('requires 75%+ dominance threshold', () => {
@@ -370,5 +390,76 @@ describe('New Awards System', () => {
       expect(footprints?.important).toBe(false) // Positive but not important
       expect(shootMoons?.important).toBe(true) // Important positive
     })
+  })
+})
+
+describe('Moon Struck Award - only counts failed Moon/Double Moon bids', () => {
+  const players = ['Alice', 'Bob', 'Charlie', 'Dana']
+  const teams = ['Team 1', 'Team 2']
+
+  it('does NOT qualify when a player only fails 6-bids (no moon/double moon)', () => {
+    // Alice (player 1) plays three 6-bids and is set every time.
+    // Failed 6-bids push value 6 into failedBidValues, NOT 7 (Moon) or 14 (Double Moon).
+    const hands = [
+      '116HP2', // Alice bids 6, played, defenders get 2 -> bidder set (failed 6)
+      '216HP2', // Alice bids 6, played, defenders get 2 -> bidder set (failed 6)
+      '316HP2', // Alice bids 6, played, defenders get 2 -> bidder set (failed 6)
+    ]
+
+    const awardData = trackAwardData(hands, players, teams, [0, 18], 1)
+
+    // Sanity: three failed 6-bids, zero failed moons/double-moons.
+    expect(awardData.playerStats.Alice.failedBidValues.filter(v => v === 6).length).toBe(3)
+    expect(awardData.playerStats.Alice.failedBidValues.filter(v => v === 7 || v === 14).length).toBe(0)
+
+    const awards = selectSeriesAwards(awardData)
+    const moonStruck = awards.find(a => a.id === 'moon_struck')
+    expect(moonStruck).toBeUndefined()
+  })
+
+  it('qualifies the player who fails the requisite number of Moon/Double Moon bids', () => {
+    // Alice (player 1) plays three Moon bids and is set every time -> 3 failed moons.
+    const hands = [
+      '11MHP2', // Alice bids Moon, played, defenders get 2 -> moon failed (value 7)
+      '21MHP2', // Alice bids Moon, played, defenders get 2 -> moon failed (value 7)
+      '31MHP2', // Alice bids Moon, played, defenders get 2 -> moon failed (value 7)
+    ]
+
+    const awardData = trackAwardData(hands, players, teams, [0, 21], 1)
+
+    // Sanity: three failed moons.
+    expect(awardData.playerStats.Alice.failedBidValues.filter(v => v === 7 || v === 14).length).toBe(3)
+
+    const awards = selectSeriesAwards(awardData)
+    const moonStruck = awards.find(a => a.id === 'moon_struck')
+    expect(moonStruck).toBeDefined()
+    expect(moonStruck?.winner).toBe('Alice')
+  })
+})
+
+describe('Game team-award fallback references valid game-scope ids', () => {
+  const players = ['Alice', 'Bob', 'Charlie', 'Dana']
+  const teams = ['Team 1', 'Team 2']
+
+  it('yields a team-scoped award when a team dominates defensively', () => {
+    // Alice (player 1, Team 1) bids 4 and is set five times.
+    // Team 2 (the defenders) therefore set the bidders 5 times -> defensive_fortress qualifies.
+    // The fallback (and main team-award selection) must resolve to a real game-scope team id.
+    const hands = [
+      '114HP3', // Alice bids 4, set (defenders get 3)
+      '214HP3',
+      '314HP3',
+      '414HP3',
+      '114HP3',
+    ]
+
+    const awardData = trackAwardData(hands, players, teams, [0, 20], 1)
+
+    const awards = selectGameAwards(awardData)
+    const teamAward = awards.find(a => a.type === 'team')
+    expect(teamAward).toBeDefined()
+    // The only game-scope team awards that can be produced here are valid game-scope ids.
+    expect(['defensive_fortress', 'bid_specialists', 'remember_the_time', 'helping_hand'])
+      .toContain(teamAward?.id)
   })
 })

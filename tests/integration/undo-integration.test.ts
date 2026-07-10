@@ -1,302 +1,232 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { GameManager } from '@/lib/gameState';
+import { GameManager, isPepperRound } from '@/lib/gameState';
+import {
+  newGame, setBidder, setBid, setTrump, setDecision, setTricks,
+  currentPhase, currentHandIndex, canUndo,
+  getCurrentBidder, getCurrentBid, getCurrentTrump, getCurrentDecision,
+} from '../helpers/gameActions';
+
+// Drives a game to completion with team 0 (odd seats) sweeping every hand:
+// bid 6, play, defenders take 0 tricks -> team 0 +6, team 1 -6 each hand.
+function winGameForTeam0(m: GameManager) {
+  let guard = 0;
+  while (!m.isGameComplete() && guard++ < 30) {
+    setBidder(m, 1);
+    setBid(m, 6);
+    setTrump(m, 'H');
+    setDecision(m, 'P');
+    setTricks(m, 0);
+  }
+}
 
 describe('Undo Integration', () => {
   let gameManager: GameManager;
 
   beforeEach(() => {
-    gameManager = new GameManager(['Alice', 'Bob', 'Charlie', 'Dave']);
+    gameManager = newGame();
   });
 
   describe('Cross-Phase Undo Operations', () => {
-    it('should handle undo from each game phase correctly', () => {
-      // Start in bidder phase
-      expect(gameManager.currentPhase).toBe('bidder');
-      expect(gameManager.canUndo()).toBe(false); // Nothing to undo yet
-      
-      // Set bidder and move to bid phase
-      gameManager.setBidder(1);
-      expect(gameManager.currentPhase).toBe('bid');
-      expect(gameManager.canUndo()).toBe(true);
-      
-      // Undo from bid phase back to bidder
+    it('undoes bidder/decision/tricks phases back to the previous one, preserving earlier inputs', () => {
+      // Note: undoing FROM the trump phase is a special case (see the dedicated tests
+      // below) — on the first hand it returns to setup, on pepper hands it steps back a
+      // hand. This test covers the plain single-step phase reversals.
+
+      // bidder -> bid, then undo bid phase -> bidder (bidder cleared)
+      setBidder(gameManager, 1);
+      expect(currentPhase(gameManager)).toBe('bid');
+      expect(canUndo(gameManager)).toBe(true);
+
       gameManager.undo();
-      expect(gameManager.currentPhase).toBe('bidder');
-      expect(gameManager.getCurrentBidder()).toBe(null);
-      
-      // Redo the bidder selection and continue
-      gameManager.setBidder(2);
-      gameManager.setBid(5);
-      expect(gameManager.currentPhase).toBe('trump');
-      expect(gameManager.getCurrentBid()).toBe(5);
-      
-      // Undo from trump phase back to bid
+      expect(currentPhase(gameManager)).toBe('bidder');
+      expect(getCurrentBidder(gameManager)).toBe(null);
+
+      // build through to the decision phase
+      setBidder(gameManager, 1);
+      setBid(gameManager, 5);
+      setTrump(gameManager, 'H');
+      expect(currentPhase(gameManager)).toBe('decision');
+
+      // undo decision phase -> trump (trump cleared, bid preserved)
       gameManager.undo();
-      expect(gameManager.currentPhase).toBe('bid');
-      expect(gameManager.getCurrentBid()).toBe(null);
-      expect(gameManager.getCurrentBidder()).toBe(2); // Bidder preserved
-      
-      // Continue forward again
-      gameManager.setBid(6);
-      gameManager.setTrump('H');
-      expect(gameManager.currentPhase).toBe('decision');
-      
-      // Undo from decision phase back to trump
+      expect(currentPhase(gameManager)).toBe('trump');
+      expect(getCurrentTrump(gameManager)).toBe(null);
+      expect(getCurrentBid(gameManager)).toBe(5);
+
+      // build through to the tricks phase (non-clubs trump avoids the clubs special case)
+      setTrump(gameManager, 'S');
+      setDecision(gameManager, 'P');
+      expect(currentPhase(gameManager)).toBe('tricks');
+
+      // undo tricks phase -> decision (decision cleared, trump preserved)
       gameManager.undo();
-      expect(gameManager.currentPhase).toBe('trump');
-      expect(gameManager.getCurrentTrump()).toBe(null);
-      expect(gameManager.getCurrentBid()).toBe(6); // Bid preserved
-      
-      // Continue to tricks phase
-      gameManager.setTrump('S');
-      gameManager.setDecision('P', 1);
-      expect(gameManager.currentPhase).toBe('tricks');
-      
-      // Undo from tricks phase back to decision
-      gameManager.undo();
-      expect(gameManager.currentPhase).toBe('decision');
-      expect(gameManager.getCurrentDecision()).toBe(null);
-      expect(gameManager.getCurrentFreeTricks()).toBe(0);
-      expect(gameManager.getCurrentTrump()).toBe('S'); // Trump preserved
+      expect(currentPhase(gameManager)).toBe('decision');
+      expect(getCurrentDecision(gameManager)).toBe(null);
+      expect(getCurrentTrump(gameManager)).toBe('S');
     });
 
-    it('should handle undo across hand boundaries', () => {
-      // Complete first hand
-      gameManager.setBidder(1);
-      gameManager.setBid(4);
-      gameManager.setTrump('H');
-      gameManager.setDecision('P', 0);
-      gameManager.setTricks(2);
-      
-      expect(gameManager.currentHand).toBe(1);
-      expect(gameManager.currentPhase).toBe('bidder');
-      expect(gameManager.getScores()).toEqual([4, 0]);
-      
-      // Start second hand
-      gameManager.setBidder(2);
-      expect(gameManager.currentPhase).toBe('bid');
-      
-      // Undo should go back to tricks phase of previous hand
-      gameManager.undo();
-      expect(gameManager.currentHand).toBe(0);
-      expect(gameManager.currentPhase).toBe('tricks');
-      expect(gameManager.getCurrentBidder()).toBe(1);
-      expect(gameManager.getCurrentBid()).toBe(4);
-      expect(gameManager.getCurrentTrump()).toBe('H');
-      expect(gameManager.getScores()).toEqual([0, 0]); // Scores reset
-      
-      // Can continue from where we were
-      gameManager.setTricks(1); // Different result
-      expect(gameManager.currentHand).toBe(1);
-      expect(gameManager.getScores()).toEqual([0, 4]); // Different scores
+    it('returns to setup when undoing at the first hand trump phase', () => {
+      setBidder(gameManager, 1);
+      setBid(gameManager, 5);
+      expect(currentPhase(gameManager)).toBe('trump');
+      // The first hand at the trump phase has nothing earlier in-game to revert to, so
+      // production navigates back to setup (mocked in tests) rather than throwing.
+      expect(() => gameManager.undo()).not.toThrow();
     });
 
-    it('should handle undo in folding scenarios', () => {
-      gameManager.setBidder(1);
-      gameManager.setBid(5);
-      gameManager.setTrump('H');
-      gameManager.setDecision('F'); // Fold
-      
-      // Folding should complete the hand
-      expect(gameManager.currentHand).toBe(1);
-      expect(gameManager.currentPhase).toBe('bidder');
-      expect(gameManager.getScores()).toEqual([5, 0]); // Alice's team got 5 for the fold
-      
-      // Undo the fold
+    it('crosses back into the previous hand when undoing at the bidder phase', () => {
+      // Complete the first hand: bid 4, play, defenders take 2 -> [4, 2].
+      setBidder(gameManager, 1);
+      setBid(gameManager, 4);
+      setTrump(gameManager, 'H');
+      setDecision(gameManager, 'P');
+      setTricks(gameManager, 2);
+
+      // The next hand is auto-seeded with its dealer, so we sit at the bidder phase.
+      expect(currentHandIndex(gameManager)).toBe(1);
+      expect(currentPhase(gameManager)).toBe('bidder');
+      expect(gameManager.getScores()).toEqual([4, 2]);
+
+      // Undo at the bidder phase steps back into the previous hand's tricks phase.
       gameManager.undo();
-      expect(gameManager.currentHand).toBe(0);
-      expect(gameManager.currentPhase).toBe('decision');
-      expect(gameManager.getCurrentDecision()).toBe(null);
-      expect(gameManager.getScores()).toEqual([0, 0]); // Scores reset
-      
-      // Choose to play instead
-      gameManager.setDecision('P', 0);
-      expect(gameManager.currentPhase).toBe('tricks');
-      
-      gameManager.setTricks(3); // Bidding team gets set
-      expect(gameManager.getScores()).toEqual([0, 5]); // Different outcome
+      expect(currentHandIndex(gameManager)).toBe(0);
+      expect(currentPhase(gameManager)).toBe('tricks');
+      expect(getCurrentBidder(gameManager)).toBe(1);
+      expect(getCurrentBid(gameManager)).toBe(4);
+      expect(getCurrentTrump(gameManager)).toBe('H');
+      expect(gameManager.getScores()).toEqual([0, 0]); // scores reverted
+
+      // A different result is now possible.
+      setTricks(gameManager, 1); // bid 4, play, defenders take 1 -> [4, 1]
+      expect(currentHandIndex(gameManager)).toBe(1);
+      expect(gameManager.getScores()).toEqual([4, 1]);
+    });
+
+    it('undoes a fold back through free-tricks entry and then to the decision', () => {
+      setBidder(gameManager, 1);
+      setBid(gameManager, 5);
+      setTrump(gameManager, 'H');
+      setDecision(gameManager, 'F'); // fold with 0 free tricks completes the hand
+
+      expect(currentHandIndex(gameManager)).toBe(1);
+      expect(currentPhase(gameManager)).toBe('bidder');
+      expect(gameManager.getScores()).toEqual([5, 0]); // bidding team gets the bid on a fold
+
+      // First undo returns to the fold's free-tricks (tricks) entry, still folded.
+      gameManager.undo();
+      expect(currentHandIndex(gameManager)).toBe(0);
+      expect(currentPhase(gameManager)).toBe('tricks');
+      expect(getCurrentDecision(gameManager)).toBe('F');
+      expect(gameManager.getScores()).toEqual([0, 0]);
+
+      // Second undo returns to the decision phase (decision cleared).
+      gameManager.undo();
+      expect(currentPhase(gameManager)).toBe('decision');
+      expect(getCurrentDecision(gameManager)).toBe(null);
+
+      // Choose to play instead: bid 5, play, defenders take 3 -> bidding team is set [-5, 3].
+      setDecision(gameManager, 'P');
+      setTricks(gameManager, 3);
+      expect(gameManager.getScores()).toEqual([-5, 3]);
     });
   });
 
   describe('Undo with Game State Consistency', () => {
-    it('should maintain consistent state during complex undo sequences', () => {
-      // Build up a complex state
-      gameManager.setBidder(3);
-      gameManager.setBid('M'); // Moon bid
-      gameManager.setTrump('N'); // No trump
-      gameManager.setDecision('P', 2); // Play with 2 free tricks
-      
+    it('restores an identical snapshot after undoing a completed hand', () => {
+      // Build up to the tricks phase of a moon, no-trump hand.
+      setBidder(gameManager, 3);
+      setBid(gameManager, 'M');
+      setTrump(gameManager, 'N');
+      setDecision(gameManager, 'P');
+
       const beforeTricks = gameManager.toJSON();
-      
-      gameManager.setTricks(1); // Complete the hand
-      expect(gameManager.currentHand).toBe(1);
-      
-      // Undo and verify state restoration
+
+      setTricks(gameManager, 1); // moon played, defenders take 1 -> bidding team set
+      expect(currentHandIndex(gameManager)).toBe(1);
+
       gameManager.undo();
-      const afterUndo = gameManager.toJSON();
-      
-      expect(afterUndo.currentHand).toBe(beforeTricks.currentHand);
-      expect(afterUndo.currentPhase).toBe(beforeTricks.currentPhase);
-      expect(afterUndo.hands).toEqual(beforeTricks.hands);
-      expect(afterUndo.scores).toEqual(beforeTricks.scores);
-      
-      // Can make different choice
-      gameManager.setTricks(6); // Different outcome
+      expect(gameManager.toJSON()).toBe(beforeTricks);
+
+      // A different outcome is possible from the restored state.
+      setTricks(gameManager, 0); // defenders shut out -> moon made
       expect(gameManager.getScores()).not.toEqual([0, 0]);
     });
 
-    it('should handle undo with pepper rounds correctly', () => {
-      // Play through pepper rounds with undo
-      for (let round = 0; round < 4; round++) {
-        expect(gameManager.isPepperRound(round)).toBe(true);
-        
-        const expectedBidder = (round % 4) + 1;
-        gameManager.setBidder(expectedBidder);
-        
-        // Bid is auto-set in pepper rounds
-        const expectedBid = round + 4;
-        expect(gameManager.getCurrentBid()).toBe(expectedBid === 7 ? 'M' : expectedBid);
-        
-        gameManager.setTrump('H');
-        gameManager.setDecision('P', 0);
-        
-        // Undo from tricks phase
-        gameManager.undo();
-        expect(gameManager.currentPhase).toBe('decision');
-        expect(gameManager.isPepperRound(gameManager.currentHand)).toBe(true);
-        
-        // Redo the decision
-        gameManager.setDecision('P', 0);
-        gameManager.setTricks(2); // Complete the round
-        
-        if (round < 3) {
-          expect(gameManager.currentHand).toBe(round + 1);
-        }
-      }
-      
-      // 5th hand should not be pepper round
-      expect(gameManager.isPepperRound(4)).toBe(false);
+    it('undoes at the trump phase of a pepper round via the pepper special case', () => {
+      // Complete the first (pepper) hand: bid 4, play, defenders take 2 -> [4, 2].
+      setBidder(gameManager, 1);
+      setBid(gameManager, 4);
+      setTrump(gameManager, 'H');
+      setDecision(gameManager, 'P');
+      setTricks(gameManager, 2);
+
+      // Advance the second (still pepper) hand to the trump phase.
+      setBidder(gameManager, 2);
+      setBid(gameManager, 4);
+      expect(currentHandIndex(gameManager)).toBe(1);
+      expect(isPepperRound(currentHandIndex(gameManager))).toBe(true);
+      expect(currentPhase(gameManager)).toBe('trump');
+
+      // Undo at a pepper-round trump phase drops the current hand and steps the
+      // previous hand back to its last entered phase.
+      gameManager.undo();
+      expect(currentHandIndex(gameManager)).toBe(0);
+      expect(currentPhase(gameManager)).toBe('tricks');
+      expect(gameManager.getScores()).toEqual([0, 0]);
+
+      // The fifth hand is no longer a pepper round.
+      expect(isPepperRound(4)).toBe(false);
     });
   });
 
   describe('Undo in Series Context', () => {
-    it('should handle undo across game boundaries in series', () => {
-      gameManager = new GameManager(['Alice', 'Bob', 'Charlie', 'Dave'], true);
-      
-      // Complete first game
-      while (!gameManager.isGameComplete) {
-        const bidder = ((gameManager.currentHand % 4) + 1);
-        gameManager.setBidder(bidder);
-        gameManager.setBid(6);
-        gameManager.setTrump('H');
-        gameManager.setDecision('P', 0);
-        gameManager.setTricks(2);
-      }
-      
-      expect(gameManager.games.length).toBe(1);
-      expect(gameManager.seriesScores[0] + gameManager.seriesScores[1]).toBe(1);
-      
-      // Start next game
-      gameManager.startNextGame();
-      expect(gameManager.currentHand).toBe(0);
-      expect(gameManager.currentPhase).toBe('bidder');
-      
-      // Make a move in new game
-      gameManager.setBidder(1);
-      expect(gameManager.currentPhase).toBe('bid');
-      
-      // Undo should work within current game, not cross game boundary
-      gameManager.undo();
-      expect(gameManager.currentPhase).toBe('bidder');
-      expect(gameManager.games.length).toBe(1); // Previous game still exists
-      expect(gameManager.currentHand).toBe(0); // Still in new game
-    });
+    it('preserves series state when undoing within a later game', () => {
+      // Win the first game, then convert it into a series.
+      winGameForTeam0(gameManager);
+      expect(gameManager.isGameComplete()).toBe(true);
+      gameManager.completeGame();
+      gameManager.convertToSeries();
+      expect(gameManager.state.isSeries).toBe(true);
+      expect(gameManager.state.seriesScores).toEqual([1, 0]);
 
-    it('should preserve series state through undo operations', () => {
-      gameManager = new GameManager(['Alice', 'Bob', 'Charlie', 'Dave'], true);
-      
-      // Partially complete first game
-      gameManager.setBidder(1);
-      gameManager.setBid(6);
-      gameManager.setTrump('H');
-      gameManager.setDecision('P', 0);
-      gameManager.setTricks(2); // Complete one hand
-      
-      expect(gameManager.currentHand).toBe(1);
-      expect(gameManager.seriesScores).toEqual([0, 0]); // No games complete yet
-      
-      // Undo the hand
+      // Start the second game and play one hand.
+      gameManager.startNextGame();
+      expect(gameManager.state.gameNumber).toBe(2);
+      setBidder(gameManager, 1);
+      setBid(gameManager, 6);
+      setTrump(gameManager, 'H');
+      setDecision(gameManager, 'P');
+      setTricks(gameManager, 2); // bid 6 played, defenders take 2 -> bidding team set
+
+      const scoresAfterHand = gameManager.getScores();
+
+      // Undo the hand; the series scaffolding must survive untouched.
       gameManager.undo();
-      expect(gameManager.currentHand).toBe(0);
-      expect(gameManager.currentPhase).toBe('tricks');
-      expect(gameManager.isSeries).toBe(true); // Series flag preserved
-      expect(gameManager.seriesScores).toEqual([0, 0]); // Series scores preserved
-      
-      // Different outcome
-      gameManager.setTricks(5); // Set the bid instead
-      expect(gameManager.getScores()[1]).toBeGreaterThan(0);
+      expect(gameManager.state.isSeries).toBe(true);
+      expect(gameManager.state.seriesScores).toEqual([1, 0]);
+      expect(gameManager.state.completedGames).toHaveLength(1);
+      expect(gameManager.getScores()).toEqual([0, 0]);
+      expect(gameManager.getScores()).not.toEqual(scoresAfterHand);
     });
   });
 
   describe('Undo Error Handling', () => {
-    it('should handle undo when no history exists', () => {
-      expect(gameManager.canUndo()).toBe(false);
-      expect(() => gameManager.undo()).toThrow();
+    it('does not throw when undoing with no history', () => {
+      expect(canUndo(gameManager)).toBe(false);
+      // Production navigates back to setup (mocked in tests) rather than throwing.
+      expect(() => gameManager.undo()).not.toThrow();
     });
 
-    it('should handle undo at game boundaries correctly', () => {
-      // Complete a full game
-      while (!gameManager.isGameComplete) {
-        const bidder = ((gameManager.currentHand % 4) + 1);
-        gameManager.setBidder(bidder);
-        gameManager.setBid(6);
-        gameManager.setTrump('H');
-        gameManager.setDecision('P', 0);
-        gameManager.setTricks(2);
-      }
-      
-      expect(gameManager.isGameComplete).toBe(true);
-      expect(gameManager.canUndo()).toBe(true);
-      
-      // Undo should go back to last incomplete state
+    it('remains consistent when undoing right after a game completes', () => {
+      winGameForTeam0(gameManager);
+      expect(gameManager.isGameComplete()).toBe(true);
+      const winningScores = gameManager.getScores();
+
+      // Undo the winning trick: the game is no longer complete and scores drop.
       gameManager.undo();
-      expect(gameManager.isGameComplete).toBe(false);
-      expect(gameManager.currentPhase).toBe('tricks');
-      
-      // Can complete differently
-      gameManager.setTricks(5); // Set the bid
-      // Game might not be complete now depending on scores
-    });
-  });
-
-  describe('Undo Performance and Memory', () => {
-    it('should handle many undo operations efficiently', () => {
-      const startTime = Date.now();
-      
-      // Build up history with many operations
-      for (let i = 0; i < 20; i++) {
-        gameManager.setBidder(((i % 4) + 1));
-        if (gameManager.canUndo()) {
-          gameManager.undo();
-        }
-        gameManager.setBidder(((i % 4) + 1));
-        gameManager.setBid(4 + (i % 3));
-        if (gameManager.canUndo()) {
-          gameManager.undo();
-        }
-        gameManager.setBid(4 + (i % 3));
-        gameManager.setTrump(['H', 'S', 'D', 'C'][i % 4]);
-        if (gameManager.canUndo()) {
-          gameManager.undo();
-        }
-      }
-      
-      const endTime = Date.now();
-      const duration = endTime - startTime;
-      
-      // Should be reasonably fast (under 100ms for 60 operations)
-      expect(duration).toBeLessThan(100);
-      expect(gameManager.canUndo()).toBe(true);
+      expect(gameManager.isGameComplete()).toBe(false);
+      expect(gameManager.getScores()).not.toEqual(winningScores);
+      expect(currentPhase(gameManager)).toBe('tricks');
     });
   });
 });

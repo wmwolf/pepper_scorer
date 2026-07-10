@@ -135,7 +135,6 @@ export function calculateGameStats(
   hands: string[], 
   players: string[]
 ): GameStats {
-  console.log('calculateGameStats called with hands:', hands);
   // Initialize statistics
   const stats: GameStats = {
     totalHands: 0,
@@ -206,11 +205,12 @@ export function calculateGameStats(
         const tricksNeeded = ['M', 'D', '6'].includes(bidString) ? 6 : parseInt(bidString) || 4;
         
         if (tricks === 0) {
-          // Defending team set the bidders
-          stats.defensiveWins++;
-          stats.setHands++; // Count this as a set too
+          // Defenders played but took no tricks, so the defending team is set.
+          // This is a set hand, but NOT a defensive set (the defense didn't set the bidder).
+          stats.setHands++;
         } else if (tricks + tricksNeeded > 6) {
-          // Bidding team was set by defenders
+          // Defenders took enough tricks to set the bidding team: a defensive set.
+          stats.defensiveWins++;
           stats.setHands++;
         }
       }
@@ -306,12 +306,6 @@ export function trackAwardData(
   finalScores: [number, number],
   winnerIndex: number | null
 ): AwardTrackingData {
-  console.log('trackAwardData called with:');
-  console.log('- hands:', hands);
-  console.log('- players:', players);
-  console.log('- teams:', teams);
-  console.log('- scores:', finalScores);
-  console.log('- winner:', winnerIndex);
   // Initialize award tracking data
   const awardData = initializeAwardTracking(players, teams);
   
@@ -353,6 +347,13 @@ export function trackAwardData(
         'D': 14
       }[bid] || 0;
       
+      // Per-hand score outcome — needed for running totals and deficit tracking
+      // regardless of whether the bidder resolves to a known player.
+      const [scoreTeam1, scoreTeam2] = calculateScore(hand);
+      const handScores: [number, number] = [scoreTeam1, scoreTeam2];
+      awardData.handScores.push(handScores);
+      const bidderPoints = bidderTeam === 0 ? scoreTeam1 : scoreTeam2;
+
       // 1. Update player-specific stats
       const playerStat = bidderName && bidderName in awardData.playerStats ? awardData.playerStats[bidderName] : undefined;
       if (playerStat) {
@@ -378,15 +379,6 @@ export function trackAwardData(
           playerStat.pepperRoundBids.attempts++;
         }
         
-        // Calculate hand outcome
-        const [scoreTeam1, scoreTeam2] = calculateScore(hand);
-        const handScores: [number, number] = [scoreTeam1, scoreTeam2];
-        awardData.handScores.push(handScores);
-        
-        const bidderPoints = bidderTeam === 0 ? scoreTeam1 : scoreTeam2;
-        // Defender points calculation kept for future feature development
-        // const defenderPoints = bidderTeam === 0 ? scoreTeam2 : scoreTeam1;
-        
         // For MVP calculation: add the actual points this player's team scored on their bid
         playerStat.netPoints += bidderPoints;
         playerStat.pointsPerBid.push(bidderPoints);
@@ -408,8 +400,7 @@ export function trackAwardData(
           // Special case: tricks = 0 means defending team got 0, so bidding team got all 6
           const biddingTeamTricks = 6 - tricks;
           const bidSucceeded = biddingTeamTricks >= tricksNeeded;
-          console.log(`  ${bidderName} bid ${bid}, tricks ${tricks}, tricksNeeded ${tricksNeeded}, bidSucceeded ${bidSucceeded}`);
-          
+
           if (bidSucceeded) {
             // Bid was successful
             playerStat.bidsSucceeded++;
@@ -437,7 +428,6 @@ export function trackAwardData(
             // Track Big Fours: 4-bids where opponents played and got zero (excludes clubs)
             if ((bid === 4 || bid === 'P') && trump !== 'C' && tricks === 0) {
               playerStat.bigFours++;
-              console.log(`  ${bidderName} achieved a Big Four! Trump: ${trump}, Tricks: ${tricks}`);
             }
           } else {
             // Bid failed
@@ -482,7 +472,10 @@ export function trackAwardData(
           }
           
           if (decision === 'P') {
-            const tricksNeeded = bid && ['M', 'D', '6'].includes(String(bid)) ? 6 : (typeof bid === 'number' ? bid : parseInt(String(bid) || '4'));
+            // 'P' (Pepper) is a forced 4-bid; parseInt('P') is NaN, so resolve it explicitly.
+            const tricksNeeded = bid && ['M', 'D', '6'].includes(String(bid))
+              ? 6
+              : (typeof bid === 'number' ? bid : (parseInt(String(bid)) || 4));
             const bidSucceeded = tricks === 0 ? true : tricks + tricksNeeded <= 6; // Special case: tricks = 0 means defending team set (bidding team succeeds)
             
             if (bidSucceeded) {
@@ -496,8 +489,7 @@ export function trackAwardData(
             // Track if defenders successfully set the bidders
             if (!bidSucceeded) {
               defenderTeamStat.successfulDefenses++;
-              console.log(`  ${defenderTeamName} successfully defended against ${bidderName} (set)`);
-              
+
               // For pepper round tracking
               if (inPepperRound) {
                 // Check all players on defending team for opponent set counting
@@ -510,13 +502,10 @@ export function trackAwardData(
                   }
                 });
               }
-            } else {
-              console.log(`  ${defenderTeamName} failed to defend against ${bidderName} (bidder succeeded)`);
             }
-            
+
             defenderTeamStat.totalDefenses++;
-            console.log(`  ${defenderTeamName} totalDefenses: ${defenderTeamStat.totalDefenses}, successfulDefenses: ${defenderTeamStat.successfulDefenses}`);
-            
+
             // Track points allowed to opponents (for "Helping Hand" award)
             defenderTeamStat.pointsAllowedToOpponents += Math.max(0, bidderPoints);
           } else if (decision === 'F') {
@@ -526,41 +515,40 @@ export function trackAwardData(
             if (bid && ['6', 'M', 'D'].includes(bid.toString())) {
               bidderTeamStat.highValueBids.successes++;
             }
-            
-            // Defending team also gained points in negotiation
-            if (tricks > 0) {
-              defenderTeamStat.successfulDefenses++;
-            }
-            
+
+            // A fold is NOT a successful defense: the defenders conceded and merely
+            // negotiated free points rather than setting the bidder. Only count it as
+            // a hand they defended (unsuccessfully).
             defenderTeamStat.totalDefenses++;
           }
         }
-        
-        // 3. Update score history
-        currentScores[0] += handScores[0];
-        currentScores[1] += handScores[1];
-        awardData.pointsHistory.push([...currentScores]);
-        
-        // Check for deficit and comeback
-        const team0Deficit = currentScores[1] - currentScores[0];
-        const team1Deficit = currentScores[0] - currentScores[1];
-        
-        const team0Name = teams[0];
-        if (team0Name && team0Name in awardData.teamStats) {
-          const teamStats = awardData.teamStats[team0Name];
-          if (teamStats && team0Deficit > teamStats.maxDeficit) {
-            teamStats.maxDeficit = team0Deficit;
-            teamStats.minScoreTrailing = currentScores[0];
-          }
+      }
+
+      // 3. Update score history and deficit tracking. This runs for every completed
+      // (non-throw-in) hand regardless of whether the bidder resolved to a known
+      // player, so an out-of-range bidder can't desync the running score line.
+      currentScores[0] += handScores[0];
+      currentScores[1] += handScores[1];
+      awardData.pointsHistory.push([...currentScores]);
+
+      const team0Deficit = currentScores[1] - currentScores[0];
+      const team1Deficit = currentScores[0] - currentScores[1];
+
+      const team0Name = teams[0];
+      if (team0Name && team0Name in awardData.teamStats) {
+        const teamStats = awardData.teamStats[team0Name];
+        if (teamStats && team0Deficit > teamStats.maxDeficit) {
+          teamStats.maxDeficit = team0Deficit;
+          teamStats.minScoreTrailing = currentScores[0];
         }
-        
-        const team1 = teams[1];
-        if (team1 && team1 in awardData.teamStats) {
-          const teamStats = awardData.teamStats[team1];
-          if (teamStats && team1Deficit > teamStats.maxDeficit) {
-            teamStats.maxDeficit = team1Deficit;
-            teamStats.minScoreTrailing = currentScores[1];
-          }
+      }
+
+      const team1 = teams[1];
+      if (team1 && team1 in awardData.teamStats) {
+        const teamStats = awardData.teamStats[team1];
+        if (teamStats && team1Deficit > teamStats.maxDeficit) {
+          teamStats.maxDeficit = team1Deficit;
+          teamStats.minScoreTrailing = currentScores[1];
         }
       }
     } catch (e) {
@@ -613,8 +601,6 @@ export function trackAwardData(
       runningScore[1] += team2Score;
       
       // Check if this bid pushed the WINNING team over 42 AND they actually won
-      console.log(`Hand ${i+1}: running score = ${runningScore}, winner = ${winnerIndex}`);
-      
       // Only check hands where the WINNING team reached 42+
       if (typeof winnerIndex === 'number' && winnerIndex >= 0 && winnerIndex < runningScore.length) {
         const winnerCurrentScore = runningScore[winnerIndex];
@@ -653,13 +639,8 @@ export function trackAwardData(
               // The bidder gets clutch player only if their team gained positive points
               // (meaning they succeeded in their bid or negotiated successfully)
               if (winnerTeamScore > 0) {
-                console.log(`Player ${bidderName} made the clutch winning bid! Team ${winnerIndex} gained ${winnerTeamScore} points.`);
                 playerStat.wonFinalBid = true;
-              } else {
-                console.log(`Player ${bidderName} made a bid but their team won due to opponent failure, not clutch performance.`);
               }
-            } else {
-              console.log(`Player ${bidderName} made the final bid but is NOT on winning team ${winnerIndex}. Bidder team: ${bidderTeam}`);
             }
           }
           break;
@@ -670,12 +651,6 @@ export function trackAwardData(
     awardData.winningTeam = winnerIndex;
     awardData.winningTeamName = teams[winnerIndex] || '';
     awardData.gameCompleted = true;
-    
-    console.log('Assigning winner info to award data:', {
-      winningTeam: awardData.winningTeam,
-      winningTeamName: awardData.winningTeamName,
-      completedStatus: awardData.gameCompleted
-    });
   }
   
   return awardData;
@@ -889,10 +864,9 @@ export function aggregateSeriesAwardData(
             if (['6', 'M', 'D'].includes(bid.toString())) {
               bidderTeamStat.highValueBids.successes++;
             }
-            
-            if (tricks > 0) {
-              defenderTeamStat.successfulDefenses++;
-            }
+
+            // A fold is NOT a successful defense (the defenders conceded rather than
+            // setting the bidder). Only count it as a hand they defended.
             defenderTeamStat.totalDefenses++;
           }
         }
@@ -960,16 +934,7 @@ export function aggregateSeriesAwardData(
   aggregatedData.winningTeam = seriesWinner;
   aggregatedData.winningTeamName = seriesWinner !== null ? teams[seriesWinner] : '';
   aggregatedData.gameCompleted = true;
-  
-  console.log('Series award data aggregated:', {
-    totalHands: allHands.length,
-    games: allGames.length,
-    seriesWinner,
-    playerNetPoints: Object.fromEntries(
-      Object.entries(aggregatedData.playerStats).map(([name, stats]) => [name, stats.netPoints])
-    )
-  });
-  
+
   return aggregatedData;
 }
 

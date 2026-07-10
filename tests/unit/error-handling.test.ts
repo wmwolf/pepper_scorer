@@ -169,22 +169,28 @@ describe('Error Handling and Edge Cases', () => {
       expect(json.length).toBeGreaterThan(0)
     })
 
-    it('handles deserialization of empty JSON', () => {
-      // System is robust and handles empty JSON gracefully
-      expect(() => GameManager.fromJSON('{}')).not.toThrow()
+    it('restores an empty JSON object with safe defaults', () => {
+      // fromJSON tolerates a partial payload (e.g. from Firestore), filling in
+      // defaults so the restored manager is still usable.
+      const manager = GameManager.fromJSON('{}')
+      expect(manager.getScores()).toEqual([0, 0])
+      expect(manager.state.hands).toEqual([])
     })
 
     it('handles deserialization of malformed JSON', () => {
       expect(() => GameManager.fromJSON('invalid json')).toThrow()
     })
 
-    it('handles deserialization of JSON with missing fields', () => {
+    it('fills defaults for JSON with missing fields', () => {
       const incompleteState = {
         players: ['A', 'B', 'C', 'D'],
         teams: ['T1', 'T2']
-        // Missing other required fields
+        // Missing hands/scores — fromJSON fills these in rather than throwing.
       }
-      expect(() => GameManager.fromJSON(JSON.stringify(incompleteState))).not.toThrow()
+      const manager = GameManager.fromJSON(JSON.stringify(incompleteState))
+      expect(manager.state.players).toEqual(['A', 'B', 'C', 'D'])
+      expect(manager.state.hands).toEqual([])
+      expect(manager.getScores()).toEqual([0, 0])
     })
 
     it('handles serialization and deserialization roundtrip', () => {

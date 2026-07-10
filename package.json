@@ -9,7 +9,9 @@
     "astro": "astro",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/**/*.ts"
   },
   "dependencies": {
     "@astrojs/tailwind": "^5.1.4",

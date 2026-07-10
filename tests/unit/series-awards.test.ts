@@ -410,26 +410,27 @@ describe('Series Awards', () => {
 
     it('awards Moon Struck to player with most failed Moon attempts', () => {
       const seriesData = initializeAwardTracking(players, teams)
-      
-      // Alice: 7 attempts, 2 successes = 5 failures (meets minimum of 3)
-      seriesData.playerStats.Alice.highValueBids = { attempts: 7, successes: 2 }
+
+      // moon_struck counts only FAILED Moon (7) / Double Moon (14) bids, not 6-bids.
+      // Alice: 5 failed moons (meets minimum of 3)
+      seriesData.playerStats.Alice.failedBidValues = [7, 7, 7, 14, 7]
       seriesData.playerStats.Alice.bidsWon = 8
-      
-      // Bob: 6 attempts, 3 successes = 3 failures (meets minimum)
-      seriesData.playerStats.Bob.highValueBids = { attempts: 6, successes: 3 }
+
+      // Bob: 3 failed moons (meets minimum)
+      seriesData.playerStats.Bob.failedBidValues = [7, 14, 7]
       seriesData.playerStats.Bob.bidsWon = 6
-      
-      // Charlie: 4 attempts, 2 successes = 2 failures (below minimum)
-      seriesData.playerStats.Charlie.highValueBids = { attempts: 4, successes: 2 }
+
+      // Charlie: 2 failed moons (below minimum) plus failed 6-bids that must NOT count
+      seriesData.playerStats.Charlie.failedBidValues = [7, 7, 6, 6, 6]
       seriesData.playerStats.Charlie.bidsWon = 4
-      
+
       seriesData.gameCompleted = true
-      
+
       const selectedAwards = selectSeriesAwards(seriesData)
       const moonStruck = selectedAwards.find(award => award.id === 'moon_struck')
-      
+
       expect(moonStruck).toBeTruthy()
-      expect(moonStruck?.winner).toBe('Alice') // 5 failed high-value bids vs Bob's 3
+      expect(moonStruck?.winner).toBe('Alice') // 5 failed moons vs Bob's 3
     })
 
     it('awards Feast or Famine to player with highest bidding variance', () => {

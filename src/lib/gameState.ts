@@ -257,9 +257,8 @@ export class GameManager implements IGameManager {
     // If no current hand, we're at the start of the game
     if (!currentHand) {
       if (this.state.hands.length > 0) {
-        // Remove last completed hand and adjust scores
+        // Remove last completed hand
         this.state.hands.pop()!;
-        this.state.scores = this.getScores();
       } else {
         // At very start of game, navigate back to setup
         window.location.href = getPath('');
@@ -268,21 +267,20 @@ export class GameManager implements IGameManager {
     } else {
       const handIndex = this.state.hands.length - 1;
       const phase = getCurrentPhase(currentHand);
-      
+
       // Special case: First pepper round, trump phase
       if (handIndex === 0 && phase === 'trump') {
         window.location.href = getPath('');
         return;
       }
-      
-      // Special case: Pepper round, trump phase (not first hand)
+
       if (isPepperRound(handIndex) && phase === 'trump') {
-        // Remove current hand
+        // Special case: Pepper round, trump phase (not first hand).
+        // Remove current hand, then step the previous hand back one phase.
         this.state.hands.pop();
-        // Go back to previous hand's last phase
         const prevHand = this.state.hands[this.state.hands.length - 1];
         if (prevHand) {
-          // if previous hand was played, remove last character to go back to 
+          // if previous hand was played, remove last character to go back to
           // tricks phase. If it was folded, go back to decision phase
           if (prevHand[4] === 'P') {
             this.state.hands[this.state.hands.length - 1] = prevHand.slice(0, -1);
@@ -290,38 +288,29 @@ export class GameManager implements IGameManager {
             this.state.hands[this.state.hands.length - 1] = prevHand.slice(0, -2);
           }
         }
-
-        return;
-      }
-      
-      // Special case: Bidding phase
-      if (phase === 'bidder') {
-        // Remove current hand (which only has dealer)
+      } else if (phase === 'bidder') {
+        // Special case: Bidding phase. Remove current hand (which only has the
+        // dealer), then step the previous (completed) hand back one phase.
         this.state.hands.pop();
-        // Previous hand exists and should be complete
         if (this.state.hands.length > 0) {
           const prevHand = this.state.hands[this.state.hands.length - 1];
           if (prevHand) {
-            const [team1Score, team2Score] = calculateScore(prevHand);
-            this.state.scores[0] -= team1Score;
-            this.state.scores[1] -= team2Score;
-            // Remove last character to go back to tricks/decision phase
             this.state.hands[this.state.hands.length - 1] = prevHand.slice(0, -1);
           }
         }
-        return;
-      }
-      
-      // Special case: Clubs bid going from tricks to trump
-      if (phase === 'tricks' && currentHand[3] === 'C') {
+      } else if (phase === 'tricks' && currentHand[3] === 'C') {
+        // Special case: Clubs bid going from tricks back to trump
         this.state.hands[handIndex] = currentHand.slice(0, -2);  // Remove decision and tricks
-        return;
+      } else {
+        // Default case: Remove last character
+        this.state.hands[handIndex] = currentHand.slice(0, -1);
       }
-      
-      // Default case: Remove last character
-      this.state.hands[handIndex] = currentHand.slice(0, -1);
     }
-    
+
+    // Recompute scores from scratch (single source of truth) so incremental score
+    // tracking can never drift out of sync with the actual hands after an undo.
+    this.state.scores = this.getScores();
+
     // Check if we've undone a victory condition
     const isCompleteAfterUndo = this.isGameComplete();
     
@@ -350,6 +339,12 @@ export class GameManager implements IGameManager {
             this.state.completedGames.pop();
           }
         }
+
+        // The most recent game completion has been reverted, so any series winner
+        // that this completion set must be cleared unless the series is still decided.
+        if (!this.isSeriesComplete()) {
+          this.state.seriesWinner = undefined;
+        }
       }
     }
   }
@@ -370,6 +365,12 @@ export class GameManager implements IGameManager {
 
   public static fromJSON(json: string): GameManager {
     const state = JSON.parse(json);
+    // Reject a truly corrupt payload (non-object) up front — JSON.parse already
+    // throws on unparseable input. Missing individual fields are tolerated below so
+    // that a partial payload (e.g. restored from Firestore) still loads.
+    if (!state || typeof state !== 'object') {
+      throw new Error('Invalid game state: expected a JSON object');
+    }
     const manager = new GameManager(state.players, state.teams);
 
     // Safely merge the loaded state with the initialized state to ensure all required properties exist
@@ -536,6 +537,10 @@ export class GameManager implements IGameManager {
   public startNextGame(): void {
     if (!this.state.isSeries || this.isSeriesComplete()) {
       throw new Error("Cannot start next game: series is complete or not in series mode");
+    }
+    if (!this.isGameComplete()) {
+      // Guard against silently discarding an in-progress game's hands and scores.
+      throw new Error("Cannot start next game: the current game is not complete");
     }
 
     const { 

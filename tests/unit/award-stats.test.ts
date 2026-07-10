@@ -52,6 +52,51 @@ describe('Award Statistics Display', () => {
     });
   });
 
+  it('does not credit a fold as a successful defense (team stats)', () => {
+    const players = ['Alice', 'Bob', 'Charlie', 'Diana'];
+    // Bidder 3 (Charlie, team 0 -> "Team 1") bids 5 Hearts; the defenders FOLD,
+    // conceding and negotiating 3 free tricks. A fold makes the bid for the bidders
+    // and is NOT a defensive set.
+    const hands = ['135HF3'];
+    const teams = ['Team 1', 'Team 2'];
+    const finalScores: [number, number] = [5, 0];
+
+    const awardData = trackAwardData(hands, players, teams, finalScores, null);
+
+    const biddingTeam = awardData.teamStats['Team 1'];
+    const defendingTeam = awardData.teamStats['Team 2'];
+
+    // The fold makes the bid for the bidding team.
+    expect(biddingTeam.successfulBids).toBe(1);
+
+    // The defending team defended this hand, but did NOT succeed (they folded).
+    expect(defendingTeam.totalDefenses).toBe(1);
+    expect(defendingTeam.successfulDefenses).toBe(0);
+    expect(defendingTeam.defensiveSuccessRate).toBe(0);
+  });
+
+  it('keeps the running score history in sync when a hand has an unknown bidder', () => {
+    const players = ['Alice', 'Bob', 'Charlie', 'Diana'];
+    const teams = ['Team 1', 'Team 2'];
+    // Middle hand has an out-of-range bidder (seat 5 -> no such player). The score
+    // history and deficit tracking must still account for it rather than skipping it.
+    const hands = [
+      '114HP2', // seat 1 (team 0) bids 4, played, defenders take 2 -> [4, 2]
+      '154HP0', // seat 5 (UNKNOWN player, team 0) bids 4, defenders shut out -> [4, -4]
+      '134HP1', // seat 3 (team 0) bids 4, played, defenders take 1 -> [4, 1]
+    ];
+    const finalScores: [number, number] = [12, -1];
+
+    const awardData = trackAwardData(hands, players, teams, finalScores, 0);
+
+    // One handScores entry per completed hand, including the unknown-bidder hand.
+    expect(awardData.handScores).toHaveLength(3);
+    // pointsHistory is the initial [0,0] plus one cumulative entry per completed hand.
+    expect(awardData.pointsHistory).toHaveLength(4);
+    // Cumulative totals reflect all three hands (the unknown-bidder hand is not dropped).
+    expect(awardData.pointsHistory[awardData.pointsHistory.length - 1]).toEqual([12, -1]);
+  });
+
   it('should generate correct stat details for overreaching award', () => {
     const players = ['Alice', 'Bob'];
     const hands = [

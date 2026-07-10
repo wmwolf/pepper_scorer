@@ -204,19 +204,19 @@ function calculateAwardStats(awardId: string, winnerName: string, data: AwardTra
     
     case 'moon_struck': {
       if (!playerStats) return `${winnerName} reached for the moon too often`;
-      
-      const totalFailed = playerStats.highValueBids.attempts - playerStats.highValueBids.successes;
-      
+
       // We need to analyze the actual failed bids to separate Moon vs Double Moon
       let moonFailed = 0;
       let doubleMoonFailed = 0;
-      
+
       // Count from failedBidValues (7 = Moon, 14 = Double Moon)
       playerStats.failedBidValues.forEach(value => {
         if (value === 7) moonFailed++;
         else if (value === 14) doubleMoonFailed++;
       });
-      
+
+      const totalMoonFailed = moonFailed + doubleMoonFailed;
+
       if (doubleMoonFailed > 0 && moonFailed > 0) {
         return `${winnerName} failed ${moonFailed} Moon bids and ${doubleMoonFailed} Double Moon bid${doubleMoonFailed > 1 ? 's' : ''}`;
       } else if (doubleMoonFailed > 0) {
@@ -224,7 +224,7 @@ function calculateAwardStats(awardId: string, winnerName: string, data: AwardTra
       } else if (moonFailed > 0) {
         return `${winnerName} failed ${moonFailed} Moon bid${moonFailed > 1 ? 's' : ''}`;
       } else {
-        return `${winnerName} failed ${totalFailed} high-value bids`;
+        return `${winnerName} failed ${totalMoonFailed} Moon/Double Moon bids`;
       }
     }
     
@@ -347,10 +347,11 @@ function calculateAwardStats(awardId: string, winnerName: string, data: AwardTra
       const partnerNetPoints = partnerStats?.netPoints || 0;
       const playerNetPoints = playerStats.netPoints;
       
-      const partnerContribution = Math.abs(partnerNetPoints);
-      const playerContribution = Math.abs(playerNetPoints);
-      const partnerPercentage = (playerContribution + partnerContribution) > 0 ? 
-        Math.round((partnerContribution / (playerContribution + partnerContribution)) * 100) : 0;
+      // Use signed net points to match the (fixed) award evaluation, which only fires
+      // when the team's combined net contribution is positive.
+      const totalNetPoints = playerNetPoints + partnerNetPoints;
+      const partnerPercentage = totalNetPoints > 0 ?
+        Math.round((partnerNetPoints / totalNetPoints) * 100) : 0;
       
       return `${winnerName} dominated while partner contributed ${partnerPercentage}% (${partnerNetPoints > 0 ? '+' : ''}${partnerNetPoints} vs ${playerNetPoints > 0 ? '+' : ''}${playerNetPoints} net points)`;
     }
@@ -1006,9 +1007,10 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         
         // Get all players with the maximum Big Fours (in case of ties)
         const topPlayers = qualifyingPlayers.filter(p => p.bigFours === maxBigFours);
-        
-        // Random selection from tied players
-        const winner = topPlayers[Math.floor(Math.random() * topPlayers.length)];
+
+        // Deterministic tie-break: pick the first tied player by name so the
+        // same completed game always yields the same winner across re-renders.
+        const winner = [...topPlayers].sort((a, b) => a.name.localeCompare(b.name))[0];
         
         return { 
           ...award, 
@@ -1049,17 +1051,17 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         });
         
         if (qualifyingPlayers.length === 0) return null;
-        
-        // If multiple qualify, pick one at random
-        const winner = qualifyingPlayers[Math.floor(Math.random() * qualifyingPlayers.length)];
-        
-        return { 
-          ...award, 
+
+        // Deterministic tie-break: pick the first qualifying player by name.
+        const winner = [...qualifyingPlayers].sort((a, b) => a.name.localeCompare(b.name))[0];
+
+        return {
+          ...award,
           winner: winner.name,
           statDetails: calculateAwardStats(award.id, winner.name, data)
         };
       }
-      
+
       case 'footprints_in_the_sand': {
         // Player whose team won but partner contributed 25% or less of combined net points
         if (data.winningTeam === undefined) return null;
@@ -1068,12 +1070,14 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         if (winningTeamPlayers.length !== 2) return null;
         
         const [player1, player2] = winningTeamPlayers;
-        const totalContribution = Math.abs(player1.netPoints) + Math.abs(player2.netPoints);
-        
-        if (totalContribution === 0) return null;
-        
-        const player1Percentage = Math.abs(player1.netPoints) / totalContribution;
-        const player2Percentage = Math.abs(player2.netPoints) / totalContribution;
+        // Use signed net points: a player who bled points should NOT count as a dominant contributor.
+        const totalContribution = player1.netPoints + player2.netPoints;
+
+        // If the team's combined net contribution isn't positive, "carried the team" is meaningless.
+        if (totalContribution <= 0) return null;
+
+        const player1Percentage = player1.netPoints / totalContribution;
+        const player2Percentage = player2.netPoints / totalContribution;
         
         // Check if one player dominated (75%+) while partner contributed little (25% or less)
         if (player1Percentage >= 0.75 && player2Percentage <= 0.25) {
@@ -1094,24 +1098,24 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
       }
       
       case 'playing_it_safe': {
-        // Player with 80%+ of successful non-pepper bids as 4-bids, min 5 successful
-        const qualifyingPlayers = playerStats.filter(player => {
+        // Player with 80%+ of successful non-pepper bids as 4-bids, min 5 successful.
+        // Compute each player's ratio in a single pass, then qualify and rank.
+        const playerNames = Object.keys(data.playerStats);
+        const playersWithRatios = playerStats.map(player => {
           let successfulNonPepper4Bids = 0;
           let totalSuccessfulNonPepperBids = 0;
-          
+          const playerIndex = playerNames.indexOf(player.name) + 1;
+
           data.hands.forEach((hand, handIndex) => {
             if (isPepperRound(handIndex) || !isHandComplete(hand)) return;
-            
+
             try {
               const { bidWinner, bid } = decodeHand(hand);
-              const playerNames = Object.keys(data.playerStats);
-              const playerIndex = playerNames.indexOf(player.name) + 1;
-              
               if (bidWinner === playerIndex) {
                 const [score1, score2] = calculateScore(hand);
                 const bidderTeamIndex = (bidWinner - 1) % 2;
                 const bidderScore = bidderTeamIndex === 0 ? score1 : score2;
-                
+
                 // If bid was successful (not set)
                 if (bidderScore >= 0) {
                   totalSuccessfulNonPepperBids++;
@@ -1124,72 +1128,42 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
               // Skip invalid hands
             }
           });
-          
-          return totalSuccessfulNonPepperBids >= 5 && 
-                 (successfulNonPepper4Bids / totalSuccessfulNonPepperBids) >= 0.8;
-        });
-        
-        if (qualifyingPlayers.length === 0) return null;
-        
-        // Find player with highest percentage of 4-bids
-        const playersWithRatios = qualifyingPlayers.map(player => {
-          let successfulNonPepper4Bids = 0;
-          let totalSuccessfulNonPepperBids = 0;
-          
-          data.hands.forEach((hand, handIndex) => {
-            if (isPepperRound(handIndex) || !isHandComplete(hand)) return;
-            
-            try {
-              const { bidWinner, bid } = decodeHand(hand);
-              const playerNames = Object.keys(data.playerStats);
-              const playerIndex = playerNames.indexOf(player.name) + 1;
-              
-              if (bidWinner === playerIndex) {
-                const [score1, score2] = calculateScore(hand);
-                const bidderTeamIndex = (bidWinner - 1) % 2;
-                const bidderScore = bidderTeamIndex === 0 ? score1 : score2;
-                
-                if (bidderScore >= 0) {
-                  totalSuccessfulNonPepperBids++;
-                  if (bid === 4) {
-                    successfulNonPepper4Bids++;
-                  }
-                }
-              }
-            } catch {
-              // Skip invalid hands
-            }
-          });
-          
+
           const ratio = totalSuccessfulNonPepperBids > 0 ? successfulNonPepper4Bids / totalSuccessfulNonPepperBids : 0;
-          return { player, ratio };
+          return { player, ratio, totalSuccessfulNonPepperBids };
         });
-        
-        const winner = playersWithRatios.reduce((highest, current) => 
+
+        const qualifyingPlayers = playersWithRatios.filter(
+          p => p.totalSuccessfulNonPepperBids >= 5 && p.ratio >= 0.8
+        );
+        if (qualifyingPlayers.length === 0) return null;
+
+        // Find player with highest percentage of 4-bids
+        const winner = qualifyingPlayers.reduce((highest, current) =>
           current.ratio > highest.ratio ? current : highest
         );
-        
-        return { 
-          ...award, 
+
+        return {
+          ...award,
           winner: winner.player.name,
           statDetails: calculateAwardStats(award.id, winner.player.name, data)
         };
       }
       
       case 'no_trump_no_problem': {
-        // Player who bid no-trump 50%+ of the time, min 4 bids
-        const qualifyingPlayers = playerStats.filter(player => {
+        // Player who bid no-trump 50%+ of the time, min 4 bids.
+        // Compute each player's ratio in a single pass, then qualify and rank.
+        const playerNames = Object.keys(data.playerStats);
+        const playersWithRatios = playerStats.map(player => {
           let noTrumpBids = 0;
           let totalBids = 0;
-          
+          const playerIndex = playerNames.indexOf(player.name) + 1;
+
           data.hands.forEach(hand => {
             if (!isHandComplete(hand)) return;
-            
+
             try {
               const { bidWinner, trump } = decodeHand(hand);
-              const playerNames = Object.keys(data.playerStats);
-              const playerIndex = playerNames.indexOf(player.name) + 1;
-              
               if (bidWinner === playerIndex) {
                 totalBids++;
                 if (trump === 'N') {
@@ -1200,46 +1174,23 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
               // Skip invalid hands
             }
           });
-          
-          return totalBids >= 4 && (noTrumpBids / totalBids) >= 0.5;
-        });
-        
-        if (qualifyingPlayers.length === 0) return null;
-        
-        // Find player with highest percentage of no-trump bids
-        const playersWithRatios = qualifyingPlayers.map(player => {
-          let noTrumpBids = 0;
-          let totalBids = 0;
-          
-          data.hands.forEach(hand => {
-            if (!isHandComplete(hand)) return;
-            
-            try {
-              const { bidWinner, trump } = decodeHand(hand);
-              const playerNames = Object.keys(data.playerStats);
-              const playerIndex = playerNames.indexOf(player.name) + 1;
-              
-              if (bidWinner === playerIndex) {
-                totalBids++;
-                if (trump === 'N') {
-                  noTrumpBids++;
-                }
-              }
-            } catch {
-              // Skip invalid hands
-            }
-          });
-          
+
           const ratio = totalBids > 0 ? noTrumpBids / totalBids : 0;
-          return { player, ratio };
+          return { player, ratio, totalBids };
         });
-        
-        const winner = playersWithRatios.reduce((highest, current) => 
+
+        const qualifyingPlayers = playersWithRatios.filter(
+          p => p.totalBids >= 4 && p.ratio >= 0.5
+        );
+        if (qualifyingPlayers.length === 0) return null;
+
+        // Find player with highest percentage of no-trump bids
+        const winner = qualifyingPlayers.reduce((highest, current) =>
           current.ratio > highest.ratio ? current : highest
         );
-        
-        return { 
-          ...award, 
+
+        return {
+          ...award,
           winner: winner.player.name,
           statDetails: calculateAwardStats(award.id, winner.player.name, data)
         };
@@ -1352,11 +1303,10 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         );
         
         if (qualifyingPlayers.length === 0) return null;
-        
-        // If multiple qualify, pick one at random
-        const randomIndex = Math.floor(Math.random() * qualifyingPlayers.length);
-        const player = qualifyingPlayers[randomIndex];
-        return player ? { 
+
+        // Deterministic tie-break: pick the first qualifying player by name.
+        const player = [...qualifyingPlayers].sort((a, b) => a.name.localeCompare(b.name))[0];
+        return player ? {
           ...award, 
           winner: player.name,
           statDetails: calculateAwardStats(award.id, player.name, data)
@@ -1364,17 +1314,22 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
       }
       
       case 'moon_struck': {
-        // Most failed moon/double moon attempts
+        // Most failed moon/double moon attempts.
+        // Count only failed Moon (7) and Double Moon (14) bids from failedBidValues,
+        // NOT 6-bids (which highValueBids would also include).
+        const countMoonFailures = (player: typeof playerStats[number]) =>
+          player.failedBidValues.filter(value => value === 7 || value === 14).length;
+
         const qualifyingPlayers = playerStats.filter(player => {
           // Check for at least 3 failed moon/double moon bids
-          return player.highValueBids.attempts - player.highValueBids.successes >= 3;
+          return countMoonFailures(player) >= 3;
         });
-        
+
         if (qualifyingPlayers.length === 0) return null;
-        
+
         const winner = qualifyingPlayers.reduce((most, current) => {
-          const mostFailed = most.highValueBids.attempts - most.highValueBids.successes;
-          const currFailed = current.highValueBids.attempts - current.highValueBids.successes;
+          const mostFailed = countMoonFailures(most);
+          const currFailed = countMoonFailures(current);
           return currFailed > mostFailed ? current : most;
         });
         
@@ -1568,10 +1523,12 @@ export function selectGameAwards(data: AwardTrackingData): AwardWithWinner[] {
     }
   }
   
-  // Try to add basic team award if no team awards yet  
+  // Try to add basic team award if no team awards yet
   if (!selectedAwards.some(a => a.type === 'team')) {
-    // Try defensive success rate or streak awards as fallbacks
-    const fallbackTeamAwards = ['streak_masters', 'defensive_specialists'];
+    // Try defensive or bidding team awards as fallbacks.
+    // These must be GAME-scope team award ids (the `awards` list here is
+    // built from getAwards({ scope: 'game' })), otherwise the lookup never matches.
+    const fallbackTeamAwards = ['defensive_fortress', 'bid_specialists'];
     for (const awardId of fallbackTeamAwards) {
       const awardDef = awards.find(a => a.id === awardId);
       if (awardDef) {
