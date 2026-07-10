@@ -451,7 +451,12 @@ export class FirebaseGameManager extends GameManager {
     // Phase 8b: mirror the auction state and refresh the UI whenever it changes.
     const biddingRef = ref(database, `games/${this.gameId}/bidding`);
     const unsubscribeBidding = onValue(biddingRef, (snapshot) => {
-      this.auctionState = snapshot.exists() ? (snapshot.val() as AuctionState) : null;
+      // Normalize: RTDB drops empty `entries`/`order`, so a freshly-created auction round-trips
+      // with `entries === undefined`. Without this, renderAuction's `auction.entries[seat]` throws
+      // and the auction UI never appears (stuck on "Starting the auction…").
+      this.auctionState = snapshot.exists()
+        ? this.normalizeAuction(snapshot.val() as AuctionState)
+        : null;
       if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
     });
     this.listeners.push(() => off(biddingRef, 'value', unsubscribeBidding));

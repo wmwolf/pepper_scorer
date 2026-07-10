@@ -45,6 +45,26 @@ describe('evaluateGating — host-based model', () => {
     expect(evaluateGating(fakeGm({ host: false, seat: 1, override: true }), HAND, PHASE)).toBeNull()
   })
 
+  it('lets the bid winner pick their OWN trump (pepper auto-win), not just the host', () => {
+    // hand[1]='2' -> bid winner is seat index 1; that seat may pick trump without override.
+    expect(evaluateGating(fakeGm({ host: false, seat: 1 }), '12P', 'trump')).toBeNull()
+  })
+
+  it('blocks a non-bid-winner non-host from picking trump, naming the bid winner', () => {
+    const block = evaluateGating(fakeGm({ host: false, seat: 0 }), '12P', 'trump')
+    expect(block).not.toBeNull()
+    expect(block!.spectator).toBe(false)
+    expect(block!.responsibleName).toBe('B') // gm.state.players[1]
+    expect(block!.verb).toBe('pick trump')
+  })
+
+  it('still gates non-trump phases (decision) to the host even for the bid winner', () => {
+    // The bid winner is not special for decision/tricks — those stay the host's job.
+    const block = evaluateGating(fakeGm({ host: false, seat: 1, hostName: 'Bob' }), '12P', 'decision')
+    expect(block).not.toBeNull()
+    expect(block!.responsibleName).toBe('Bob')
+  })
+
   it('blocks a signed-in non-host seated player, waiting on the host', () => {
     const block = evaluateGating(fakeGm({ host: false, seat: 1, hostName: 'Bob' }), HAND, PHASE)
     expect(block).not.toBeNull()

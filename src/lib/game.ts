@@ -79,11 +79,12 @@ function hostVerbForPhase(phase: string): string {
 }
 
 // Exported as a test seam (tests/unit/gating.test.ts drives it with a fake manager).
-// Decide whether the current viewer may act in `phase`, or must wait. Host-based model:
-// the game creator (host) may enter every decision; other signed-in players wait with a
-// manual-override escape hatch. The concurrent auction (all four signed in) is handled
-// earlier by auctionEligible()/renderAuction, so this only governs the single-device tap
-// flow. Returns null when no gating applies (local game, host, or override on).
+// Decide whether the current viewer may act in `phase`, or must wait. Host-based model with one
+// exception: the **bid winner** enters their OWN trump (a pepper auto-win, or any non-auction
+// hand) — every other decision (bidder/bid/decision/tricks) is the host's. Other signed-in
+// players wait with a manual-override escape hatch. The concurrent auction (all four signed in)
+// is handled earlier by auctionEligible()/renderAuction, so this only governs the tap flow.
+// Returns null when no gating applies (local game, host, the bid winner picking trump, override).
 export function evaluateGating(gm: GameManager, currentHand: string, phase: string): GatingBlock | null {
   const mp = asMultiplayer(gm);
   if (!mp) return null;                 // local game — full control
@@ -102,22 +103,32 @@ export function evaluateGating(gm: GameManager, currentHand: string, phase: stri
   // The host can enter everything.
   if (typeof mp.isHost === 'function' && mp.isHost()) return null;
 
+  // The bid winner picks their OWN trump (bidWinner is currentHand[1], 1-based; 0 = throw-in).
+  const bidWinner = parseInt(currentHand[1] || '0');
+  const trumpSeat = phase === 'trump' && bidWinner ? bidWinner - 1 : null;
+  if (trumpSeat !== null && seat === trumpSeat) return null;
+
   // Signed-in spectator (not seated): read-only.
   if (seat === null) {
     return { spectator: true, responsibleName: 'the players', verb, arrow: '', directionText: '' };
   }
 
-  // Presence fallback: once presence is known, if the host is offline, drop gating so the
-  // seated players aren't stuck waiting on an absent host. Guarded by hasPresenceData() so
-  // the first paint (before presence loads) keeps gating intact.
+  // Presence fallback: once presence is known, if the responsible party is offline, drop gating
+  // so play isn't stuck. Responsible = the bid winner for trump, else the host. Guarded by
+  // hasPresenceData() so the first paint (before presence loads) keeps gating intact.
   const presenceKnown = typeof mp.hasPresenceData === 'function' && mp.hasPresenceData();
-  if (presenceKnown && typeof mp.isHostPresent === 'function' && !mp.isHostPresent()) {
-    return null;
+  if (presenceKnown) {
+    const responsiblePresent = trumpSeat !== null
+      ? (typeof mp.isSeatPresent === 'function' ? mp.isSeatPresent(trumpSeat) : true)
+      : (typeof mp.isHostPresent === 'function' ? mp.isHostPresent() : true);
+    if (!responsiblePresent) return null;
   }
 
-  // Blocked: a seated non-host player waits on the host (or overrides).
-  const hostName = typeof mp.getHostName === 'function' ? mp.getHostName() : 'the host';
-  return { spectator: false, responsibleName: hostName, verb, arrow: '', directionText: '' };
+  // Blocked: wait on the responsible party (the bid winner for trump, else the host).
+  const responsibleName = trumpSeat !== null
+    ? (mp.getFirebasePlayers()[trumpSeat]?.displayName || gm.state.players[trumpSeat] || `Seat ${trumpSeat + 1}`)
+    : (typeof mp.getHostName === 'function' ? mp.getHostName() : 'the host');
+  return { spectator: false, responsibleName, verb, arrow: '', directionText: '' };
 }
 
 // Extend window interface for global properties
@@ -395,6 +406,11 @@ export function renderAuction(gm: GameManager, mp: MultiplayerManager) {
         container.innerHTML = '<p class="text-gray-600">Starting the auction…</p>';
         return;
     }
+    // Defensive: RTDB drops empty `entries`/`order`, so a freshly-created auction may arrive with
+    // them undefined. The manager normalizes on read, but guard here too (this UI is untested):
+    // without it, `auction.entries[seat]` would throw and freeze the whole auction.
+    if (!auction.entries) auction.entries = {};
+    if (!auction.order) auction.order = [];
 
     const mySeat0 = mp.getMySeat();          // 0-based or null (spectator)
     const mySeat = mySeat0 === null ? null : mySeat0 + 1; // 1-based

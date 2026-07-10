@@ -58,6 +58,25 @@ beforeEach(() => {
   ;(window as unknown as { updateUI?: () => void }).updateUI = undefined
 })
 
+describe('freshly-created auction (RTDB dropped empty entries/order)', () => {
+  it('renders without crashing when entries/order are undefined', () => {
+    // A just-created auction round-trips through RTDB with entries (and possibly order) dropped.
+    // renderAuction must not throw on `auction.entries[seat]` — else the UI freezes on
+    // "Starting the auction…" (the multi-device auction-stuck bug).
+    const gm = { state: { players: ['Alice', 'Bob', 'Carol', 'Dave'], hands: ['1'] } }
+    const mp = {
+      getMySeat: () => 1,
+      getFirebasePlayers: () => [],
+      getAuction: () => ({ handIndex: 0, order: [2, 3, 4, 1] }), // no `entries` key
+      ensureAuctionForCurrentHand: async () => {},
+      enterBid: async () => {},
+      setTrump: async () => {},
+    }
+    expect(() => renderAuction(gm as never, mp as never)).not.toThrow()
+    expect(html()).toContain('Bidding')
+  })
+})
+
 describe('concurrent bid entry (no turn pointer)', () => {
   it('offers every bid value plus Pass immediately, before anyone has entered', () => {
     // dealer 1 -> order [2,3,4,1]; viewer is seat 2 (0-based 1).
