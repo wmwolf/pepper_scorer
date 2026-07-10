@@ -204,19 +204,19 @@ function calculateAwardStats(awardId: string, winnerName: string, data: AwardTra
     
     case 'moon_struck': {
       if (!playerStats) return `${winnerName} reached for the moon too often`;
-      
-      const totalFailed = playerStats.highValueBids.attempts - playerStats.highValueBids.successes;
-      
+
       // We need to analyze the actual failed bids to separate Moon vs Double Moon
       let moonFailed = 0;
       let doubleMoonFailed = 0;
-      
+
       // Count from failedBidValues (7 = Moon, 14 = Double Moon)
       playerStats.failedBidValues.forEach(value => {
         if (value === 7) moonFailed++;
         else if (value === 14) doubleMoonFailed++;
       });
-      
+
+      const totalMoonFailed = moonFailed + doubleMoonFailed;
+
       if (doubleMoonFailed > 0 && moonFailed > 0) {
         return `${winnerName} failed ${moonFailed} Moon bids and ${doubleMoonFailed} Double Moon bid${doubleMoonFailed > 1 ? 's' : ''}`;
       } else if (doubleMoonFailed > 0) {
@@ -224,7 +224,7 @@ function calculateAwardStats(awardId: string, winnerName: string, data: AwardTra
       } else if (moonFailed > 0) {
         return `${winnerName} failed ${moonFailed} Moon bid${moonFailed > 1 ? 's' : ''}`;
       } else {
-        return `${winnerName} failed ${totalFailed} high-value bids`;
+        return `${winnerName} failed ${totalMoonFailed} Moon/Double Moon bids`;
       }
     }
     
@@ -1007,9 +1007,10 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         
         // Get all players with the maximum Big Fours (in case of ties)
         const topPlayers = qualifyingPlayers.filter(p => p.bigFours === maxBigFours);
-        
-        // Random selection from tied players
-        const winner = topPlayers[Math.floor(Math.random() * topPlayers.length)];
+
+        // Deterministic tie-break: pick the first tied player by name so the
+        // same completed game always yields the same winner across re-renders.
+        const winner = [...topPlayers].sort((a, b) => a.name.localeCompare(b.name))[0];
         
         return { 
           ...award, 
@@ -1050,17 +1051,17 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         });
         
         if (qualifyingPlayers.length === 0) return null;
-        
-        // If multiple qualify, pick one at random
-        const winner = qualifyingPlayers[Math.floor(Math.random() * qualifyingPlayers.length)];
-        
-        return { 
-          ...award, 
+
+        // Deterministic tie-break: pick the first qualifying player by name.
+        const winner = [...qualifyingPlayers].sort((a, b) => a.name.localeCompare(b.name))[0];
+
+        return {
+          ...award,
           winner: winner.name,
           statDetails: calculateAwardStats(award.id, winner.name, data)
         };
       }
-      
+
       case 'footprints_in_the_sand': {
         // Player whose team won but partner contributed 25% or less of combined net points
         if (data.winningTeam === undefined) return null;
@@ -1355,11 +1356,10 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
         );
         
         if (qualifyingPlayers.length === 0) return null;
-        
-        // If multiple qualify, pick one at random
-        const randomIndex = Math.floor(Math.random() * qualifyingPlayers.length);
-        const player = qualifyingPlayers[randomIndex];
-        return player ? { 
+
+        // Deterministic tie-break: pick the first qualifying player by name.
+        const player = [...qualifyingPlayers].sort((a, b) => a.name.localeCompare(b.name))[0];
+        return player ? {
           ...award, 
           winner: player.name,
           statDetails: calculateAwardStats(award.id, player.name, data)
@@ -1367,17 +1367,22 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
       }
       
       case 'moon_struck': {
-        // Most failed moon/double moon attempts
+        // Most failed moon/double moon attempts.
+        // Count only failed Moon (7) and Double Moon (14) bids from failedBidValues,
+        // NOT 6-bids (which highValueBids would also include).
+        const countMoonFailures = (player: typeof playerStats[number]) =>
+          player.failedBidValues.filter(value => value === 7 || value === 14).length;
+
         const qualifyingPlayers = playerStats.filter(player => {
           // Check for at least 3 failed moon/double moon bids
-          return player.highValueBids.attempts - player.highValueBids.successes >= 3;
+          return countMoonFailures(player) >= 3;
         });
-        
+
         if (qualifyingPlayers.length === 0) return null;
-        
+
         const winner = qualifyingPlayers.reduce((most, current) => {
-          const mostFailed = most.highValueBids.attempts - most.highValueBids.successes;
-          const currFailed = current.highValueBids.attempts - current.highValueBids.successes;
+          const mostFailed = countMoonFailures(most);
+          const currFailed = countMoonFailures(current);
           return currFailed > mostFailed ? current : most;
         });
         
@@ -1572,10 +1577,12 @@ export function selectGameAwards(data: AwardTrackingData): AwardWithWinner[] {
     }
   }
   
-  // Try to add basic team award if no team awards yet  
+  // Try to add basic team award if no team awards yet
   if (!selectedAwards.some(a => a.type === 'team')) {
-    // Try defensive success rate or streak awards as fallbacks
-    const fallbackTeamAwards = ['streak_masters', 'defensive_specialists'];
+    // Try defensive or bidding team awards as fallbacks.
+    // These must be GAME-scope team award ids (the `awards` list here is
+    // built from getAwards({ scope: 'game' })), otherwise the lookup never matches.
+    const fallbackTeamAwards = ['defensive_fortress', 'bid_specialists'];
     for (const awardId of fallbackTeamAwards) {
       const awardDef = awards.find(a => a.id === awardId);
       if (awardDef) {

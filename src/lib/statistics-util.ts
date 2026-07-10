@@ -135,7 +135,6 @@ export function calculateGameStats(
   hands: string[], 
   players: string[]
 ): GameStats {
-  console.log('calculateGameStats called with hands:', hands);
   // Initialize statistics
   const stats: GameStats = {
     totalHands: 0,
@@ -307,12 +306,6 @@ export function trackAwardData(
   finalScores: [number, number],
   winnerIndex: number | null
 ): AwardTrackingData {
-  console.log('trackAwardData called with:');
-  console.log('- hands:', hands);
-  console.log('- players:', players);
-  console.log('- teams:', teams);
-  console.log('- scores:', finalScores);
-  console.log('- winner:', winnerIndex);
   // Initialize award tracking data
   const awardData = initializeAwardTracking(players, teams);
   
@@ -409,8 +402,7 @@ export function trackAwardData(
           // Special case: tricks = 0 means defending team got 0, so bidding team got all 6
           const biddingTeamTricks = 6 - tricks;
           const bidSucceeded = biddingTeamTricks >= tricksNeeded;
-          console.log(`  ${bidderName} bid ${bid}, tricks ${tricks}, tricksNeeded ${tricksNeeded}, bidSucceeded ${bidSucceeded}`);
-          
+
           if (bidSucceeded) {
             // Bid was successful
             playerStat.bidsSucceeded++;
@@ -438,7 +430,6 @@ export function trackAwardData(
             // Track Big Fours: 4-bids where opponents played and got zero (excludes clubs)
             if ((bid === 4 || bid === 'P') && trump !== 'C' && tricks === 0) {
               playerStat.bigFours++;
-              console.log(`  ${bidderName} achieved a Big Four! Trump: ${trump}, Tricks: ${tricks}`);
             }
           } else {
             // Bid failed
@@ -500,8 +491,7 @@ export function trackAwardData(
             // Track if defenders successfully set the bidders
             if (!bidSucceeded) {
               defenderTeamStat.successfulDefenses++;
-              console.log(`  ${defenderTeamName} successfully defended against ${bidderName} (set)`);
-              
+
               // For pepper round tracking
               if (inPepperRound) {
                 // Check all players on defending team for opponent set counting
@@ -514,13 +504,10 @@ export function trackAwardData(
                   }
                 });
               }
-            } else {
-              console.log(`  ${defenderTeamName} failed to defend against ${bidderName} (bidder succeeded)`);
             }
-            
+
             defenderTeamStat.totalDefenses++;
-            console.log(`  ${defenderTeamName} totalDefenses: ${defenderTeamStat.totalDefenses}, successfulDefenses: ${defenderTeamStat.successfulDefenses}`);
-            
+
             // Track points allowed to opponents (for "Helping Hand" award)
             defenderTeamStat.pointsAllowedToOpponents += Math.max(0, bidderPoints);
           } else if (decision === 'F') {
@@ -530,12 +517,10 @@ export function trackAwardData(
             if (bid && ['6', 'M', 'D'].includes(bid.toString())) {
               bidderTeamStat.highValueBids.successes++;
             }
-            
-            // Defending team also gained points in negotiation
-            if (tricks > 0) {
-              defenderTeamStat.successfulDefenses++;
-            }
-            
+
+            // A fold is NOT a successful defense: the defenders conceded and merely
+            // negotiated free points rather than setting the bidder. Only count it as
+            // a hand they defended (unsuccessfully).
             defenderTeamStat.totalDefenses++;
           }
         }
@@ -617,8 +602,6 @@ export function trackAwardData(
       runningScore[1] += team2Score;
       
       // Check if this bid pushed the WINNING team over 42 AND they actually won
-      console.log(`Hand ${i+1}: running score = ${runningScore}, winner = ${winnerIndex}`);
-      
       // Only check hands where the WINNING team reached 42+
       if (typeof winnerIndex === 'number' && winnerIndex >= 0 && winnerIndex < runningScore.length) {
         const winnerCurrentScore = runningScore[winnerIndex];
@@ -657,13 +640,8 @@ export function trackAwardData(
               // The bidder gets clutch player only if their team gained positive points
               // (meaning they succeeded in their bid or negotiated successfully)
               if (winnerTeamScore > 0) {
-                console.log(`Player ${bidderName} made the clutch winning bid! Team ${winnerIndex} gained ${winnerTeamScore} points.`);
                 playerStat.wonFinalBid = true;
-              } else {
-                console.log(`Player ${bidderName} made a bid but their team won due to opponent failure, not clutch performance.`);
               }
-            } else {
-              console.log(`Player ${bidderName} made the final bid but is NOT on winning team ${winnerIndex}. Bidder team: ${bidderTeam}`);
             }
           }
           break;
@@ -674,12 +652,6 @@ export function trackAwardData(
     awardData.winningTeam = winnerIndex;
     awardData.winningTeamName = teams[winnerIndex] || '';
     awardData.gameCompleted = true;
-    
-    console.log('Assigning winner info to award data:', {
-      winningTeam: awardData.winningTeam,
-      winningTeamName: awardData.winningTeamName,
-      completedStatus: awardData.gameCompleted
-    });
   }
   
   return awardData;
@@ -893,10 +865,9 @@ export function aggregateSeriesAwardData(
             if (['6', 'M', 'D'].includes(bid.toString())) {
               bidderTeamStat.highValueBids.successes++;
             }
-            
-            if (tricks > 0) {
-              defenderTeamStat.successfulDefenses++;
-            }
+
+            // A fold is NOT a successful defense (the defenders conceded rather than
+            // setting the bidder). Only count it as a hand they defended.
             defenderTeamStat.totalDefenses++;
           }
         }
@@ -964,16 +935,7 @@ export function aggregateSeriesAwardData(
   aggregatedData.winningTeam = seriesWinner;
   aggregatedData.winningTeamName = seriesWinner !== null ? teams[seriesWinner] : '';
   aggregatedData.gameCompleted = true;
-  
-  console.log('Series award data aggregated:', {
-    totalHands: allHands.length,
-    games: allGames.length,
-    seriesWinner,
-    playerNetPoints: Object.fromEntries(
-      Object.entries(aggregatedData.playerStats).map(([name, stats]) => [name, stats.netPoints])
-    )
-  });
-  
+
   return aggregatedData;
 }
 

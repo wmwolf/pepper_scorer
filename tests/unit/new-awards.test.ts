@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { 
+import {
   selectGameAwards,
+  selectSeriesAwards,
   gameAwards
 } from '../../src/lib/pepper-awards'
 import { 
@@ -389,5 +390,76 @@ describe('New Awards System', () => {
       expect(footprints?.important).toBe(false) // Positive but not important
       expect(shootMoons?.important).toBe(true) // Important positive
     })
+  })
+})
+
+describe('Moon Struck Award - only counts failed Moon/Double Moon bids', () => {
+  const players = ['Alice', 'Bob', 'Charlie', 'Dana']
+  const teams = ['Team 1', 'Team 2']
+
+  it('does NOT qualify when a player only fails 6-bids (no moon/double moon)', () => {
+    // Alice (player 1) plays three 6-bids and is set every time.
+    // Failed 6-bids push value 6 into failedBidValues, NOT 7 (Moon) or 14 (Double Moon).
+    const hands = [
+      '116HP2', // Alice bids 6, played, defenders get 2 -> bidder set (failed 6)
+      '216HP2', // Alice bids 6, played, defenders get 2 -> bidder set (failed 6)
+      '316HP2', // Alice bids 6, played, defenders get 2 -> bidder set (failed 6)
+    ]
+
+    const awardData = trackAwardData(hands, players, teams, [0, 18], 1)
+
+    // Sanity: three failed 6-bids, zero failed moons/double-moons.
+    expect(awardData.playerStats.Alice.failedBidValues.filter(v => v === 6).length).toBe(3)
+    expect(awardData.playerStats.Alice.failedBidValues.filter(v => v === 7 || v === 14).length).toBe(0)
+
+    const awards = selectSeriesAwards(awardData)
+    const moonStruck = awards.find(a => a.id === 'moon_struck')
+    expect(moonStruck).toBeUndefined()
+  })
+
+  it('qualifies the player who fails the requisite number of Moon/Double Moon bids', () => {
+    // Alice (player 1) plays three Moon bids and is set every time -> 3 failed moons.
+    const hands = [
+      '11MHP2', // Alice bids Moon, played, defenders get 2 -> moon failed (value 7)
+      '21MHP2', // Alice bids Moon, played, defenders get 2 -> moon failed (value 7)
+      '31MHP2', // Alice bids Moon, played, defenders get 2 -> moon failed (value 7)
+    ]
+
+    const awardData = trackAwardData(hands, players, teams, [0, 21], 1)
+
+    // Sanity: three failed moons.
+    expect(awardData.playerStats.Alice.failedBidValues.filter(v => v === 7 || v === 14).length).toBe(3)
+
+    const awards = selectSeriesAwards(awardData)
+    const moonStruck = awards.find(a => a.id === 'moon_struck')
+    expect(moonStruck).toBeDefined()
+    expect(moonStruck?.winner).toBe('Alice')
+  })
+})
+
+describe('Game team-award fallback references valid game-scope ids', () => {
+  const players = ['Alice', 'Bob', 'Charlie', 'Dana']
+  const teams = ['Team 1', 'Team 2']
+
+  it('yields a team-scoped award when a team dominates defensively', () => {
+    // Alice (player 1, Team 1) bids 4 and is set five times.
+    // Team 2 (the defenders) therefore set the bidders 5 times -> defensive_fortress qualifies.
+    // The fallback (and main team-award selection) must resolve to a real game-scope team id.
+    const hands = [
+      '114HP3', // Alice bids 4, set (defenders get 3)
+      '214HP3',
+      '314HP3',
+      '414HP3',
+      '114HP3',
+    ]
+
+    const awardData = trackAwardData(hands, players, teams, [0, 20], 1)
+
+    const awards = selectGameAwards(awardData)
+    const teamAward = awards.find(a => a.type === 'team')
+    expect(teamAward).toBeDefined()
+    // The only game-scope team awards that can be produced here are valid game-scope ids.
+    expect(['defensive_fortress', 'bid_specialists', 'remember_the_time', 'helping_hand'])
+      .toContain(teamAward?.id)
   })
 })
