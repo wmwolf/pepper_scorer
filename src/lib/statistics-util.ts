@@ -206,11 +206,12 @@ export function calculateGameStats(
         const tricksNeeded = ['M', 'D', '6'].includes(bidString) ? 6 : parseInt(bidString) || 4;
         
         if (tricks === 0) {
-          // Defending team set the bidders
-          stats.defensiveWins++;
-          stats.setHands++; // Count this as a set too
+          // Defenders played but took no tricks, so the defending team is set.
+          // This is a set hand, but NOT a defensive set (the defense didn't set the bidder).
+          stats.setHands++;
         } else if (tricks + tricksNeeded > 6) {
-          // Bidding team was set by defenders
+          // Defenders took enough tricks to set the bidding team: a defensive set.
+          stats.defensiveWins++;
           stats.setHands++;
         }
       }
@@ -482,7 +483,10 @@ export function trackAwardData(
           }
           
           if (decision === 'P') {
-            const tricksNeeded = bid && ['M', 'D', '6'].includes(String(bid)) ? 6 : (typeof bid === 'number' ? bid : parseInt(String(bid) || '4'));
+            // 'P' (Pepper) is a forced 4-bid; parseInt('P') is NaN, so resolve it explicitly.
+            const tricksNeeded = bid && ['M', 'D', '6'].includes(String(bid))
+              ? 6
+              : (typeof bid === 'number' ? bid : (parseInt(String(bid)) || 4));
             const bidSucceeded = tricks === 0 ? true : tricks + tricksNeeded <= 6; // Special case: tricks = 0 means defending team set (bidding team succeeds)
             
             if (bidSucceeded) {
