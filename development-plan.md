@@ -250,16 +250,14 @@ the player left of the dealer). On top of that sits an **optimistic pre-commit l
   bid, it **auto-passes if the pre-set bid is equal to or lower than any prior bid** (bids must
   be strictly higher); otherwise it enters as the pre-set bid. A pass pre-commit always applies.
   (We cannot reliably re-prompt an absent player, hence auto-pass rather than re-ask.)
-- **Optional pre-selected trump:** the moment a player *submits* a bid (whether in turn or as a
-  pre-bid), control passes to the next bidder immediately — but if they bid (did not pass) they
-  may **optionally pick their trump right then**, while the auction continues, also hidden until
-  reveal. Then at auction end:
-    - if they **won and pre-picked trump** → the win is announced *together with* trump and the
-      separate trump step is skipped;
-    - if they **won without a pre-picked trump** → the trump prompt stays up on their phone with
-      a visual "waiting on you to pick trump" indicator (this is the existing gated trump phase).
-  Pre-picking trump is optional, exactly like pre-bidding. (The `bids` scaffold already carries
-  the optional `suit?` field for this.)
+- **Trump is chosen as part of the bid.** Placing a bid (in turn or as a pre-bid) is a two-tap
+  action: pick the bid value, then pick trump; picking the suit is what submits it. There is
+  **no "decide trump later"** option — it was removed as redundant (if you're outbid the choice
+  is discarded anyway; if you win you'd have to pick trump regardless). Pass submits immediately
+  with no trump. Because the winner therefore always has trump attached, the win is announced
+  *with* trump and the auction hands straight to the defenders' decision — the separate gated
+  trump phase never fires for auction hands (it remains only for **pepper rounds**, which don't
+  use the auction). The bid + suit stay hidden until revealed in sequence.
 - After trump is known, the defending team gets the play/fold/negotiate decision (8a gating).
 
 #### Session sequencing (decided 2026-07-09): foundation first, then the auction

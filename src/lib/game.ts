@@ -432,11 +432,11 @@ function renderAuction(gm: GameManager, mp: MultiplayerManager) {
     const bidButtons = (values: BidValue[], attr: string) =>
         values.map(v => `<button class="${attr}" data-bidval="${v}">${bidToString(v)}</button>`).join('');
 
-    // The optional trump pre-pick step, shown after a bid value is staged. Picking a suit
-    // submits the bid with that trump (skipping the trump step if this bid wins); "Decide
-    // later" submits the bid alone (trump is prompted normally if they win).
+    // The trump step, shown after a bid value is staged. Trump is chosen as part of the bid
+    // (picking a suit submits it), so the winner never needs a separate trump prompt. "Back"
+    // returns to bid selection. Pass never reaches here (it submits with no trump).
     const trumpPick = (value: BidValue) => `
-        <p class="text-gray-800 mb-2">Bidding <strong>${bidToString(value)}</strong>. Pick trump now (optional):</p>
+        <p class="text-gray-800 mb-2">Bidding <strong>${bidToString(value)}</strong>. Choose your trump:</p>
         <div class="grid grid-cols-3 md:grid-cols-5 gap-3">
             <button class="btn-auction-suit" data-suit="C">♣️</button>
             <button class="btn-auction-suit" data-suit="D">♦️</button>
@@ -444,8 +444,7 @@ function renderAuction(gm: GameManager, mp: MultiplayerManager) {
             <button class="btn-auction-suit" data-suit="S">♠️</button>
             <button class="btn-auction-suit" data-suit="N"><span class="text-xl font-mathematical">∅</span></button>
         </div>
-        <div class="flex items-center gap-4 mt-3">
-            <button id="auction-decide-later" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700">Submit — decide trump later</button>
+        <div class="mt-3">
             <button id="auction-stage-back" class="text-sm text-gray-500 underline">Back</button>
         </div>`;
 
@@ -541,11 +540,10 @@ function wireAuctionButtons(gm: GameManager, mp: MultiplayerManager, auction: Au
         btn.addEventListener('click', async () => { auctionEditingSeat = null; await mp.preCommitBid(mySeat, 'PASS'); refresh(); });
     });
 
-    // Trump pre-pick step.
+    // Trump step: picking a suit submits the staged bid with that trump.
     document.querySelectorAll('.btn-auction-suit').forEach(btn => {
         btn.addEventListener('click', () => submitStaged((btn as HTMLElement).dataset.suit));
     });
-    document.getElementById('auction-decide-later')?.addEventListener('click', () => submitStaged(undefined));
     document.getElementById('auction-stage-back')?.addEventListener('click', () => { auctionStagedBid = null; refresh(); });
 
     // Pre-commit edit/cancel.
