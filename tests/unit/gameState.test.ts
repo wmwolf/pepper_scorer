@@ -91,7 +91,7 @@ describe('encodeHand and decodeHand', () => {
     const decoded = decodeHand(encoded)
     expect(decoded.dealer).toBe(1)
     expect(decoded.bidWinner).toBe(2)
-    expect(decoded.bid).toBe('5')
+    expect(decoded.bid).toBe(5) // numeric bids decode to numbers ('P'/'M'/'D' stay as letters)
     expect(decoded.trump).toBe('H')
     expect(decoded.decision).toBe('P')
     expect(decoded.tricks).toBe(3)

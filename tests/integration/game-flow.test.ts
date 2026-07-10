@@ -1,228 +1,172 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { GameManager, getCurrentPhase, isPepperRound } from '@/lib/gameState';
+import { GameManager, isPepperRound } from '@/lib/gameState';
+import {
+  newGame, setBidder, setBid, setTrump, setDecision, setTricks, playHand,
+  currentPhase, currentHandIndex,
+} from '../helpers/gameActions';
+
+// This file drives the REAL GameManager (compact string encoding + production
+// scoring). A few key facts the assertions below depend on:
+//   * Win condition is score >= 42 AND the two scores differ (NOT 30, no clamping;
+//     scores may legitimately go negative).
+//   * On a normal made play the defenders score their trick count.
+//   * A fold needs a trailing free-tricks digit to complete the hand; the bidding
+//     team gets the bid and the defenders get the free digit (their only source of
+//     "free points" in production — there is no "free tricks on a play").
+//   * After a hand completes the manager auto-seeds the next hand's dealer, so the
+//     count of COMPLETED hands is tracked via `currentHandIndex`.
 
 describe('Game Flow Integration', () => {
   let gameManager: GameManager;
 
   beforeEach(() => {
-    gameManager = new GameManager(['Alice', 'Bob', 'Charlie', 'Dave'], ['Team 1', 'Team 2']);
+    gameManager = newGame(['Alice', 'Bob', 'Charlie', 'Dave'], ['Team 1', 'Team 2']);
   });
 
   describe('Complete Single Game', () => {
     it('should handle a complete game from start to finish', () => {
-      expect(getCurrentPhase(gameManager.getCurrentHand())).toBe('bidder');
-      expect(gameManager.state.hands.length).toBe(0);
+      // Team 0 = bidders 1 & 3, Team 1 = bidders 2 & 4.
+      expect(currentPhase(gameManager)).toBe('bidder');
+      expect(currentHandIndex(gameManager)).toBe(0);
       expect(gameManager.isGameComplete()).toBe(false);
 
-      // Hand 1: Alice bids 4, makes it
-      gameManager.addHandPart('1'); // Dealer
-      gameManager.addHandPart('1'); // Alice wins bid
-      expect(getCurrentPhase(gameManager.getCurrentHand())).toBe('bid');
-      
-      gameManager.addHandPart('4'); // Bid 4
-      expect(getCurrentPhase(gameManager.getCurrentHand())).toBe('trump');
-      
-      gameManager.addHandPart('H'); // Trump Hearts
-      expect(getCurrentPhase(gameManager.getCurrentHand())).toBe('decision');
-      
-      gameManager.addHandPart('P'); // Play
-      expect(getCurrentPhase(gameManager.getCurrentHand())).toBe('tricks');
-      
-      gameManager.addHandPart('2'); // Defending team gets 2 tricks, bidding team gets 4
-      expect(gameManager.state.hands.length).toBe(1);
-      
-      const scores = gameManager.getScores();
-      expect(scores[0]).toBe(4); // Alice's team made 4
-      expect(scores[1]).toBe(0); // Bob's team got 0
+      // Hand 1: team 0 bids 4, plays, defenders take 2 -> normal make [4, 2]
+      // (walk the phase machine explicitly to prove the transitions).
+      setBidder(gameManager, 1);
+      expect(currentPhase(gameManager)).toBe('bid');
+      setBid(gameManager, 4);
+      expect(currentPhase(gameManager)).toBe('trump');
+      setTrump(gameManager, 'H');
+      expect(currentPhase(gameManager)).toBe('decision');
+      setDecision(gameManager, 'P');
+      expect(currentPhase(gameManager)).toBe('tricks');
+      setTricks(gameManager, 2);
+      expect(currentHandIndex(gameManager)).toBe(1);
+      expect(gameManager.getScores()).toEqual([4, 2]);
 
-      // Hand 2: Bob bids 5, gets set
-      gameManager.addHandPart('2'); // Dealer 2
-      gameManager.addHandPart('2'); // Bob wins bid
-      gameManager.addHandPart('5'); // Bid 5
-      gameManager.addHandPart('S'); // Trump Spades
-      gameManager.addHandPart('P'); // Play
-      gameManager.addHandPart('4'); // Defending team gets 4 tricks, bidding team gets 2
-      
-      const scores2 = gameManager.getScores();
-      expect(scores2[0]).toBe(9); // Alice's team: 4 + 5 (for setting Bob)
-      expect(scores2[1]).toBe(0); // Bob's team: 0 - 5 = -5, but clamped to 0
+      // Hand 2: team 1 bids 5 and folds with 0 free tricks -> [+5 to team 1].
+      playHand(gameManager, { bidder: 2, bid: 5, trump: 'S', decision: 'F', foldFreeTricks: 0 });
+      expect(gameManager.getScores()).toEqual([4, 7]);
 
-      // Continue playing until game ends (need to reach 30 points)
-      // Hand 3: Charlie bids 6
-      gameManager.addHandPart('3'); // Dealer 3
-      gameManager.addHandPart('3'); // Charlie wins bid
-      gameManager.addHandPart('6'); // Bid 6
-      gameManager.addHandPart('D'); // Trump Diamonds
-      gameManager.addHandPart('P'); // Play
-      gameManager.addHandPart('0'); // Charlie's team takes all 6 tricks
-      
-      const scores3 = gameManager.getScores();
-      expect(scores3[0]).toBe(9); // Alice's team unchanged
-      expect(scores3[1]).toBe(6); // Bob's team gets 6
+      // Hand 3: team 0 bids a moon (7), plays, defenders shut out -> defenders set.
+      playHand(gameManager, { bidder: 1, bid: 'M', trump: 'N', decision: 'P', tricks: 0 });
+      expect(gameManager.getScores()).toEqual([11, 0]); // team0 +7, team1 -7
 
-      // Hand 4: Dave bids Double Moon (14 points)
-      gameManager.addHandPart('4'); // Dealer 4
-      gameManager.addHandPart('4'); // Dave wins bid
-      gameManager.addHandPart('D'); // Double Moon
-      gameManager.addHandPart('C'); // Trump Clubs
-      gameManager.addHandPart('P'); // Play
-      gameManager.addHandPart('0'); // Dave's team takes all tricks
-      
-      const scores4 = gameManager.getScores();
-      expect(scores4[0]).toBe(23); // Alice's team: 9 + 14 = 23
-      expect(scores4[1]).toBe(6); // Bob's team unchanged
+      // Hand 4: team 1 bids 6, plays, defenders take 3 -> bidding team set,
+      // defenders score their 3 tricks.
+      playHand(gameManager, { bidder: 2, bid: 6, trump: 'D', decision: 'P', tricks: 3 });
+      expect(gameManager.getScores()).toEqual([14, -6]); // team0 +3, team1 -6
 
-      // Hand 5: Alice bids 5 to try to win
-      gameManager.addHandPart('1'); // Dealer 1
-      gameManager.addHandPart('1'); // Alice wins bid
-      gameManager.addHandPart('5'); // Bid 5
-      gameManager.addHandPart('H'); // Trump Hearts
-      gameManager.addHandPart('P'); // Play
-      gameManager.addHandPart('1'); // Alice's team gets 5 tricks
-      
-      const finalScores = gameManager.getScores();
-      expect(finalScores[0]).toBe(28); // Alice's team: 23 + 5 = 28
-      expect(finalScores[1]).toBe(6); // Bob's team unchanged
+      // Hand 5: team 0 bids 6, plays, defenders shut out -> defenders set.
+      playHand(gameManager, { bidder: 1, bid: 6, trump: 'H', decision: 'P', tricks: 0 });
+      expect(gameManager.getScores()).toEqual([20, -12]);
 
-      // Hand 6: Bob bids 4 to try to catch up
-      gameManager.addHandPart('2'); // Dealer 2
-      gameManager.addHandPart('2'); // Bob wins bid
-      gameManager.addHandPart('4'); // Bid 4
-      gameManager.addHandPart('S'); // Trump Spades
-      gameManager.addHandPart('P'); // Play
-      gameManager.addHandPart('2'); // Bob's team gets 4 tricks
-      
-      const finalScores2 = gameManager.getScores();
-      expect(finalScores2[0]).toBe(28); // Alice's team unchanged
-      expect(finalScores2[1]).toBe(10); // Bob's team: 6 + 4 = 10
+      // Hand 6: team 0 bids 6 again, defenders shut out.
+      playHand(gameManager, { bidder: 3, bid: 6, trump: 'S', decision: 'P', tricks: 0 });
+      expect(gameManager.getScores()).toEqual([26, -18]);
 
-      // Hand 7: Charlie bids 4 and makes it to win for Alice's team
-      gameManager.addHandPart('3'); // Dealer 3
-      gameManager.addHandPart('3'); // Charlie wins bid
-      gameManager.addHandPart('4'); // Bid 4
-      gameManager.addHandPart('D'); // Trump Diamonds
-      gameManager.addHandPart('P'); // Play
-      gameManager.addHandPart('2'); // Charlie's team gets 4 tricks
-      
-      const winningScores = gameManager.getScores();
-      expect(winningScores[0]).toBe(32); // Alice's team: 28 + 4 = 32 (wins!)
-      expect(winningScores[1]).toBe(10); // Bob's team unchanged
-      
+      // Hand 7: team 0 bids a double moon (14), plays, defenders shut out.
+      playHand(gameManager, { bidder: 1, bid: 'D', trump: 'C', decision: 'P', tricks: 0 });
+      expect(gameManager.getScores()).toEqual([40, -32]);
+      expect(gameManager.isGameComplete()).toBe(false); // 40 < 42, not yet won
+
+      // Hand 8: team 0 bids 4, defenders shut out -> team 0 reaches 44 and wins.
+      playHand(gameManager, { bidder: 3, bid: 4, trump: 'H', decision: 'P', tricks: 0 });
+      expect(gameManager.getScores()).toEqual([44, -36]);
+
       expect(gameManager.isGameComplete()).toBe(true);
       expect(gameManager.getWinner()).toBe(0);
     });
 
     it('should handle pepper rounds correctly', () => {
-      // First 4 hands are pepper rounds
+      // The first 4 hands are pepper rounds. Production's GameManager does NOT
+      // auto-bid or auto-decide for pepper hands (that is UI-level in game.ts), so
+      // we set the bid and decision explicitly here. Each hand: the bidding team
+      // shuts the defenders out (tricks 0) to make its pepper bid.
+      const bids = [4, 5, 6, 'M'] as const;
       for (let hand = 0; hand < 4; hand++) {
         expect(isPepperRound(hand)).toBe(true);
-        
-        const expectedBidder = (hand % 4) + 1;
-        gameManager.addHandPart(expectedBidder.toString()); // Dealer
-        gameManager.addHandPart(expectedBidder.toString()); // Bidder (same as dealer for pepper)
-        
-        // In pepper rounds, bid is auto-set based on hand
-        const expectedBid = hand + 4; // 4, 5, 6, Moon(7)
-        const bidString = expectedBid === 7 ? 'M' : expectedBid.toString();
-        gameManager.addHandPart(bidString);
-        
-        gameManager.addHandPart('H'); // Trump
-        gameManager.addHandPart('P'); // Play
-        gameManager.addHandPart('3'); // Let bidding team make it
-        
-        if (hand < 3) {
-          expect(gameManager.state.hands.length).toBe(hand + 1);
-        }
+
+        setBidder(gameManager, hand + 1); // bidders 1..4
+        setBid(gameManager, bids[hand]!);
+        setTrump(gameManager, 'H');
+        setDecision(gameManager, 'P');
+        setTricks(gameManager, 0); // defenders shut out -> bidding team makes it
+
+        expect(currentHandIndex(gameManager)).toBe(hand + 1);
       }
-      
-      // 5th hand should not be a pepper round
+
+      // The 5th hand (index 4) is no longer a pepper round.
       expect(isPepperRound(4)).toBe(false);
     });
   });
 
   describe('Game State Consistency', () => {
     it('should maintain consistent state through phase transitions', () => {
-      // Start a hand
-      gameManager.addHandPart('1'); // Dealer
-      gameManager.addHandPart('1'); // Alice wins bid
-      expect(getCurrentPhase(gameManager.getCurrentHand())).toBe('bid');
-      
-      gameManager.addHandPart('5'); // Bid 5
-      expect(getCurrentPhase(gameManager.getCurrentHand())).toBe('trump');
-      
-      gameManager.addHandPart('S'); // Trump Spades
-      expect(getCurrentPhase(gameManager.getCurrentHand())).toBe('decision');
-      
-      gameManager.addHandPart('F'); // Fold
-      expect(getCurrentPhase(gameManager.getCurrentHand())).toBe('tricks');
-      
-      // Folding should complete the hand
-      expect(gameManager.state.hands.length).toBe(1);
-      
-      // Check that scores were updated correctly (folding gives bidding team the bid points)
+      setBidder(gameManager, 1); // team 0
+      expect(currentPhase(gameManager)).toBe('bid');
+
+      setBid(gameManager, 5);
+      expect(currentPhase(gameManager)).toBe('trump');
+
+      setTrump(gameManager, 'S');
+      expect(currentPhase(gameManager)).toBe('decision');
+
+      // Fold: entering 'F' moves us to the free-tricks (tricks) entry; the hand is
+      // only complete once the trailing free-tricks digit is supplied.
+      gameManager.addHandPart('F');
+      expect(currentPhase(gameManager)).toBe('tricks');
+      gameManager.addHandPart('0'); // 0 free tricks negotiated -> [5, 0]
+
+      expect(currentHandIndex(gameManager)).toBe(1);
       const scores = gameManager.getScores();
-      expect(scores[0]).toBe(5); // Alice's team got 5 points for the fold
-      expect(scores[1]).toBe(0); // Bob's team got 0 points
+      expect(scores[0]).toBe(5); // bidding team gets the bid on a fold
+      expect(scores[1]).toBe(0);
     });
 
     it('should handle decision phase with free tricks correctly', () => {
-      gameManager.addHandPart('1'); // Dealer
-      gameManager.addHandPart('1'); // Alice wins bid
-      gameManager.addHandPart('6'); // Bid 6
-      gameManager.addHandPart('H'); // Trump Hearts
-      gameManager.addHandPart('P'); // Play
-      
-      expect(getCurrentPhase(gameManager.getCurrentHand())).toBe('tricks');
-      
-      // Defending team gets 3 tricks, bidding team gets 3 - this sets the bid
-      gameManager.addHandPart('3');
-      
+      // REINTERPRETED: production has no "free tricks on a play" — free points to
+      // the defenders exist ONLY on a fold, encoded as the trailing digit. This
+      // exercises that real mechanism: bidding team folds and negotiates free tricks.
+      setBidder(gameManager, 1); // team 0
+      setBid(gameManager, 6);
+      setTrump(gameManager, 'H');
+      setDecision(gameManager, 'F', 3); // fold, 3 free tricks to the defenders
+
       const scores = gameManager.getScores();
-      expect(scores[0]).toBe(-6); // Alice's team got set
-      expect(scores[1]).toBe(3); // Bob's team gets 3 for the tricks they won
+      expect(scores[0]).toBe(6); // bidding team gets the bid (6) on the fold
+      expect(scores[1]).toBe(3); // defending team gets the 3 negotiated free points
     });
   });
 
   describe('Error Handling in Game Flow', () => {
     it('should handle invalid phase transitions gracefully', () => {
-      // Adding parts in wrong order should be handled by the state machine
-      // Note: The current implementation may not throw errors for invalid sequences
-      // but the game logic should handle it appropriately
-      
-      // Start a proper hand sequence
-      gameManager.addHandPart('1'); // Dealer
-      gameManager.addHandPart('1'); // Bidder
-      gameManager.addHandPart('4'); // Bid
-      gameManager.addHandPart('H'); // Trump
-      gameManager.addHandPart('P'); // Decision
-      gameManager.addHandPart('2'); // Tricks
-      
-      // Should have completed one hand
-      expect(gameManager.state.hands.length).toBe(1);
-      expect(gameManager.getScores()[0]).toBeGreaterThan(0);
+      // The GameManager state machine does not throw on out-of-order input; it just
+      // appends characters to the current hand encoding. A well-formed sequence
+      // therefore completes cleanly and scores as expected.
+      playHand(gameManager, { bidder: 1, bid: 4, trump: 'H', decision: 'P', tricks: 2 });
+
+      expect(currentHandIndex(gameManager)).toBe(1);
+      expect(gameManager.getScores()[0]).toBeGreaterThan(0); // team 0 made 4
     });
 
     it('should validate game completion state', () => {
-      // Game should not be complete initially
+      // Game should not be complete initially.
       expect(gameManager.isGameComplete()).toBe(false);
       expect(gameManager.getWinner()).toBe(null);
-      
-      // Play until one team reaches 30
+
+      // Play until a team reaches 42: team 0 shuts the defenders out every hand
+      // (bid 6, play, defenders take 0 -> team0 +6, team1 -6). Reaches 42 in 7 hands.
       let handCount = 0;
-      while (!gameManager.isGameComplete() && handCount < 20) {
-        const dealer = (handCount % 4) + 1;
-        gameManager.addHandPart(dealer.toString()); // Dealer
-        gameManager.addHandPart('1'); // Alice always wins bid
-        gameManager.addHandPart('6'); // Bid 6
-        gameManager.addHandPart('H'); // Trump Hearts
-        gameManager.addHandPart('P'); // Play
-        gameManager.addHandPart('2'); // Alice's team makes 6
+      while (!gameManager.isGameComplete() && handCount < 30) {
+        playHand(gameManager, { bidder: 1, bid: 6, trump: 'H', decision: 'P', tricks: 0 });
         handCount++;
       }
-      
+
       expect(gameManager.isGameComplete()).toBe(true);
       expect(gameManager.getWinner()).toBeDefined();
       expect([0, 1]).toContain(gameManager.getWinner());
+      expect(gameManager.getWinner()).toBe(0);
     });
   });
 });
