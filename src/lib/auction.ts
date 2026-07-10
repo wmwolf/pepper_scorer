@@ -93,12 +93,20 @@ export function legalBids(state: AuctionState): BidValue[] {
   return BID_ORDER.filter(b => bidRank(b) > high);
 }
 
+// Build an action object, omitting the suit key entirely when there is no trump (rather
+// than storing `suit: undefined`, which the Firebase RTDB rejects).
+function mkAction(value: ActionValue, suit: TrumpSuit | undefined, committed: boolean): AuctionAction {
+  const base: AuctionAction = { value, committed };
+  if (value !== 'PASS' && suit) base.suit = suit;
+  return base;
+}
+
 // Apply the resolution rule to a raw intent given the current high rank.
 function resolve(value: ActionValue, suit: TrumpSuit | undefined, high: number): AuctionAction {
   if (value === 'PASS' || bidRank(value) <= high) {
-    return { value: 'PASS', committed: true };
+    return mkAction('PASS', undefined, true);
   }
-  return { value, suit, committed: true };
+  return mkAction(value, suit, true);
 }
 
 // After the pointer advances, resolve any consecutive future seats that already hold a
@@ -168,7 +176,7 @@ export function preCommit(
     // It's actually this seat's turn — treat as a normal in-turn submit.
     return submitInTurn(state, seat, value, suit);
   }
-  const action: AuctionAction = { value, suit: value === 'PASS' ? undefined : suit, committed: false };
+  const action = mkAction(value, suit, false);
   return { ...state, actions: { ...state.actions, [seat]: action } };
 }
 

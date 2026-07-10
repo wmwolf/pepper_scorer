@@ -2,9 +2,20 @@
 import { ref, set, get, push, onValue, off, remove, onDisconnect, query, orderByChild, equalTo, runTransaction, type DatabaseReference } from 'firebase/database';
 import { getFirebaseDatabase, isFirebaseConfigured } from './firebase';
 import { getCurrentUser } from './auth';
-import { GameManager, type GameState } from './gameState';
+import { GameManager, getCurrentPhase, type GameState } from './gameState';
 import { getPath } from './path-utils';
 import { resolveSeat } from './multiplayer';
+import {
+  createAuction,
+  submitInTurn,
+  preCommit,
+  cancelPreCommit,
+  isComplete as auctionIsComplete,
+  auctionResult,
+  type AuctionState,
+  type ActionValue,
+  type TrumpSuit,
+} from './auction';
 
 export interface FirebaseGameMetadata {
   createdBy: string;
@@ -27,13 +38,9 @@ export interface FirebaseGameData {
   players: FirebaseGamePlayer[];
   teams: [string, string];
   gameState: GameState;
-  bidding?: {
-    active: boolean;
-    dealerIndex: number;
-    currentBidder: number;
-    bids: Record<number, { value: string; suit?: string; revealed: boolean }>;
-    phase: 'bidding' | 'trump' | 'decision';
-  };
+  // Phase 8b mobile bidding auction state (see src/lib/auction.ts). Present only while a
+  // regular hand's auction is in progress or just completed; reset per hand by handIndex.
+  bidding?: AuctionState;
 }
 
 export interface FirebaseSeriesData {
@@ -77,6 +84,10 @@ export class FirebaseGameManager extends GameManager {
   // whose turn it is has no one online" behaviour. Empty until the presence node loads.
   private presentUids: Set<string> = new Set();
   private presenceInitialized = false;
+
+  // Phase 8b auction: the live bidding state for the current hand (mirrored from
+  // games/{id}/bidding), or null when no auction is active.
+  private auctionState: AuctionState | null = null;
 
   constructor(players: string[], teams: [string, string], gameId?: string) {
     super(players, teams);
@@ -431,6 +442,14 @@ export class FirebaseGameManager extends GameManager {
     });
 
     this.listeners.push(() => off(gameStateRef, 'value', unsubscribeGameState));
+
+    // Phase 8b: mirror the auction state and refresh the UI whenever it changes.
+    const biddingRef = ref(database, `games/${this.gameId}/bidding`);
+    const unsubscribeBidding = onValue(biddingRef, (snapshot) => {
+      this.auctionState = snapshot.exists() ? (snapshot.val() as AuctionState) : null;
+      if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
+    });
+    this.listeners.push(() => off(biddingRef, 'value', unsubscribeBidding));
   }
 
   // Sync state to Firebase using an atomic, version-guarded transaction.
@@ -660,6 +679,134 @@ export class FirebaseGameManager extends GameManager {
   public isSeatPresent(seat: number): boolean {
     const uid = this.firebasePlayers[seat]?.userId;
     return uid ? this.presentUids.has(uid) : false;
+  }
+
+  // Bidding auction (Phase 8b)
+  // ==========================
+
+  // The live auction state for the current hand, or null when none is active.
+  public getAuction(): AuctionState | null {
+    return this.auctionState;
+  }
+
+  // RTDB drops empty objects/arrays, so a round-tripped auction may be missing `actions`
+  // or `order`. Restore the shape the pure engine expects.
+  private normalizeAuction(raw: AuctionState): AuctionState {
+    return {
+      handIndex: raw.handIndex,
+      order: raw.order || [],
+      pointer: raw.pointer || 0,
+      actions: raw.actions || {},
+    };
+  }
+
+  // Create the auction for the current hand if one isn't already present for it. Idempotent
+  // and race-safe (runs in a transaction), so every device may call it on entering the
+  // bidder phase. No-op outside the bidder phase or for local games.
+  public async ensureAuctionForCurrentHand(): Promise<void> {
+    if (!this.gameId || !isFirebaseConfigured()) return;
+    const database = getFirebaseDatabase();
+    if (!database) return;
+
+    const handIndex = this.state.hands.length - 1;
+    const hand = this.getCurrentHand();
+    if (getCurrentPhase(hand) !== 'bidder') return;
+    const dealerSeat = parseInt(hand[0] || '1');
+
+    const biddingRef = ref(database, `games/${this.gameId}/bidding`);
+    try {
+      await runTransaction(biddingRef, (remote: AuctionState | null) => {
+        const state = remote ? this.normalizeAuction(remote) : null;
+        if (state && state.handIndex === handIndex) return state; // already initialized
+        return createAuction(dealerSeat, handIndex);
+      });
+    } catch (error) {
+      console.error('Error initializing auction:', error);
+    }
+  }
+
+  // Run a transactional mutation of the auction for `expectedHandIndex`. Aborts (no write)
+  // if the remote auction is missing or for a different hand, or if `fn` rejects the action
+  // (e.g. an out-of-turn submit racing another device). Returns the committed state, or null.
+  private async mutateAuction(
+    expectedHandIndex: number,
+    // eslint-disable-next-line no-unused-vars
+    fn: (state: AuctionState) => AuctionState
+  ): Promise<AuctionState | null> {
+    if (!this.gameId || !isFirebaseConfigured()) return null;
+    const database = getFirebaseDatabase();
+    if (!database) return null;
+
+    const biddingRef = ref(database, `games/${this.gameId}/bidding`);
+    try {
+      const txn = await runTransaction(biddingRef, (remote: AuctionState | null) => {
+        const state = remote ? this.normalizeAuction(remote) : null;
+        if (!state || state.handIndex !== expectedHandIndex) return; // abort: missing/stale
+        try {
+          return fn(state);
+        } catch {
+          return; // abort: the engine rejected this action (e.g. not this seat's turn)
+        }
+      });
+
+      if (txn.committed && txn.snapshot.exists()) {
+        const committed = this.normalizeAuction(txn.snapshot.val() as AuctionState);
+        this.auctionState = committed;
+        return committed;
+      }
+    } catch (error) {
+      console.error('Error mutating auction:', error);
+    }
+    return null;
+  }
+
+  // Submit the current in-turn bidder's action (bid value or 'PASS'), optionally with a
+  // pre-picked trump. When this action completes the auction, this (online) device applies
+  // the result to the hand exactly once.
+  public async submitBid(seat: number, value: ActionValue, suit?: TrumpSuit): Promise<void> {
+    const handIndex = this.state.hands.length - 1;
+    const committed = await this.mutateAuction(handIndex, s => submitInTurn(s, seat, value, suit));
+    if (committed && auctionIsComplete(committed)) {
+      await this.applyAuctionToHand(committed, handIndex);
+    }
+  }
+
+  // Record or replace an out-of-turn pre-commit (hidden, editable until the pointer reaches
+  // the seat). If it is actually the seat's turn, the engine treats it as an in-turn submit,
+  // which can complete the auction — so apply the result in that case too.
+  public async preCommitBid(seat: number, value: ActionValue, suit?: TrumpSuit): Promise<void> {
+    const handIndex = this.state.hands.length - 1;
+    const committed = await this.mutateAuction(handIndex, s => preCommit(s, seat, value, suit));
+    if (committed && auctionIsComplete(committed)) {
+      await this.applyAuctionToHand(committed, handIndex);
+    }
+  }
+
+  // Cancel a not-yet-resolved pre-commit for a seat.
+  public async cancelPreCommitBid(seat: number): Promise<void> {
+    const handIndex = this.state.hands.length - 1;
+    await this.mutateAuction(handIndex, s => cancelPreCommit(s, seat));
+  }
+
+  // Translate a completed auction into the hand encoding: bidder + bid (+ pre-picked trump),
+  // or a throw-in. Applied once, by the device whose action completed the auction, and only
+  // while the hand is still awaiting the bidder (guards against double application).
+  private async applyAuctionToHand(state: AuctionState, handIndex: number): Promise<void> {
+    const result = auctionResult(state);
+    if (!result) return;
+    if (this.state.hands.length - 1 !== handIndex) return;
+    if (getCurrentPhase(this.getCurrentHand()) !== 'bidder') return;
+
+    const parts: string[] = result.thrownIn
+      ? ['0']
+      : [String(result.winnerSeat), result.winningBid as string,
+         ...(result.winningSuit ? [result.winningSuit] : [])];
+
+    // Apply through the base GameManager (no per-part sync), then sync once.
+    for (const part of parts) {
+      GameManager.prototype.addHandPart.call(this, part);
+    }
+    await this.syncToFirebase();
   }
 
   // Public method to force sync current state to Firebase
