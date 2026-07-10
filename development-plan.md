@@ -218,8 +218,23 @@ userGames/{userId}/{gameId}: true  // Quick lookup for active games
 
 **Still TODO for a later hardening pass:** richer reconnect UX (e.g. surfacing queued-write count), and automated coverage of the DOM/listener wiring (currently manual).
 
-### Phase 8: Mobile Bidding Interface 🚧 (in progress)
+### Phase 8: Mobile Bidding Interface ✅ (8a + 8b implemented; needs real-device QA)
 **Goal**: Players can bid via their phones
+
+**Status (2026-07-10):** Both the 8a foundation (identity, turn-gating, presence + manual
+fallback, room codes) and the 8b hybrid auction (sequential pass + optimistic pre-commit +
+optional pre-picked trump) are implemented, CI-green, and verified in-browser by driving the
+**real** auction engine through a simulated multiplayer manager. Remaining before launch:
+- **Real multi-device QA**: the flows were exercised via simulation (headless Google sign-in
+  isn't possible here). Needs a manual pass with 4 signed-in devices against live Firebase.
+- **The Firebase auction wiring (`firebaseGameState.ts`) is not covered by CI** — only the pure
+  `auction.ts` engine is (16 tests). The Phase 11 emulator harness should cover the wiring.
+- **Mid-auction disconnect**: the auction requires all four seats *authenticated* (not
+  necessarily present); if a seated player is offline when it's their turn, the auction waits
+  on them and the **manual-override** escape hatch is the current remedy. Auto-abort-to-manual
+  mid-auction is a possible refinement. (8a presence-fallback already covers trump/decision/tricks.)
+- Security rules (Phase 11) must cover the new `presence`/`bidding` nodes and the
+  `metadata/roomCode` index, and widen `.write` to any seated player — see the Phase 11 note.
 
 #### Chosen bidding model (decided 2026-07-09): hybrid sequential auction with optimistic pre-commit
 The **live sequential ascending auction is the source of truth** (start left of the dealer,
