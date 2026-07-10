@@ -14,6 +14,12 @@ Pepper Scorer is an Astro-based web application for scoring the card game Pepper
 - **pepper-awards.ts**: Comprehensive award system with 23+ different awards for individual games and series. Contains award definitions, evaluation logic, and selection algorithms.
 - **statistics-util.ts**: Advanced statistical analysis and HTML generation for game summaries.
 
+### Firebase Layer (`firebase-integration` branch only)
+- **firebase.ts**: Firebase SDK config/init from `PUBLIC_FIREBASE_*` env vars (see `.env.example`). `isFirebaseConfigured()` gates activation; the app falls back to local/localStorage mode when unconfigured.
+- **auth.ts**: Google authentication, `PepperUser` profiles, display names, username lookup/search.
+- **firebaseGameState.ts**: `FirebaseGameManager extends GameManager`, overriding `addHandPart`/`undo`/`completeGame`/`convertToSeries` to sync to the Firebase Realtime Database with live listeners and series coordination. Large (~1200 lines) and untested — treat changes here carefully.
+- **Roadmap**: `development-plan.md` is the source of truth for phase status and remaining work. Firebase security rules are NOT yet applied (DB in test mode) — see Phase 11.
+
 ### State Management
 - Game state is managed through the `GameManager` class with immutable operations
 - Persistent storage via `localStorage` with JSON serialization
@@ -27,6 +33,17 @@ The game follows a structured progression through phases:
 3. **trump**: Select trump suit (or no-trump)
 4. **decision**: Defending team decides to play or fold (with optional free tricks)
 5. **tricks**: Enter number of tricks won by defending team
+
+### Hand Encoding & Scoring Gotchas (read before touching scoring/stats/awards)
+A completed hand is a 6-character string: `${dealer}${bidWinner}${bid}${trump}${decision}${tricks}`.
+- `dealer`/`bidWinner`: `1`-`4` (`bidWinner` `0` = throw-in). `biddingTeam = (bidWinner - 1) % 2` → seats 1 & 3 are team 0, seats 2 & 4 are team 1.
+- `bid`: `4`/`5`/`6`/`P`(pepper=4)/`M`(moon=7)/`D`(double moon=14). `decodeHand` returns numeric bids as **numbers**, and `P`/`M`/`D` as letters — don't `parseInt('P')` (it's `NaN`).
+- `trump`: `C`/`D`/`S`/`H`/`N`(no-trump). `decision`: `P`(play)/`F`(fold).
+- **`tricks` (last char) is the DEFENDING team's trick count, NOT the bidder's.** This is the single biggest source of bugs. `tricks === 0` means the defenders were shut out and the **bidder swept** (defenders go set) — it is a bidder success, not a bidder failure. Defenders "set the bidder" only when `tricks + tricksNeeded > 6` (`tricksNeeded` = 6 for 6/Moon/Double-Moon bids, else the bid value). The UI prompt "How many tricks did {defending team} win?" is the ground truth.
+- A **fold** makes the bid for the bidding team; any trailing tricks digit is free points negotiated to the defenders. A fold is NOT a successful defense.
+
+### fromJSON validation differs by branch
+`GameManager.fromJSON` intentionally diverges: on `main` it **strictly validates** and throws on a missing `players`/`teams`/`hands`/`scores`; on `firebase-integration` it **permissively fills defaults** (for partial Firestore payloads). Reconcile this when `firebase-integration` merges back to `main`.
 
 ### Award System
 Sophisticated award tracking that analyzes completed games/series to assign:
@@ -42,13 +59,21 @@ Awards are dynamically selected to ensure variety and relevance to game events.
 - `npm run preview` - Preview production build locally
 
 ## Code Quality Checks
-- `npx eslint src/**/*.ts` - Run ESLint checks on TypeScript files  
-- `npx tsc --noEmit` - Check TypeScript types
+- `npm run typecheck` (`tsc --noEmit`) - Check TypeScript types
+- `npm run lint` (`eslint src/**/*.ts`) - Run ESLint checks on TypeScript files
+- `npm run test:run` (`vitest run`) - Run the full unit + integration test suite once
+
+## Testing
+- **Framework**: Vitest (`vitest.config.ts`, node environment, `tests/setup.ts` mocks `window`/`getPath`).
+- **Layout**: `tests/unit/` (GameManager, awards, statistics) and `tests/integration/` (full game/series/undo/persistence/awards flows).
+- **`tests/helpers/gameActions.ts`**: a semantic layer (`setBidder`/`setBid`/`setTrump`/`setDecision`/`setTricks` + phase/accessor helpers) over the raw `addHandPart` encoding. Prefer these when writing integration tests.
+- **CI**: `.github/workflows/test.yml` runs typecheck + lint + build + tests on every PR and on pushes to `main`. Keep it green.
+- Tests drive `GameManager`/awards/stats directly; `game.ts` (DOM) and the Firebase layer are NOT covered by the suite.
 
 ## Pre-Commit Quality Assurance
-Run these commands before committing to prevent linting issues and type errors:
+Run these before committing to catch type errors, lint issues, and regressions:
 ```bash
-npx tsc --noEmit && npx eslint src/**/*.ts
+npm run typecheck && npm run lint && npm run test:run
 ```
 
 Common issues to watch for:

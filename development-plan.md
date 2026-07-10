@@ -56,6 +56,46 @@ Modernizing the Pepper card game scoring application by moving from Bootstrap 4 
 
 **Phase 5 Complete!** Authentication and infrastructure are working. Ready for Phase 6.
 
+### Status update (since Phase 5)
+`main` has been merged into `firebase-integration`, bringing in a body of core-logic
+hardening done on `main`:
+- A real, passing test suite (Vitest: `tests/unit/` + `tests/integration/` + `tests/helpers/gameActions.ts`) and CI (`.github/workflows/test.yml`) — 240 tests green. The old `tests/integration/` files (which tested an API that never shipped) were rewritten against the real `GameManager`.
+- Correctness fixes to scoring/undo/awards/stats (inverted defensive-set stat, an undo score-desync, a Pepper-bid `NaN`, an MVP award naming the biggest loser, a fold miscounted as a successful defense, etc.).
+- Guards: `startNextGame()` now refuses to abandon an in-progress game; `GameManager` restructured its `undo()` to recompute scores from the hands.
+
+Two things to carry forward:
+- **`fromJSON` diverges by branch**: `main` validates strictly (throws on missing fields); this branch fills defaults permissively for partial Firestore payloads. Pick one when this branch merges back to `main`.
+- **Known bug (Phase 6)**: manual sync can revert newer state to older state (documented below). The Firebase layer (`firebaseGameState.ts`, `auth.ts`) has **no automated tests** — verification is manual by design.
+
+### Session planning guidance (how to batch the remaining phases)
+The remaining phases need very different context loaded, so batch them by the subsystem
+and mental model they share rather than doing them in strict numeric order:
+
+- **Phases 6 + 7 — one session (do first).** Both live in the real-time sync internals
+  (`firebaseGameState.ts`, the RTDB schema, transactions, listeners). Migration (6) and
+  live multi-device sync (7) touch the same code and data model, and the "manual sync
+  reverts newer→older" bug must be fixed here before anything downstream is trustworthy.
+  This session is read-heavy (`firebaseGameState.ts` is ~1200 lines) — start it fresh
+  with a full context budget.
+- **Phase 8 — its own session, immediately after 6/7.** Mobile bidding depends on a solid
+  sync layer but adds a large, distinct surface (new mobile UI components + a turn-based
+  bidding state machine). Same infra as 6/7, but enough new UI/interaction that it wants
+  its own budget.
+- **Phase 9 — its own session.** User management & game discovery (dashboards, room codes,
+  invitations) is a distinct feature/UX area with its own queries; little overlap with the
+  sync internals.
+- **Phase 10 — its own session, and relatively independent.** Advanced stats/history extends
+  the existing `statistics-util.ts`/`pepper-awards.ts` layer plus per-user persistence. It
+  doesn't depend much on 8/9 and could be slotted whenever a stats-focused session fits.
+- **Phase 11 — split it.** The **security rules are urgent and standalone**: the DB is still
+  in test mode (open read/write), so write and deploy `database.rules.json` (rules drafted
+  below) *before* exposing multiplayer to real users — this is a quick task that does not
+  need to wait for 6–10. The rest of Phase 11 (PWA, offline, monitoring) is launch-hardening
+  for its own late session.
+
+Dependency order: **6 → 7 → 8**; **9**, **10**, and **Phase 11 security rules** are largely
+independent and can be scheduled around the critical path.
+
 ### Phase 5: Firebase Foundation & Authentication ✅
 **Status: Complete - Safari/DuckDuckGo authentication issues resolved**
 
