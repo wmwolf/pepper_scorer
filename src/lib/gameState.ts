@@ -364,6 +364,17 @@ export class GameManager implements IGameManager {
 
   public static fromJSON(json: string): GameManager {
     const state = JSON.parse(json);
+    // Validate the essential shape so a corrupt payload fails fast here rather than
+    // surfacing later as an obscure error mid-gameplay.
+    if (
+      !state || typeof state !== 'object' ||
+      !Array.isArray(state.players) ||
+      !Array.isArray(state.teams) ||
+      !Array.isArray(state.hands) ||
+      !Array.isArray(state.scores) || state.scores.length !== 2
+    ) {
+      throw new Error('Invalid game state: missing or malformed required fields');
+    }
     const manager = new GameManager(state.players, state.teams);
     manager.state = state;
     return manager;
@@ -520,6 +531,10 @@ export class GameManager implements IGameManager {
   public startNextGame(): void {
     if (!this.state.isSeries || this.isSeriesComplete()) {
       throw new Error("Cannot start next game: series is complete or not in series mode");
+    }
+    if (!this.isGameComplete()) {
+      // Guard against silently discarding an in-progress game's hands and scores.
+      throw new Error("Cannot start next game: the current game is not complete");
     }
 
     const { 
