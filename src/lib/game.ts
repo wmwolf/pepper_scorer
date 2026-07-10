@@ -10,6 +10,16 @@ import {
   teamOfSeat,
   type SeatPlayer,
 } from './multiplayer';
+import {
+  currentBidderSeat,
+  legalBids,
+  highSeat,
+  highRank,
+  isComplete as auctionIsComplete,
+  type AuctionState,
+  type ActionValue,
+  type BidValue,
+} from './auction';
 
 // Duck-typed view of the multiplayer (Firebase) manager. game.ts stays decoupled from
 // the concrete FirebaseGameManager (a heavy, network-touching module) — it only needs
@@ -26,6 +36,15 @@ interface MultiplayerManager {
   setManualOverride(value: boolean): void;
   isSeatPresent?(_seat: number): boolean;
   hasPresenceData?(): boolean;
+  // Auction (8b)
+  getAuction(): AuctionState | null;
+  ensureAuctionForCurrentHand(): Promise<void>;
+  // eslint-disable-next-line no-unused-vars
+  submitBid(seat: number, value: ActionValue, suit?: string): Promise<void>;
+  // eslint-disable-next-line no-unused-vars
+  preCommitBid(seat: number, value: ActionValue, suit?: string): Promise<void>;
+  // eslint-disable-next-line no-unused-vars
+  cancelPreCommitBid(seat: number): Promise<void>;
 }
 
 function asMultiplayer(gm: GameManager): MultiplayerManager | null {
@@ -180,7 +199,8 @@ function trumpToString(trump: string): string {
 
 function hideAllControls() {
     ['player-controls', 'bid-controls', 'trump-controls',
-     'decision-controls', 'tricks-controls', 'end-game-controls', 'waiting-panel'].forEach(id => {
+     'decision-controls', 'tricks-controls', 'end-game-controls', 'waiting-panel',
+     'auction-controls'].forEach(id => {
         const element = document.getElementById(id);
         if (element) element.classList.add('hidden');
     });
@@ -310,9 +330,202 @@ function updateHandInfo(gameManager: GameManager) {
     if (bidInfoMobileEl) bidInfoMobileEl.textContent = bidInfoText;
 }
 
+// ---- Bidding auction UI (Phase 8b) ---------------------------------------------------
+
+// Local (per-device) UI state for the auction: which hand we've already kicked off, and
+// whether the viewer is currently editing their pending pre-commit.
+let auctionEnsuredHand: number | null = null;
+let auctionEditingSeat: number | null = null;
+
+// Is the mobile auction the right UI for the current bidder phase? It needs a multiplayer
+// game with all four seats authenticated, not in manual-override, and a non-pepper hand
+// (pepper auto-bids). Otherwise we fall back to the existing tap bidder/bid controls.
+function auctionEligible(gm: GameManager, mp: MultiplayerManager | null, currentHand: string, phase: string): boolean {
+    if (!mp || phase !== 'bidder') return false;
+    if (mp.isManualOverride()) return false;
+    const handIndex = gm.state.hands.length - 1;
+    if (isPepperRound(handIndex)) return false;
+    const players = mp.getFirebasePlayers();
+    if (players.length < 4) return false;
+    return [0, 1, 2, 3].every(i => Boolean(players[i]?.userId));
+}
+
+function auctionSeatName(gm: GameManager, mp: MultiplayerManager, seat1: number): string {
+    const players = mp.getFirebasePlayers();
+    return players[seat1 - 1]?.displayName || gm.state.players[seat1 - 1] || `Seat ${seat1}`;
+}
+
+// Escape a display name for safe innerHTML interpolation.
+function esc(s: string): string {
+    return s.replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c
+    ));
+}
+
+// Render the running auction into #auction-controls. Handles: initializing the auction on
+// this device, the reveal-so-far progress strip, the in-turn bid controls, the optional
+// out-of-turn pre-commit controls (hidden "bid logged" state with edit/cancel), and the
+// waiting/spectator states. Trump pre-pick is layered on in 8b-4.
+function renderAuction(gm: GameManager, mp: MultiplayerManager) {
+    const container = document.getElementById('auction-controls');
+    if (!container) return;
+
+    const handIndex = gm.state.hands.length - 1;
+    const auction = mp.getAuction();
+
+    // Kick off the auction for this hand once if it isn't present/current yet.
+    if ((!auction || auction.handIndex !== handIndex) && auctionEnsuredHand !== handIndex) {
+        auctionEnsuredHand = handIndex;
+        mp.ensureAuctionForCurrentHand();
+    }
+
+    container.classList.remove('hidden');
+
+    if (!auction || auction.handIndex !== handIndex) {
+        updateInstructions('Bidding');
+        container.innerHTML = '<p class="text-gray-600">Starting the auction…</p>';
+        return;
+    }
+
+    const mySeat0 = mp.getMySeat();          // 0-based or null (spectator)
+    const mySeat = mySeat0 === null ? null : mySeat0 + 1; // 1-based
+    const current = currentBidderSeat(auction); // 1-based or null (complete)
+    const high = highRank(auction);
+    const highS = highSeat(auction);
+
+    updateInstructions('Bidding');
+
+    // Progress strip: reveal committed bids in order; mark the current bidder.
+    const strip = auction.order.map(seat => {
+        const a = auction.actions[seat];
+        const name = esc(auctionSeatName(gm, mp, seat));
+        let detail: string;
+        let cls: string;
+        if (a && a.committed) {
+            detail = a.value === 'PASS' ? 'passed' : `bid ${bidToString(a.value)}`;
+            cls = a.value === 'PASS' ? 'text-gray-500' : 'text-blue-700 font-medium';
+        } else if (seat === current) {
+            detail = 'bidding…';
+            cls = 'text-amber-600 font-medium';
+        } else {
+            detail = '—';
+            cls = 'text-gray-400';
+        }
+        return `<div class="flex justify-between px-3 py-1.5 rounded ${seat === current ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'}">
+            <span>${name}${seat === mySeat ? ' <span class="text-xs text-gray-500">(you)</span>' : ''}</span>
+            <span class="${cls}">${detail}</span>
+        </div>`;
+    }).join('');
+
+    const highText = high > 0 && highS !== null
+        ? `Current high: <strong>${bidToString(auction.actions[highS]!.value)}</strong> by ${esc(auctionSeatName(gm, mp, highS))}`
+        : 'No bids yet';
+
+    // Action area depends on the viewer's relationship to the current turn.
+    let action = '';
+    const myAction = mySeat !== null ? auction.actions[mySeat] : undefined;
+
+    const bidButtons = (values: BidValue[], attr: string) =>
+        values.map(v => `<button class="${attr}" data-bidval="${v}">${bidToString(v)}</button>`).join('');
+
+    if (mySeat === null) {
+        // Spectator.
+        action = current !== null
+            ? `<p class="text-gray-600">Waiting for <strong>${esc(auctionSeatName(gm, mp, current))}</strong> to bid…</p>`
+            : `<p class="text-gray-600">Auction complete.</p>`;
+    } else if (current === mySeat) {
+        // My turn: only bids strictly above the current high, plus pass.
+        const legal = legalBids(auction);
+        action = `
+            <p class="text-gray-800 font-medium mb-2">Your turn to bid.</p>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                ${bidButtons(legal, 'btn-auction-bid')}
+                <button class="btn-auction-pass" data-bidval="PASS">Pass</button>
+            </div>`;
+    } else if (myAction && myAction.committed) {
+        // I already acted (revealed).
+        const mine = myAction.value === 'PASS' ? 'passed' : `bid ${bidToString(myAction.value)}`;
+        action = `<p class="text-gray-600">You ${mine}. ${current !== null ? `Waiting for <strong>${esc(auctionSeatName(gm, mp, current))}</strong>…` : 'Auction complete.'}</p>`;
+    } else if (myAction && !myAction.committed && auctionEditingSeat !== mySeat) {
+        // Pending pre-commit — value hidden to avoid shoulder-surfing.
+        action = `
+            <div class="flex items-center gap-3">
+                <span class="px-3 py-1.5 rounded bg-green-50 border border-green-200 text-green-700">Bid logged ✓</span>
+                <button id="auction-edit" class="text-sm text-blue-600 underline">Edit</button>
+                <button id="auction-cancel" class="text-sm text-gray-500 underline">Cancel</button>
+            </div>
+            <p class="text-gray-500 text-sm mt-2">Locked in — you can step away. Editable until it's your turn.</p>`;
+    } else {
+        // Not my turn and I haven't locked a bid (or I'm editing): offer an optional pre-bid.
+        // Pre-bids may be any value (they auto-pass later if no longer high).
+        const all: BidValue[] = ['4', '5', '6', 'M', 'D'];
+        const label = auctionEditingSeat === mySeat ? 'Change your pre-bid:' : 'Pre-bid now (optional) or wait for your turn:';
+        action = `
+            <p class="text-gray-700 mb-2">${label}</p>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                ${bidButtons(all, 'btn-auction-prebid')}
+                <button class="btn-auction-prepass" data-bidval="PASS">Pass</button>
+            </div>
+            ${current !== null ? `<p class="text-gray-500 text-sm mt-2">${directionArrow(relativeDirection(mySeat0, current - 1))} Waiting for <strong>${esc(auctionSeatName(gm, mp, current))}</strong> ${directionLabel(relativeDirection(mySeat0, current - 1))} to bid.</p>` : ''}`;
+    }
+
+    container.innerHTML = `
+        <h3 class="text-lg font-medium text-gray-900">Bidding</h3>
+        <p class="text-sm text-gray-600">${highText}</p>
+        <div class="space-y-1">${strip}</div>
+        <div class="pt-2">${action}</div>`;
+
+    wireAuctionButtons(gm, mp, auction, mySeat);
+}
+
+function wireAuctionButtons(gm: GameManager, mp: MultiplayerManager, auction: AuctionState, mySeat: number | null) {
+    if (mySeat === null) return;
+    const refresh = () => { if (typeof window.updateUI === 'function') window.updateUI(); };
+
+    // In-turn bid / pass.
+    document.querySelectorAll('.btn-auction-bid, .btn-auction-pass').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const value = (btn as HTMLElement).dataset.bidval as ActionValue;
+            await mp.submitBid(mySeat, value);
+            refresh();
+        });
+    });
+
+    // Out-of-turn pre-bid / pre-pass.
+    document.querySelectorAll('.btn-auction-prebid, .btn-auction-prepass').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const value = (btn as HTMLElement).dataset.bidval as ActionValue;
+            auctionEditingSeat = null;
+            await mp.preCommitBid(mySeat, value);
+            refresh();
+        });
+    });
+
+    document.getElementById('auction-edit')?.addEventListener('click', () => {
+        auctionEditingSeat = mySeat;
+        refresh();
+    });
+    document.getElementById('auction-cancel')?.addEventListener('click', async () => {
+        auctionEditingSeat = null;
+        await mp.cancelPreCommitBid(mySeat);
+        refresh();
+    });
+
+    // Avoid an unused-parameter lint while keeping the signature explicit for 8b-4.
+    void auction; void auctionIsComplete;
+}
+
 function showPhaseControls(gameManager: GameManager) {
     const currentHand = gameManager.getCurrentHand();
     const phase = getCurrentPhase(currentHand);
+
+    // Phase 8b: the auction owns the bidder phase when eligible (participants act,
+    // spectators watch). It produces bidWinner + bid and writes them into the hand.
+    const mp = asMultiplayer(gameManager);
+    if (auctionEligible(gameManager, mp, currentHand, phase)) {
+        renderAuction(gameManager, mp!);
+        return;
+    }
 
     // Multiplayer turn-gating: if it isn't this viewer's turn, show a waiting panel
     // instead of the phase controls (and don't run this case's auto-advance side effects,
