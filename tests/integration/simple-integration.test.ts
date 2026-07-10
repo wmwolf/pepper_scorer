@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { GameManager, getCurrentPhase, isHandComplete, calculateScore } from '@/lib/gameState';
+import { GameManager, getCurrentPhase, isHandComplete } from '@/lib/gameState';
 
 describe('Simple Integration Tests', () => {
   let gameManager: GameManager;
@@ -82,98 +82,72 @@ describe('Simple Integration Tests', () => {
 
     it('should detect game completion', () => {
       expect(gameManager.isGameComplete()).toBe(false);
-      
-      // Play several high-scoring hands to reach 42+ points
-      // Hand 1: Alice bids Moon (7) and makes it
-      gameManager.addHandPart('1'); // Dealer
-      gameManager.addHandPart('1'); // Bidder: Alice
+
+      // Reinterpretation note: the original version had a team-1 player (Bob, seat 2)
+      // bid a double moon between Alice's hands. Under the real scoring that SUBTRACTS
+      // 14 from team 0, so team 0 never actually reached 42. To preserve the test's
+      // intent (drive team 0 to a win and detect completion) every bidder here is a
+      // team-0 player (seats 1 & 3), so team 0's score climbs monotonically.
+      //
+      // Every "play, defenders take 0 tricks" hand SETS the defenders:
+      //   bidding team +bidValue, defending team -bidValue.
+
+      // Hand 1: Alice (seat 1) bids Moon (7), plays, defenders shut out -> +7.
+      gameManager.addHandPart('1'); // Dealer: Alice
+      gameManager.addHandPart('1'); // Bidder: Alice (team 0)
       gameManager.addHandPart('M'); // Bid: Moon
       gameManager.addHandPart('N'); // Trump: No trump
       gameManager.addHandPart('P'); // Decision: Play
-      gameManager.addHandPart('0'); // Tricks: Alice takes all 6
-      
+      gameManager.addHandPart('0'); // Defenders take 0 tricks
+
       let scores = gameManager.getScores();
-      expect(scores[0]).toBe(7); // Alice's team gets 7 for Moon
+      expect(scores).toEqual([7, -7]); // Alice's team +7, defenders set -7
       expect(gameManager.isGameComplete()).toBe(false);
-      
-      // Hand 2: Bob bids Double Moon (14) and makes it
-      gameManager.addHandPart('2'); // Bidder: Bob
+
+      // Hand 2: Charlie (seat 3, also team 0) bids Double Moon (14), plays, +14.
+      // (Dealer for this hand was auto-seeded when hand 1 completed.)
+      gameManager.addHandPart('3'); // Bidder: Charlie (team 0)
       gameManager.addHandPart('D'); // Bid: Double Moon
       gameManager.addHandPart('C'); // Trump: Clubs
       gameManager.addHandPart('P'); // Decision: Play
-      gameManager.addHandPart('0'); // Tricks: Bob takes all 6
-      
+      gameManager.addHandPart('0'); // Defenders take 0 tricks
+
       scores = gameManager.getScores();
-      console.log('All hands after Bob Double Moon:', gameManager.state.hands);
-      console.log('Final scores:', scores);
-      
-      // Debug individual hand calculations
-      const hand1Scores = calculateScore(gameManager.state.hands[0]);
-      const hand2Scores = calculateScore(gameManager.state.hands[1]);
-      console.log('Hand 1 scores:', hand1Scores);
-      console.log('Hand 2 scores:', hand2Scores);
-      console.log('Expected combined:', [hand1Scores[0] + hand2Scores[0], hand1Scores[1] + hand2Scores[1]]);
-      
-      // Alice made Moon: [+7, -7] (Alice's team +7, Bob's team -7)
-      // Bob made Double Moon: [-14, +14] (Alice's team -14, Bob's team +14)  
-      // Combined: [7 + (-14), (-7) + 14] = [-7, 7]
-      expect(scores[0]).toBe(-7); // Alice's team: 7 - 14 = -7
-      expect(scores[1]).toBe(7);  // Bob's team: -7 + 14 = 7
+      expect(scores).toEqual([21, -21]); // 7 + 14 = 21
       expect(gameManager.isGameComplete()).toBe(false);
-      
-      // Hand 3: Charlie bids Double Moon (14) and makes it to win
-      gameManager.addHandPart('3'); // Bidder: Charlie
+
+      // Hand 3: Alice bids Double Moon (14) again, plays, +14.
+      gameManager.addHandPart('1'); // Bidder: Alice
       gameManager.addHandPart('D'); // Bid: Double Moon
       gameManager.addHandPart('H'); // Trump: Hearts
       gameManager.addHandPart('P'); // Decision: Play
-      gameManager.addHandPart('0'); // Tricks: Charlie takes all 6
-      
+      gameManager.addHandPart('0'); // Defenders take 0 tricks
+
       scores = gameManager.getScores();
-      expect(scores[0]).toBe(21); // Alice's team: 7 + 14 = 21
-      expect(gameManager.isGameComplete()).toBe(false); // Still under 30
-      
-      // Hand 4: Alice bids 6 and makes it to go over 30
-      gameManager.addHandPart('1'); // Bidder: Alice
+      expect(scores).toEqual([35, -35]); // 21 + 14 = 35
+      expect(gameManager.isGameComplete()).toBe(false); // Still under 42
+
+      // Hand 4: Charlie bids 6, plays, +6 -> 41, still just under 42.
+      gameManager.addHandPart('3'); // Bidder: Charlie
       gameManager.addHandPart('6'); // Bid: 6
       gameManager.addHandPart('D'); // Trump: Diamonds
       gameManager.addHandPart('P'); // Decision: Play
-      gameManager.addHandPart('0'); // Tricks: Alice takes all 6
-      
+      gameManager.addHandPart('0'); // Defenders take 0 tricks
+
       scores = gameManager.getScores();
-      expect(scores[0]).toBe(27); // Alice's team: 21 + 6 = 27
-      expect(gameManager.isGameComplete()).toBe(false); // Still need more
-      
-      // Hand 5: Alice bids 6 again
-      gameManager.addHandPart('1'); // Bidder: Alice
-      gameManager.addHandPart('6'); // Bid: 6
-      gameManager.addHandPart('S'); // Trump: Spades
-      gameManager.addHandPart('P'); // Decision: Play
-      gameManager.addHandPart('0'); // Tricks: Alice takes all 6
-      
-      scores = gameManager.getScores();
-      expect(scores[0]).toBe(33); // Alice's team: 27 + 6 = 33
-      expect(gameManager.isGameComplete()).toBe(false); // Still under 42
-      
-      // Hand 6: Alice bids another 6 to win
-      gameManager.addHandPart('1'); // Bidder: Alice
-      gameManager.addHandPart('6'); // Bid: 6
-      gameManager.addHandPart('C'); // Trump: Clubs
-      gameManager.addHandPart('P'); // Decision: Play
-      gameManager.addHandPart('0'); // Tricks: Alice takes all 6
-      
-      scores = gameManager.getScores();
-      expect(scores[0]).toBe(39); // Alice's team: 33 + 6 = 39
-      expect(gameManager.isGameComplete()).toBe(false); // Still under 42
-      
-      // Hand 7: Alice bids 4 to go over 42
+      expect(scores).toEqual([41, -41]); // 35 + 6 = 41
+      expect(gameManager.isGameComplete()).toBe(false); // 41 < 42
+
+      // Hand 5: Alice bids 4 and simply makes it (defenders take 2 of the 6 tricks)
+      // -> bidding +4, defending +2, pushing team 0 to 45 and winning.
       gameManager.addHandPart('1'); // Bidder: Alice
       gameManager.addHandPart('4'); // Bid: 4
       gameManager.addHandPart('H'); // Trump: Hearts
       gameManager.addHandPart('P'); // Decision: Play
-      gameManager.addHandPart('2'); // Tricks: Alice makes the bid
-      
+      gameManager.addHandPart('2'); // Defenders take 2 -> bid made
+
       scores = gameManager.getScores();
-      expect(scores[0]).toBe(43); // Alice's team: 39 + 4 = 43
+      expect(scores).toEqual([45, -39]); // 41 + 4 = 45 (team 0); -41 + 2 = -39 (team 1)
       expect(gameManager.isGameComplete()).toBe(true); // Game complete!
       expect(gameManager.getWinner()).toBe(0); // Alice's team wins
     });
@@ -181,19 +155,24 @@ describe('Simple Integration Tests', () => {
 
   describe('Series Integration', () => {
     it('should convert completed game to series', () => {
-      // Complete a game first
+      // Complete a game first. Alice (seat 1, team 0) wins every bid at 6, plays, and
+      // shuts the defenders out (they take 0 tricks) -> team 0 +6, team 1 -6 each hand,
+      // reaching 42 after 7 hands.
+      //
+      // Note: after a hand completes the GameManager auto-seeds the NEXT dealer, so we
+      // only add a dealer character for the very first hand. (The original loop added a
+      // dealer on every iteration, appending it on top of the auto-seeded one and
+      // corrupting the bidder assignment so team 1 ended up winning.)
       while (!gameManager.isGameComplete()) {
-        const handCount = gameManager.state.hands.length;
-        const dealer = handCount === 0 ? 1 : (handCount % 4) + 1;
-        
-        if (handCount === 0 || !isHandComplete(gameManager.getCurrentHand())) {
-          gameManager.addHandPart(dealer.toString()); // Dealer
+        const current = gameManager.getCurrentHand();
+        if (!current || isHandComplete(current)) {
+          gameManager.addHandPart('1'); // Dealer for the first hand only
         }
-        gameManager.addHandPart('1'); // Alice always wins bid
+        gameManager.addHandPart('1'); // Alice always wins bid (team 0)
         gameManager.addHandPart('6'); // Bid 6
         gameManager.addHandPart('H'); // Trump Hearts
         gameManager.addHandPart('P'); // Play
-        gameManager.addHandPart('0'); // Alice takes all tricks
+        gameManager.addHandPart('0'); // Defenders take 0 tricks
       }
       
       expect(gameManager.isGameComplete()).toBe(true);
@@ -231,12 +210,16 @@ describe('Simple Integration Tests', () => {
       expect(restored.getCurrentHand()).toBe('125H');
       expect(getCurrentPhase(restored.getCurrentHand())).toBe('decision');
       
-      // Should be able to continue gameplay
+      // Should be able to continue gameplay. Bob (seat 2, team 1) bid 5; he must hold the
+      // defenders to at most 1 trick to MAKE the bid (defenders + tricksNeeded 5 must not
+      // exceed 6). Defenders take 1 -> bidding team 1 makes it (+5), defenders get +1.
+      // (The original used 3 defender tricks, which SETS the bidder to -5 and contradicts
+      // the "Bob's team scored" intent.)
       restored.addHandPart('P');
-      restored.addHandPart('3');
-      
+      restored.addHandPart('1');
+
       expect(restored.state.hands.length).toBe(2); // Completed hand + next dealer
-      expect(restored.getScores()[1]).toBeGreaterThan(0); // Bob's team scored
+      expect(restored.getScores()[1]).toBeGreaterThan(0); // Bob's team scored (+5)
     });
   });
 });
