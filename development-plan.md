@@ -506,6 +506,34 @@ any automated path.
 - Rules tests (`@firebase/rules-unit-testing`): unauth denied; a player can read/write their
   own game; a non-participant cannot; users can only edit their own profile.
 
+## Recommended sequencing (next steps, decided 2026-07-10)
+
+Phases 1–8 are done; **Phase 11 security is deployed**. Remaining: 9, 10, and Phase 11's
+production polish. Recommended order:
+
+0. **Merge `firebase-integration` → `main` (do first).** main is a strict ancestor, so this is a
+   clean fast-forward. It settles the `fromJSON` divergence (main adopts the permissive+guard
+   version) and makes `main` the single line of development. Keep CI green.
+1. **Real-device QA of Phase 8 (right after the merge).** The concurrent auction is proven
+   headlessly (emulator, 4 anon clients) but never run on 4 physically signed-in devices. Do one
+   real 4-phone pass against the live DB now that rules are enforced — this is the cheapest way to
+   surface anything the emulator can't (real Google popup auth, presence/onDisconnect timing,
+   multi-device reveal latency). Fold fixes back before building more on top.
+2. **Phase 9 — User Management & Game Discovery.** Highest user-facing value and it unblocks
+   "invite a friend to a game" end to end. Active-games dashboard, invitations, and the
+   room-code/spectator join flow. Mostly new queries over existing data; low risk to the sync core.
+3. **Phase 11 production polish (interleave with / after 9).** PWA + offline (the app already
+   persists to localStorage and Firebase queues writes offline, so this is mostly a manifest +
+   service worker + install UX), error monitoring/logging, and a data backup/export path. Ship the
+   PWA bits alongside 9 since mobile players benefit immediately.
+4. **Phase 10 — Advanced Statistics & Historical Analysis.** Largest and most independent; slot it
+   whenever a stats-focused block fits. Extends `statistics-util.ts`/`pepper-awards.ts` plus
+   per-user history persistence; benefits from more real games existing first (so do it after 9).
+
+Cross-cutting follow-ups to schedule opportunistically: the deferred **mixed phone/non-phone**
+auction mode (per-seat presence eligibility), **auto-abort-to-manual** on mid-auction disconnect,
+and optional `FirebaseGameManager` **class-method** emulator tests.
+
 ## Technical Details
 
 ### Game State Encoding

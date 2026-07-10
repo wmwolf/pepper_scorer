@@ -43,8 +43,8 @@ A completed hand is a 6-character string: `${dealer}${bidWinner}${bid}${trump}${
 - **`tricks` (last char) is the DEFENDING team's trick count, NOT the bidder's.** This is the single biggest source of bugs. `tricks === 0` means the defenders were shut out and the **bidder swept** (defenders go set) — it is a bidder success, not a bidder failure. Defenders "set the bidder" only when `tricks + tricksNeeded > 6` (`tricksNeeded` = 6 for 6/Moon/Double-Moon bids, else the bid value). The UI prompt "How many tricks did {defending team} win?" is the ground truth.
 - A **fold** makes the bid for the bidding team; any trailing tricks digit is free points negotiated to the defenders. A fold is NOT a successful defense.
 
-### fromJSON validation differs by branch
-`GameManager.fromJSON` intentionally diverges: on `main` it **strictly validates** and throws on a missing `players`/`teams`/`hands`/`scores`; on `firebase-integration` it **permissively fills defaults** (for partial Firestore payloads). Reconcile this when `firebase-integration` merges back to `main`.
+### fromJSON validation
+`GameManager.fromJSON` **rejects a non-object payload** (throws) but **tolerates missing individual fields**, filling defaults for `hands`/`scores`/`players`/`teams` so a partial payload (e.g. restored from Firebase) still loads. This resolved an earlier `main`-vs-`firebase-integration` divergence (main previously validated strictly): when `firebase-integration` fast-forward-merged into `main` (2026-07-10), `main` adopted this permissive+guard behavior.
 
 ### Award System
 Sophisticated award tracking that analyzes completed games/series to assign:
