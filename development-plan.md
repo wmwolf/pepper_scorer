@@ -379,7 +379,7 @@ the player left of the dealer). On top of that sits an **optimistic pre-commit l
 ### Phase 11: Security & Production Features
 **Goal**: Secure, scalable deployment ready for public use
 
-#### Status (2026-07-10): security rules WRITTEN + emulator harness RUNNING GREEN (rules not yet deployed)
+#### Status (2026-07-10): security rules DEPLOYED + emulator harness RUNNING GREEN ✅
 - ✅ **`database.rules.json` written** (repo root) — coarse, node-level grants. `/users` public
   read + self-write; `/games` readable by any authed user (room-code spectators) with
   `.indexOn: ["metadata/roomCode"]`; game **creation** gated to `createdBy === auth.uid`;
@@ -407,13 +407,16 @@ the player left of the dealer). On top of that sits an **optimistic pre-commit l
   `https://demo-pepper-default-rtdb.firebaseio.com`. And `runTransaction` needs an **active
   `onValue` listener** (not a bare `get()`) or its optimistic first pass sees `null` and aborts —
   exactly why `FirebaseGameManager` keeps a listener.
-- ⏳ **REMAINING**:
-  1. **Deploy the rules** (`firebase deploy --only database`) — re-closes the interim auth-gated
-     DB. Must happen before real users; outside this environment.
-  2. Optional: tests that drive the `FirebaseGameManager` **class methods** specifically
-     (version monotonicity / two-manager convergence via the class, not just the auction node).
-     `tests/unit/firebase-sync.test.ts` covers the pure conflict-resolution decision; the auction
-     wiring is now covered end-to-end by `auction-flow.test.ts`.
+- ✅ **Rules DEPLOYED (2026-07-10)** via `firebase deploy --only database` to project
+  `pepper-scorer`. The interim `auth != null` console rules are now replaced by the strict
+  seated-player rules; the DB is locked down. (Gotcha found during deploy: `.env`'s
+  `PUBLIC_FIREBASE_PROJECT_ID` and the initial `.firebaserc` said `pepper-score` — a typo missing
+  the trailing "r"; the real project is `pepper-scorer`, as `AUTH_DOMAIN`/`DATABASE_URL` always
+  had. Both fixed.)
+- ⏳ **REMAINING (optional)**: tests that drive the `FirebaseGameManager` **class methods**
+  specifically (version monotonicity / two-manager convergence via the class, not just the auction
+  node). `tests/unit/firebase-sync.test.ts` covers the pure conflict-resolution decision; the
+  auction wiring is now covered end-to-end by `auction-flow.test.ts`.
 
 #### Security Implementation (original draft — now realized in `database.rules.json`):
 ```javascript
