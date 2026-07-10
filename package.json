@@ -10,7 +10,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
-    "test:emulator": "firebase emulators:exec --only database --project demo-pepper \"vitest run --config vitest.emulator.config.ts\"",
+    "test:emulator": "firebase emulators:exec --only auth,database --project demo-pepper \"vitest run --config vitest.emulator.config.ts\"",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts"
   },

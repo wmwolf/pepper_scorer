@@ -1,6 +1,6 @@
 // src/lib/firebase.ts
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getDatabase, connectDatabaseEmulator } from 'firebase/database';
 
 // Firebase configuration interface
@@ -64,6 +64,7 @@ export const initializeFirebase = () => {
       // emulator Vitest project (see vitest.emulator.config.ts), never in the app build.
       if (import.meta.env.PUBLIC_FIREBASE_EMULATOR === 'true') {
         connectDatabaseEmulator(database, '127.0.0.1', 9000);
+        connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
       }
     }
     return { app, auth, database };

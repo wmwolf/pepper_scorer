@@ -379,31 +379,41 @@ the player left of the dealer). On top of that sits an **optimistic pre-commit l
 ### Phase 11: Security & Production Features
 **Goal**: Secure, scalable deployment ready for public use
 
-#### Status (2026-07-10): security rules WRITTEN + emulator harness SCAFFOLDED (not yet deployed)
+#### Status (2026-07-10): security rules WRITTEN + emulator harness RUNNING GREEN (rules not yet deployed)
 - ✅ **`database.rules.json` written** (repo root) — coarse, node-level grants. `/users` public
   read + self-write; `/games` readable by any authed user (room-code spectators) with
   `.indexOn: ["metadata/roomCode"]`; game **creation** gated to `createdBy === auth.uid`;
   `gameState`/`bidding` writable by any **seated** player (4-way `players/N/userId` check);
-  `metadata/status` + `metadata/lastUpdated` writable by seated players while `createdBy` (and the
-  rest of metadata) stays immutable; `presence/$uid` self-write; `userGames` self-managed, with the
-  creator allowed to seed other players' lists. This is the widening the notes below called for.
-- ✅ **Emulator harness scaffolded**: `firebase.json` + `.firebaserc` (project `pepper-score`,
-  demo project `demo-pepper` for offline runs), a DB test seam in `src/lib/firebase.ts`
-  (`connectDatabaseEmulator` when `PUBLIC_FIREBASE_EMULATOR === 'true'`), a separate
-  `vitest.emulator.config.ts` (jsdom), `tests/emulator/rules.test.ts` (8 rules tests via
-  `@firebase/rules-unit-testing`), the `test:emulator` npm script, and a dedicated CI job
-  (`emulator`) that installs Temurin + `firebase-tools`. Kept OUT of the fast `npm run test:run`.
-- ⏳ **CANNOT run locally**: this machine has only a Java *stub* (`java -version` fails), so the
-  emulator tests are CI-only. They collect cleanly locally (`vitest list`) but have not been
-  executed against a live emulator yet.
+  `metadata/status`/`lastUpdated`/`seriesId` writable by seated players while `createdBy` (and the
+  rest of metadata) stays immutable; `presence/$uid` self-write; top-level `series` auth-gated;
+  `userGames` self-managed, with the creator allowed to seed other players' lists.
+- ✅ **Emulator harness built & PASSING (13 tests)**: `firebase.json` + `.firebaserc`, an auth+DB
+  test seam in `src/lib/firebase.ts` (`connectAuthEmulator`/`connectDatabaseEmulator` when
+  `PUBLIC_FIREBASE_EMULATOR === 'true'`), a separate `vitest.emulator.config.ts` (jsdom), the
+  `test:emulator` script (`emulators:exec --only auth,database`), and a dedicated CI `emulator`
+  job (Temurin + firebase-tools). Kept OUT of the fast `npm run test:run`. Tests:
+  - `tests/emulator/rules.test.ts` (9) — every grant via `@firebase/rules-unit-testing`.
+  - `tests/emulator/auction-flow.test.ts` (4) — **end-to-end concurrent auction across FOUR
+    anonymously-authenticated clients** (one Firebase app each), driving real per-seat RTDB
+    transactions through the real `auction.ts` engine under the real rules: ascending resolve,
+    winner-sets-trump-after-complete, throw-in, and non-seated-write-denied. This is the "4 device"
+    coverage — proven headlessly. **Ran green locally once Temurin was installed.**
+- ✅ **Manual visual harness**: `src/pages/dev-auction.astro` renders the REAL seat-1 auction UI
+  and drives seats 2–4 as their own authed users against the emulators — open it in a local
+  browser (`firebase emulators:start --only auth,database --project demo-pepper` + `npm run dev`,
+  then `/dev-auction`). Dev-only; connects to localhost emulators (harmless in a prod build).
+- ⚠️ **Emulator gotchas (learned)**: RTDB emulator namespace is `<project>-default-rtdb` — a client
+  `databaseURL` of `...?ns=demo-pepper` silently splits namespaces; use the host form
+  `https://demo-pepper-default-rtdb.firebaseio.com`. And `runTransaction` needs an **active
+  `onValue` listener** (not a bare `get()`) or its optimistic first pass sees `null` and aborts —
+  exactly why `FirebaseGameManager` keeps a listener.
 - ⏳ **REMAINING**:
-  1. **Deploy the rules** (`firebase deploy --only database`) — this re-closes the currently
-     wide-open dev DB. Must happen before real users; outside this environment.
-  2. **FirebaseGameManager-orchestration emulator tests** (version monotonicity, two-manager
-     convergence, `startNextGame` version carry-forward) — deferred: they need a signed-in
-     **Auth-emulator** context so the strict rules permit the manager's writes, best authored
-     with a live emulator to iterate. `tests/unit/firebase-sync.test.ts` still covers the pure
-     conflict-resolution decision.
+  1. **Deploy the rules** (`firebase deploy --only database`) — re-closes the interim auth-gated
+     DB. Must happen before real users; outside this environment.
+  2. Optional: tests that drive the `FirebaseGameManager` **class methods** specifically
+     (version monotonicity / two-manager convergence via the class, not just the auction node).
+     `tests/unit/firebase-sync.test.ts` covers the pure conflict-resolution decision; the auction
+     wiring is now covered end-to-end by `auction-flow.test.ts`.
 
 #### Security Implementation (original draft — now realized in `database.rules.json`):
 ```javascript

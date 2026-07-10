@@ -1,0 +1,198 @@
+---
+// DEV-ONLY harness for exercising the Phase 8b concurrent auction end-to-end against the local
+// Firebase emulators (auth + database). Not linked anywhere and not part of the product.
+//
+// Trick that makes "4 devices" work in ONE browser: Firebase auth is one-user-per-origin, so we
+// create FOUR separate Firebase app instances, each signed in ANONYMOUSLY (its own uid), all
+// pointed at the emulator. Seat 1 renders the REAL auction UI (renderAuction from game.ts);
+// seats 2-4 are driven by buttons that perform REAL, per-seat-authenticated RTDB transactions —
+// so the real security rules and real transaction semantics are all in play.
+//
+// Run:
+//   firebase emulators:start --only auth,database --project demo-pepper   (terminal 1)
+//   npm run dev                                                           (terminal 2)
+//   open http://localhost:4321/dev-auction
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dev: concurrent auction harness</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 1.5rem; max-width: 900px; color: #111; }
+      h1 { font-size: 1.25rem; } h2 { font-size: 1rem; margin: 1rem 0 .25rem; }
+      .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: .75rem; }
+      button { margin: 2px; padding: 4px 10px; border: 1px solid #bbb; border-radius: 6px; background: #f7f7f7; cursor: pointer; }
+      button:hover { background: #eee; }
+      pre { background: #0b1020; color: #cde; padding: .5rem; border-radius: 6px; overflow: auto; font-size: 12px; }
+      #status { color: #555; font-size: 13px; }
+      .btn-auction-bid, .btn-auction-pass, .btn-auction-suit { padding: 8px 14px; }
+      .seat-driver .row { margin: 4px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Concurrent auction — emulator harness</h1>
+    <p id="status">Booting…</p>
+    <button id="reset">New hand (reset auction)</button>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Seat 1 — real auction UI (renderAuction)</h2>
+        <div id="game-instruction" style="font-weight:600;margin-bottom:.5rem;"></div>
+        <div id="auction-controls"></div>
+      </div>
+      <div class="card">
+        <h2>Drive seats 2–4 (each writes as its own authed user)</h2>
+        <div id="drivers"></div>
+      </div>
+    </div>
+
+    <h2>Live bidding node + result</h2>
+    <pre id="debug">—</pre>
+
+    <script>
+      import { initializeApp } from 'firebase/app';
+      import { getAuth, connectAuthEmulator, signInAnonymously } from 'firebase/auth';
+      import { getDatabase, connectDatabaseEmulator, ref, set, onValue, runTransaction } from 'firebase/database';
+      import { renderAuction } from '../lib/game';
+      import {
+        createAuction, enterBid as engineEnter, setTrump as engineSetTrump,
+        auctionResult, revealedCount,
+      } from '../lib/auction';
+
+      const cfg = {
+        apiKey: 'demo-key',
+        authDomain: 'demo-pepper.firebaseapp.com',
+        databaseURL: 'https://demo-pepper-default-rtdb.firebaseio.com',
+        projectId: 'demo-pepper',
+        appId: 'demo-app',
+      };
+
+      const DEALER = 1;                 // dealer seat -> bidding order [2,3,4,1]
+      const HAND_INDEX = 0;
+      const gameId = 'devgame-' + Date.now();
+      const names = ['Alice', 'Bob', 'Carol', 'Dave'];
+      const status = (m) => (document.getElementById('status').textContent = m);
+
+      // RTDB drops empty maps; restore the engine's expected shape.
+      const normalize = (raw) => ({ handIndex: raw.handIndex, order: raw.order || [], entries: raw.entries || {} });
+
+      // One Firebase app + anonymous auth + db per seat, all on the emulator.
+      function makeSeatApp(i) {
+        const app = initializeApp(cfg, 'seat' + i);
+        const auth = getAuth(app);
+        connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+        const db = getDatabase(app);
+        connectDatabaseEmulator(db, '127.0.0.1', 9000);
+        return { app, auth, db };
+      }
+
+      // A transactional bidding mutation authed as this seat's user (mirrors FirebaseGameManager).
+      async function mutate(db, fn) {
+        const r = ref(db, `games/${gameId}/bidding`);
+        await runTransaction(r, (remote) => {
+          const state = remote ? normalize(remote) : null;
+          if (!state || state.handIndex !== HAND_INDEX) return;
+          try { return fn(state); } catch { return; }
+        });
+      }
+
+      async function boot() {
+        const seats = [makeSeatApp(1), makeSeatApp(2), makeSeatApp(3), makeSeatApp(4)];
+        status('Signing in 4 anonymous users…');
+        const creds = await Promise.all(seats.map(s => signInAnonymously(s.auth)));
+        const uids = creds.map(c => c.user.uid);
+        status(`Signed in. uids: ${uids.map(u => u.slice(0, 6)).join(', ')}`);
+
+        // Seat 1 creates the game node (createdBy must equal the caller per the rules).
+        const players = names.map((displayName, position) => ({
+          userId: uids[position], displayName, isAuthenticated: true, position,
+        }));
+        await set(ref(seats[0].db, `games/${gameId}`), {
+          metadata: { createdBy: uids[0], createdAt: 1, status: 'active' },
+          players,
+          teams: ['We', 'They'],
+          gameState: { hands: [String(DEALER)], scores: [0, 0], version: 0 },
+        });
+
+        // Live mirror of the bidding node for seat 1's UI + the debug panel.
+        let auction = null;
+        onValue(ref(seats[0].db, `games/${gameId}/bidding`), (snap) => {
+          auction = snap.exists() ? normalize(snap.val()) : null;
+          if (window.updateUI) window.updateUI();
+          renderDebug(auction);
+        });
+
+        // gm + mp duck-types that renderAuction needs (seat 1 = the viewer).
+        const gm = { state: { players: names, hands: [String(DEALER)] } };
+        const mp = {
+          getMySeat: () => 0,                        // 0-based seat 1
+          getFirebasePlayers: () => players,
+          getAuction: () => auction,
+          ensureAuctionForCurrentHand: async () => {
+            const r = ref(seats[0].db, `games/${gameId}/bidding`);
+            await runTransaction(r, (remote) => {
+              const state = remote ? normalize(remote) : null;
+              if (state && state.handIndex === HAND_INDEX) return state;
+              return createAuction(DEALER, HAND_INDEX);
+            });
+          },
+          enterBid: async (seat, value, suit) => mutate(seats[0].db, (s) => engineEnter(s, seat, value, suit)),
+          setTrump: async (seat, suit) => mutate(seats[0].db, (s) => engineSetTrump(s, seat, suit)),
+        };
+
+        window.updateUI = () => renderAuction(gm, mp);
+        window.updateUI();
+
+        buildDrivers(seats);
+        document.getElementById('reset').addEventListener('click', async () => {
+          await set(ref(seats[0].db, `games/${gameId}/bidding`), createAuction(DEALER, HAND_INDEX));
+          window.updateUI();
+        });
+      }
+
+      // Buttons for seats 2,3,4 — each performs a transaction authed as THAT seat's user, so the
+      // security rules validate "only a seated player may write bidding".
+      function buildDrivers(seats) {
+        const host = document.getElementById('drivers');
+        host.innerHTML = '';
+        for (const seat of [2, 3, 4]) {
+          const db = seats[seat - 1].db;
+          const div = document.createElement('div');
+          div.className = 'seat-driver';
+          div.innerHTML = `<div style="font-weight:600;margin-top:.5rem;">Seat ${seat} (${names[seat - 1]})</div>
+            <div class="row">${['4','5','6','M','D'].map(v => `<button data-seat="${seat}" data-bid="${v}">${v}</button>`).join('')}
+              <button data-seat="${seat}" data-bid="PASS">Pass</button></div>
+            <div class="row">${['C','D','H','S','N'].map(su => `<button data-seat="${seat}" data-suit="${su}">${su}</button>`).join('')}</div>`;
+          host.appendChild(div);
+        }
+        host.querySelectorAll('button[data-bid]').forEach(btn => btn.addEventListener('click', async () => {
+          const seat = Number(btn.dataset.seat);
+          try { await mutate(seats[seat - 1].db, (s) => engineEnter(s, seat, btn.dataset.bid)); }
+          catch (e) { console.error(e); }
+        }));
+        host.querySelectorAll('button[data-suit]').forEach(btn => btn.addEventListener('click', async () => {
+          const seat = Number(btn.dataset.seat);
+          try { await mutate(seats[seat - 1].db, (s) => engineSetTrump(s, seat, btn.dataset.suit)); }
+          catch (e) { console.error('setTrump denied/failed:', e.message); }
+        }));
+      }
+
+      function renderDebug(auction) {
+        const el = document.getElementById('debug');
+        if (!auction) { el.textContent = '(no auction yet)'; return; }
+        const res = auctionResult(auction);
+        el.textContent = JSON.stringify({
+          order: auction.order,
+          revealedCount: revealedCount(auction),
+          entries: auction.entries,
+          result: res,
+        }, null, 2);
+      }
+
+      boot().catch(e => { console.error(e); status('ERROR: ' + e.message); });
+    </script>
+  </body>
+</html>
