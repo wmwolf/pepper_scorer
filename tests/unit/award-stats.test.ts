@@ -75,6 +75,28 @@ describe('Award Statistics Display', () => {
     expect(defendingTeam.defensiveSuccessRate).toBe(0);
   });
 
+  it('keeps the running score history in sync when a hand has an unknown bidder', () => {
+    const players = ['Alice', 'Bob', 'Charlie', 'Diana'];
+    const teams = ['Team 1', 'Team 2'];
+    // Middle hand has an out-of-range bidder (seat 5 -> no such player). The score
+    // history and deficit tracking must still account for it rather than skipping it.
+    const hands = [
+      '114HP2', // seat 1 (team 0) bids 4, played, defenders take 2 -> [4, 2]
+      '154HP0', // seat 5 (UNKNOWN player, team 0) bids 4, defenders shut out -> [4, -4]
+      '134HP1', // seat 3 (team 0) bids 4, played, defenders take 1 -> [4, 1]
+    ];
+    const finalScores: [number, number] = [12, -1];
+
+    const awardData = trackAwardData(hands, players, teams, finalScores, 0);
+
+    // One handScores entry per completed hand, including the unknown-bidder hand.
+    expect(awardData.handScores).toHaveLength(3);
+    // pointsHistory is the initial [0,0] plus one cumulative entry per completed hand.
+    expect(awardData.pointsHistory).toHaveLength(4);
+    // Cumulative totals reflect all three hands (the unknown-bidder hand is not dropped).
+    expect(awardData.pointsHistory[awardData.pointsHistory.length - 1]).toEqual([12, -1]);
+  });
+
   it('should generate correct stat details for overreaching award', () => {
     const players = ['Alice', 'Bob'];
     const hands = [

@@ -149,21 +149,18 @@ describe('Series Flow Integration', () => {
 
   describe('Series Error Handling', () => {
     it('should guard startNextGame against invalid series states', () => {
-      // Reinterpreted from "should prevent starting next game before current is
-      // complete". The production startNextGame() does NOT inspect the current
-      // game's completeness; it only guards on series mode and series completion.
-      // POSSIBLE BUG: startNextGame() will happily abandon an in-progress game.
-      // Here we assert the guards that actually exist.
+      // startNextGame() throws when it isn't safe to advance: not in series mode,
+      // the current game isn't complete, or the series is already decided.
 
       // Not in series mode -> throws.
       const soloGame = newGame(['Alice', 'Bob', 'Charlie', 'Dave'], ['Team 1', 'Team 2']);
       expect(() => soloGame.startNextGame()).toThrow();
 
-      // In series mode with an unfinished game, it does NOT throw (documents real
-      // behavior: the in-progress hand is discarded and a fresh game begins).
+      // In series mode with an unfinished current game -> throws, so an in-progress
+      // hand can't be silently discarded.
       gameManager.addHandPart('1'); // Dealer
       gameManager.addHandPart('1'); // Bidder
-      expect(() => gameManager.startNextGame()).not.toThrow();
+      expect(() => gameManager.startNextGame()).toThrow();
 
       // Once the series is already decided, it throws.
       gameManager.state.seriesScores = [2, 0];

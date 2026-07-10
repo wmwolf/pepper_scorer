@@ -169,22 +169,23 @@ describe('Error Handling and Edge Cases', () => {
       expect(json.length).toBeGreaterThan(0)
     })
 
-    it('handles deserialization of empty JSON', () => {
-      // System is robust and handles empty JSON gracefully
-      expect(() => GameManager.fromJSON('{}')).not.toThrow()
+    it('rejects an empty JSON object (missing required fields)', () => {
+      // fromJSON validates the essential shape and fails fast on a corrupt payload.
+      expect(() => GameManager.fromJSON('{}')).toThrow()
     })
 
     it('handles deserialization of malformed JSON', () => {
       expect(() => GameManager.fromJSON('invalid json')).toThrow()
     })
 
-    it('handles deserialization of JSON with missing fields', () => {
+    it('rejects JSON with missing required fields', () => {
       const incompleteState = {
         players: ['A', 'B', 'C', 'D'],
         teams: ['T1', 'T2']
-        // Missing other required fields
+        // Missing hands/scores etc. — fromJSON should reject this rather than
+        // return a manager that blows up later mid-gameplay.
       }
-      expect(() => GameManager.fromJSON(JSON.stringify(incompleteState))).not.toThrow()
+      expect(() => GameManager.fromJSON(JSON.stringify(incompleteState))).toThrow()
     })
 
     it('handles serialization and deserialization roundtrip', () => {

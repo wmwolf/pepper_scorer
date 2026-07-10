@@ -163,11 +163,10 @@ describe('Persistence Integration', () => {
       // parsed and throws.
       expect(() => GameManager.fromJSON('this is not valid json')).toThrow();
 
-      // Structurally-incomplete-but-parseable JSON is restored permissively (the
-      // real fromJSON does no schema validation), so construction does NOT throw.
-      // The failure instead surfaces on first use of the missing `hands` array.
-      const partial = GameManager.fromJSON(JSON.stringify({ players: ['Alice'] }));
-      expect(() => partial.getScores()).toThrow();
+      // Structurally-incomplete JSON is now rejected up front by fromJSON's shape
+      // validation (missing teams/hands/scores), so it fails fast at deserialization
+      // rather than surfacing later as an obscure error mid-gameplay.
+      expect(() => GameManager.fromJSON(JSON.stringify({ players: ['Alice'] }))).toThrow();
     });
 
     it('should serialize safely regardless of storage-layer failures', () => {
