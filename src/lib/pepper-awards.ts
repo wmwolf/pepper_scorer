@@ -1098,24 +1098,24 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
       }
       
       case 'playing_it_safe': {
-        // Player with 80%+ of successful non-pepper bids as 4-bids, min 5 successful
-        const qualifyingPlayers = playerStats.filter(player => {
+        // Player with 80%+ of successful non-pepper bids as 4-bids, min 5 successful.
+        // Compute each player's ratio in a single pass, then qualify and rank.
+        const playerNames = Object.keys(data.playerStats);
+        const playersWithRatios = playerStats.map(player => {
           let successfulNonPepper4Bids = 0;
           let totalSuccessfulNonPepperBids = 0;
-          
+          const playerIndex = playerNames.indexOf(player.name) + 1;
+
           data.hands.forEach((hand, handIndex) => {
             if (isPepperRound(handIndex) || !isHandComplete(hand)) return;
-            
+
             try {
               const { bidWinner, bid } = decodeHand(hand);
-              const playerNames = Object.keys(data.playerStats);
-              const playerIndex = playerNames.indexOf(player.name) + 1;
-              
               if (bidWinner === playerIndex) {
                 const [score1, score2] = calculateScore(hand);
                 const bidderTeamIndex = (bidWinner - 1) % 2;
                 const bidderScore = bidderTeamIndex === 0 ? score1 : score2;
-                
+
                 // If bid was successful (not set)
                 if (bidderScore >= 0) {
                   totalSuccessfulNonPepperBids++;
@@ -1128,72 +1128,42 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
               // Skip invalid hands
             }
           });
-          
-          return totalSuccessfulNonPepperBids >= 5 && 
-                 (successfulNonPepper4Bids / totalSuccessfulNonPepperBids) >= 0.8;
-        });
-        
-        if (qualifyingPlayers.length === 0) return null;
-        
-        // Find player with highest percentage of 4-bids
-        const playersWithRatios = qualifyingPlayers.map(player => {
-          let successfulNonPepper4Bids = 0;
-          let totalSuccessfulNonPepperBids = 0;
-          
-          data.hands.forEach((hand, handIndex) => {
-            if (isPepperRound(handIndex) || !isHandComplete(hand)) return;
-            
-            try {
-              const { bidWinner, bid } = decodeHand(hand);
-              const playerNames = Object.keys(data.playerStats);
-              const playerIndex = playerNames.indexOf(player.name) + 1;
-              
-              if (bidWinner === playerIndex) {
-                const [score1, score2] = calculateScore(hand);
-                const bidderTeamIndex = (bidWinner - 1) % 2;
-                const bidderScore = bidderTeamIndex === 0 ? score1 : score2;
-                
-                if (bidderScore >= 0) {
-                  totalSuccessfulNonPepperBids++;
-                  if (bid === 4) {
-                    successfulNonPepper4Bids++;
-                  }
-                }
-              }
-            } catch {
-              // Skip invalid hands
-            }
-          });
-          
+
           const ratio = totalSuccessfulNonPepperBids > 0 ? successfulNonPepper4Bids / totalSuccessfulNonPepperBids : 0;
-          return { player, ratio };
+          return { player, ratio, totalSuccessfulNonPepperBids };
         });
-        
-        const winner = playersWithRatios.reduce((highest, current) => 
+
+        const qualifyingPlayers = playersWithRatios.filter(
+          p => p.totalSuccessfulNonPepperBids >= 5 && p.ratio >= 0.8
+        );
+        if (qualifyingPlayers.length === 0) return null;
+
+        // Find player with highest percentage of 4-bids
+        const winner = qualifyingPlayers.reduce((highest, current) =>
           current.ratio > highest.ratio ? current : highest
         );
-        
-        return { 
-          ...award, 
+
+        return {
+          ...award,
           winner: winner.player.name,
           statDetails: calculateAwardStats(award.id, winner.player.name, data)
         };
       }
       
       case 'no_trump_no_problem': {
-        // Player who bid no-trump 50%+ of the time, min 4 bids
-        const qualifyingPlayers = playerStats.filter(player => {
+        // Player who bid no-trump 50%+ of the time, min 4 bids.
+        // Compute each player's ratio in a single pass, then qualify and rank.
+        const playerNames = Object.keys(data.playerStats);
+        const playersWithRatios = playerStats.map(player => {
           let noTrumpBids = 0;
           let totalBids = 0;
-          
+          const playerIndex = playerNames.indexOf(player.name) + 1;
+
           data.hands.forEach(hand => {
             if (!isHandComplete(hand)) return;
-            
+
             try {
               const { bidWinner, trump } = decodeHand(hand);
-              const playerNames = Object.keys(data.playerStats);
-              const playerIndex = playerNames.indexOf(player.name) + 1;
-              
               if (bidWinner === playerIndex) {
                 totalBids++;
                 if (trump === 'N') {
@@ -1204,46 +1174,23 @@ function evaluateAward(award: AwardDefinition, data: AwardTrackingData): AwardWi
               // Skip invalid hands
             }
           });
-          
-          return totalBids >= 4 && (noTrumpBids / totalBids) >= 0.5;
-        });
-        
-        if (qualifyingPlayers.length === 0) return null;
-        
-        // Find player with highest percentage of no-trump bids
-        const playersWithRatios = qualifyingPlayers.map(player => {
-          let noTrumpBids = 0;
-          let totalBids = 0;
-          
-          data.hands.forEach(hand => {
-            if (!isHandComplete(hand)) return;
-            
-            try {
-              const { bidWinner, trump } = decodeHand(hand);
-              const playerNames = Object.keys(data.playerStats);
-              const playerIndex = playerNames.indexOf(player.name) + 1;
-              
-              if (bidWinner === playerIndex) {
-                totalBids++;
-                if (trump === 'N') {
-                  noTrumpBids++;
-                }
-              }
-            } catch {
-              // Skip invalid hands
-            }
-          });
-          
+
           const ratio = totalBids > 0 ? noTrumpBids / totalBids : 0;
-          return { player, ratio };
+          return { player, ratio, totalBids };
         });
-        
-        const winner = playersWithRatios.reduce((highest, current) => 
+
+        const qualifyingPlayers = playersWithRatios.filter(
+          p => p.totalBids >= 4 && p.ratio >= 0.5
+        );
+        if (qualifyingPlayers.length === 0) return null;
+
+        // Find player with highest percentage of no-trump bids
+        const winner = qualifyingPlayers.reduce((highest, current) =>
           current.ratio > highest.ratio ? current : highest
         );
-        
-        return { 
-          ...award, 
+
+        return {
+          ...award,
           winner: winner.player.name,
           statDetails: calculateAwardStats(award.id, winner.player.name, data)
         };
