@@ -512,15 +512,32 @@ export class FirebaseGameManager extends GameManager {
     }
   }
 
+  // Coalesce syncs triggered by multiple synchronous state mutations in the same tick into a
+  // SINGLE write of the final state. Several flows add more than one hand part in one go —
+  // pepper auto-bid (bid winner + 'P'), negotiate (fold + free tricks), clubs-forces-play
+  // (trump + forced 'P'), and initial-hand setup ('1' + '2' + 'P'). Firing a separate
+  // version-guarded transaction per part raced: two writes were stamped the same version, the
+  // second deferred, and applyRemoteState pulled the first write's PARTIAL state back in —
+  // silently dropping the later part (e.g. the auto-bid or the negotiated trick count).
+  private syncScheduled = false;
+  private scheduleSync(): void {
+    if (this.syncScheduled) return;
+    this.syncScheduled = true;
+    queueMicrotask(() => {
+      this.syncScheduled = false;
+      this.syncToFirebase();
+    });
+  }
+
   // Override methods to sync to Firebase
   override addHandPart(part: string): void {
     super.addHandPart(part);
-    this.syncToFirebase();
+    this.scheduleSync();
   }
 
   override undo(): void {
     super.undo();
-    this.syncToFirebase();
+    this.scheduleSync();
   }
 
   override completeGame(): void {

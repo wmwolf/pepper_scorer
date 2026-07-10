@@ -23,6 +23,9 @@ import { getPath } from '../lib/path-utils';
             <button id="rules-link" class="px-3 py-2 rounded-md text-white hover:bg-blue-700 focus:outline-none">
               Rules
             </button>
+            <button class="nav-sign-out hidden px-3 py-2 rounded-md text-white hover:bg-blue-700 focus:outline-none">
+              Sign out
+            </button>
           </div>
         </div>
 
@@ -48,8 +51,35 @@ import { getPath } from '../lib/path-utils';
           <button id="rules-link-mobile" class="block w-full text-left px-3 py-2 rounded-md text-white hover:bg-blue-700 focus:outline-none">
             Rules
           </button>
+          <button class="nav-sign-out hidden w-full text-left px-3 py-2 rounded-md text-white hover:bg-blue-700 focus:outline-none">
+            Sign out
+          </button>
         </div>
       </div>
     </nav>
   </CardPatternBackground>
 </header>
+
+<script>
+  // Global "Sign out" available on every page (navbar is shared via BaseLayout). Shown only when
+  // a user is signed in; clicking signs out and returns to the home/setup page.
+  import { getPath } from '../lib/path-utils';
+  import { onAuthStateChange, signOutUser } from '../lib/auth';
+
+  const signOutButtons = Array.from(document.querySelectorAll('.nav-sign-out'));
+
+  onAuthStateChange((user) => {
+    signOutButtons.forEach((btn) => btn.classList.toggle('hidden', !user));
+  });
+
+  signOutButtons.forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await signOutUser();
+      } catch (error) {
+        console.error('Error signing out:', error);
+      }
+      window.location.href = getPath('');
+    });
+  });
+</script>

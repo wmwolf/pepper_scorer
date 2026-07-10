@@ -501,15 +501,15 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
   });
 
   if (signInBtn) {
-    // Method 1: Direct event listeners (multiple types for Safari compatibility)
-    ['click', 'touchstart', 'mousedown', 'mouseup'].forEach(eventType => {
-      signInBtn.addEventListener(eventType, (e) => {
-      });
-    });
+    // Guard against overlapping sign-in attempts. Previously the button was bound THREE ways
+    // (addEventListener + .onclick + a document-level click delegation), so a single tap fired
+    // signInWithGoogle() multiple times and each new popup cancelled the previous one
+    // (auth/cancelled-popup-request) — the "clunky, needs multiple attempts" behaviour.
+    let signingIn = false;
 
-    // Method 2: Main click handler with multiple fallbacks
     const handleSignIn = async (e) => {
-
+      if (signingIn) { e?.preventDefault?.(); return; }
+      signingIn = true;
       try {
         e.preventDefault(); // Prevent any default behavior
         e.stopPropagation(); // Stop event bubbling
@@ -591,25 +591,15 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
             alert('Alternative method also failed. Please use Chrome or continue in local-only mode.');
           }
         }
+      } finally {
+        // Allow a fresh attempt once this one settles (success transitions the UI via the auth
+        // state listener; failure re-enables the button above).
+        signingIn = false;
       }
     };
 
-    // Method 3: Attach multiple handlers
+    // Bind the handler EXACTLY once. (Multiple bindings previously caused overlapping popups.)
     signInBtn.addEventListener('click', handleSignIn);
-    signInBtn.onclick = handleSignIn; // Direct property assignment as fallback
-
-    // Method 4: Add a direct click test function
-    window.testSignInButton = () => {
-            handleSignIn({ preventDefault: () => {}, stopPropagation: () => {}, target: signInBtn, currentTarget: signInBtn });
-    };
-
-    // Method 5: Event delegation fallback for Safari
-    document.addEventListener('click', (e) => {
-      if (e.target && e.target.id === 'sign-in-btn') {
-        handleSignIn(e);
-      }
-    });
-
 
   } else {
     console.error('Sign-in button not found! Check DOM structure.');
