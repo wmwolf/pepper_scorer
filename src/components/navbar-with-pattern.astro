@@ -17,7 +17,7 @@ import { getPath } from '../lib/path-utils';
             <a href={getPath('')} class="px-3 py-2 rounded-md text-white hover:bg-blue-700">
               New Game
             </a>
-            <a href={getPath('account')} class="px-3 py-2 rounded-md text-white hover:bg-blue-700">
+            <a href={getPath('account')} class="nav-account hidden px-3 py-2 rounded-md text-white hover:bg-blue-700">
               Account
             </a>
             <button id="rules-link" class="px-3 py-2 rounded-md text-white hover:bg-blue-700 focus:outline-none">
@@ -45,7 +45,7 @@ import { getPath } from '../lib/path-utils';
           <a href={getPath('')} class="block px-3 py-2 rounded-md text-white hover:bg-blue-700">
             New Game
           </a>
-          <a href={getPath('account')} class="block px-3 py-2 rounded-md text-white hover:bg-blue-700">
+          <a href={getPath('account')} class="nav-account hidden block px-3 py-2 rounded-md text-white hover:bg-blue-700">
             Account
           </a>
           <button id="rules-link-mobile" class="block w-full text-left px-3 py-2 rounded-md text-white hover:bg-blue-700 focus:outline-none">
@@ -62,14 +62,17 @@ import { getPath } from '../lib/path-utils';
 
 <script>
   // Global "Sign out" available on every page (navbar is shared via BaseLayout). Shown only when
-  // a user is signed in; clicking signs out and returns to the home/setup page.
+  // a user is signed in; clicking signs out and returns to the home/setup page. The "Account" link
+  // is likewise auth-gated — it only makes sense once you're signed in.
   import { getPath } from '../lib/path-utils';
   import { onAuthStateChange, signOutUser } from '../lib/auth';
 
   const signOutButtons = Array.from(document.querySelectorAll('.nav-sign-out'));
+  const accountLinks = Array.from(document.querySelectorAll('.nav-account'));
 
   onAuthStateChange((user) => {
     signOutButtons.forEach((btn) => btn.classList.toggle('hidden', !user));
+    accountLinks.forEach((link) => link.classList.toggle('hidden', !user));
   });
 
   signOutButtons.forEach((btn) => {
