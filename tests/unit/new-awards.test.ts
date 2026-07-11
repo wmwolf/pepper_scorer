@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   selectGameAwards,
   selectSeriesAwards,
+  evaluateAward,
   gameAwards
 } from '../../src/lib/pepper-awards'
 import { 
@@ -275,11 +276,13 @@ describe('New Awards System', () => {
       ]
       
       const awardData = trackAwardData(hands, players, teams, [14, -7], 0)
-      const selectedAwards = selectGameAwards(awardData)
-      
-      const shootMoonsAward = selectedAwards.find(award => award.id === 'shoot_for_the_moons')
-      expect(shootMoonsAward).toBeTruthy()
-      expect(shootMoonsAward?.winner).toBe('Alice')
+
+      // Selection is now random among eligible awards, so verify the award is
+      // earned (and by whom) deterministically via evaluateAward.
+      const def = gameAwards.find(d => d.id === 'shoot_for_the_moons')!
+      const result = evaluateAward(def, awardData)
+      expect(result).toBeTruthy()
+      expect(result!.winner).toBe('Alice')
     })
 
     it('awards player with 2+ successful double moon bids', () => {
@@ -289,11 +292,11 @@ describe('New Awards System', () => {
       ]
       
       const awardData = trackAwardData(hands, players, teams, [28, -14], 0)
-      const selectedAwards = selectGameAwards(awardData)
-      
-      const shootMoonsAward = selectedAwards.find(award => award.id === 'shoot_for_the_moons')
-      expect(shootMoonsAward).toBeTruthy()
-      expect(shootMoonsAward?.winner).toBe('Alice')
+
+      const def = gameAwards.find(d => d.id === 'shoot_for_the_moons')!
+      const result = evaluateAward(def, awardData)
+      expect(result).toBeTruthy()
+      expect(result!.winner).toBe('Alice')
     })
 
     it('awards player with mix of moon and double moon bids', () => {
@@ -303,11 +306,11 @@ describe('New Awards System', () => {
       ]
       
       const awardData = trackAwardData(hands, players, teams, [21, -10], 0)
-      const selectedAwards = selectGameAwards(awardData)
-      
-      const shootMoonsAward = selectedAwards.find(award => award.id === 'shoot_for_the_moons')
-      expect(shootMoonsAward).toBeTruthy()
-      expect(shootMoonsAward?.winner).toBe('Alice')
+
+      const def = gameAwards.find(d => d.id === 'shoot_for_the_moons')!
+      const result = evaluateAward(def, awardData)
+      expect(result).toBeTruthy()
+      expect(result!.winner).toBe('Alice')
     })
 
     it('requires minimum 2 successful high-value bids', () => {
@@ -317,10 +320,11 @@ describe('New Awards System', () => {
       ]
       
       const awardData = trackAwardData(hands, players, teams, [12, 1], 0)
-      const selectedAwards = selectGameAwards(awardData)
-      
-      const shootMoonsAward = selectedAwards.find(award => award.id === 'shoot_for_the_moons')
-      expect(shootMoonsAward).toBeFalsy()
+
+      // Not enough high-value bids: the award should not qualify at all.
+      const def = gameAwards.find(d => d.id === 'shoot_for_the_moons')!
+      const result = evaluateAward(def, awardData)
+      expect(result).toBeNull()
     })
 
     it('only counts successful moon bids, not failed ones', () => {
@@ -331,11 +335,11 @@ describe('New Awards System', () => {
       ]
       
       const awardData = trackAwardData(hands, players, teams, [14, 4], 0)
-      const selectedAwards = selectGameAwards(awardData)
-      
-      const shootMoonsAward = selectedAwards.find(award => award.id === 'shoot_for_the_moons')
-      expect(shootMoonsAward).toBeTruthy()
-      expect(shootMoonsAward?.winner).toBe('Alice')
+
+      const def = gameAwards.find(d => d.id === 'shoot_for_the_moons')!
+      const result = evaluateAward(def, awardData)
+      expect(result).toBeTruthy()
+      expect(result!.winner).toBe('Alice')
     })
 
     it('handles random selection when multiple players qualify', () => {
@@ -347,12 +351,13 @@ describe('New Awards System', () => {
       ]
       
       const awardData = trackAwardData(hands, players, teams, [42, -21], 0)
-      const selectedAwards = selectGameAwards(awardData)
-      
-      const shootMoonsAward = selectedAwards.find(award => award.id === 'shoot_for_the_moons')
-      expect(shootMoonsAward).toBeTruthy()
-      // Either Alice or Bob could win (random selection)
-      expect(['Alice', 'Bob']).toContain(shootMoonsAward?.winner)
+
+      // Both Alice and Bob qualify (each has 2 successful high-value bids). The
+      // award still resolves, and its winner must be one of the qualifiers.
+      const def = gameAwards.find(d => d.id === 'shoot_for_the_moons')!
+      const result = evaluateAward(def, awardData)
+      expect(result).toBeTruthy()
+      expect(['Alice', 'Bob']).toContain(result!.winner)
     })
   })
 

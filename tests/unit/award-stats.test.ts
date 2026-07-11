@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { trackAwardData } from '@/lib/statistics-util';
-import { selectGameAwards } from '@/lib/pepper-awards';
+import { selectGameAwards, evaluateAward, gameAwards } from '@/lib/pepper-awards';
 
 describe('Award Statistics Display', () => {
   beforeEach(() => {
@@ -33,19 +33,20 @@ describe('Award Statistics Display', () => {
     const winner = 0;
     const awardData = trackAwardData(hands, players, teams, finalScores, winner);
     
-    const gameAwards = selectGameAwards(awardData);
-    
+    const selectedAwards = selectGameAwards(awardData);
+
     // Should have awards with statDetails
-    expect(gameAwards.length).toBeGreaterThan(0);
-    
-    // Find Honeypot award
-    const honeypotAward = gameAwards.find(award => award.id === 'honeypot');
-    expect(honeypotAward).toBeDefined();
+    expect(selectedAwards.length).toBeGreaterThan(0);
+
+    // Honeypot is earned by this game; source it deterministically via evaluateAward
+    // rather than the now-randomized selection list.
+    const honeypotAward = evaluateAward(gameAwards.find(def => def.id === 'honeypot')!, awardData);
+    expect(honeypotAward).not.toBeNull();
     expect(honeypotAward?.winner).toBe('Charlie');
     expect(honeypotAward?.statDetails).toBe('Charlie had 3 Big Fours');
-    
+
     // Find other awards and verify they have statDetails
-    const otherAwards = gameAwards.filter(award => award.id !== 'honeypot');
+    const otherAwards = selectedAwards.filter(award => award.id !== 'honeypot');
     otherAwards.forEach(award => {
       expect(award.statDetails).toBeDefined();
       expect(award.statDetails).toContain(award.winner);
@@ -111,12 +112,11 @@ describe('Award Statistics Display', () => {
     const winner = null;
     const awardData = trackAwardData(hands, players, teams, finalScores, winner);
     
-    const gameAwards = selectGameAwards(awardData);
-    
-    // Find overreaching award
-    const overreachingAward = gameAwards.find(award => award.id === 'overreaching');
-    expect(overreachingAward).toBeDefined();
-    
+    // Overreaching is earned by this game; source it deterministically via evaluateAward
+    // rather than the now-randomized selection list.
+    const overreachingAward = evaluateAward(gameAwards.find(def => def.id === 'overreaching')!, awardData);
+    expect(overreachingAward).not.toBeNull();
+
     // Bob should win with average of 10.5 points (7 + 14) / 2
     expect(overreachingAward?.winner).toBe('Bob');
     expect(overreachingAward?.statDetails).toBe('Bob averaged 10.5 points on failed bids');
@@ -137,12 +137,12 @@ describe('Award Statistics Display', () => {
     const winner = 0;
     const awardData = trackAwardData(hands, players, teams, finalScores, winner);
     
-    const gameAwards = selectGameAwards(awardData);
-    
+    const selectedAwards = selectGameAwards(awardData);
+
     // Verify that all awards have statDetails
-    expect(gameAwards.length).toBeGreaterThan(0);
-    
-    gameAwards.forEach(award => {
+    expect(selectedAwards.length).toBeGreaterThan(0);
+
+    selectedAwards.forEach(award => {
       expect(award.statDetails).toBeDefined();
       expect(award.statDetails).toContain(award.winner);
       

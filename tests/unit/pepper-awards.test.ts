@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { 
+import {
   selectGameAwards,
   selectSeriesAwards,
+  evaluateAward,
   gameAwards,
   seriesAwards
 } from '../../src/lib/pepper-awards'
+import { seededRng } from '../helpers/seededRng'
 import { 
   trackAwardData,
   initializeAwardTracking,
@@ -309,7 +311,7 @@ describe('Award System', () => {
       expect(selectedAwards.every((award: any) => gameAwards.some(def => def.id === award.id))).toBe(true)
     })
 
-    it('prioritizes important awards in selection', () => {
+    it('surfaces an important award when its logic qualifies (clutch_player here)', () => {
       const mockAwardData: AwardTrackingData = {
         playerStats: {
           'Alice': { name: 'Alice', team: 0, bidsWon: 3, bidsSucceeded: 3, bidsFailed: 0, 
@@ -334,20 +336,22 @@ describe('Award System', () => {
         gameCompleted: true
       }
       
-      const selectedAwards = selectGameAwards(mockAwardData, 2)
-      
-      // Should prioritize important awards like clutch_player and remember_the_time
-      const importantAwardIds = selectedAwards.filter(award => 
-        gameAwards.find(def => def.id === award.id)?.important
-      ).map(award => award.id)
-      
-      expect(importantAwardIds.length).toBeGreaterThan(0)
+      // Selection no longer *prioritizes* important awards — it draws at random from the eligible
+      // ones per category. But an important award whose logic qualifies must be genuinely eligible
+      // (and therefore surfaceable). clutch_player qualifies here because Alice wonFinalBid.
+      const clutch = evaluateAward(gameAwards.find(def => def.id === 'clutch_player')!, mockAwardData)
+      expect(clutch).toBeTruthy()
+      expect(clutch!.winner).toBe('Alice')
+
+      // A seeded selection returns only real, in-roster awards (deterministic under the fixed rng).
+      const selectedAwards = selectGameAwards(mockAwardData, seededRng(1))
+      expect(selectedAwards.every((award: any) => gameAwards.some(def => def.id === award.id))).toBe(true)
     })
 
     it('handles empty award data gracefully', () => {
       const emptyAwardData = initializeAwardTracking(players, teams)
       
-      const selectedAwards = selectGameAwards(emptyAwardData, 3)
+      const selectedAwards = selectGameAwards(emptyAwardData)
       expect(selectedAwards).toEqual([])
     })
   })

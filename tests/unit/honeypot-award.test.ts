@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { trackAwardData } from '@/lib/statistics-util';
-import { selectGameAwards } from '@/lib/pepper-awards';
+import { evaluateAward, gameAwards } from '@/lib/pepper-awards';
+
+const honeypotDef = gameAwards.find(d => d.id === 'honeypot')!;
 
 describe('Honeypot Award - Big Four Detection', () => {
   beforeEach(() => {
@@ -147,13 +149,12 @@ describe('Honeypot Award - Big Four Detection', () => {
     expect(awardData.playerStats.Charlie.bigFours).toBe(3); // 3 Big Fours
     expect(awardData.playerStats.Diana.bigFours).toBe(2);   // 2 Big Fours
     
-    const gameAwards = selectGameAwards(awardData);
-    const honeypotAward = gameAwards.find(award => award.id === 'honeypot');
-    
+    const honeypotAward = evaluateAward(honeypotDef, awardData);
+
     // Should award Honeypot since Charlie has most (3) Big Fours
-    expect(honeypotAward).toBeDefined();
+    expect(honeypotAward).toBeTruthy();
     // Charlie should win with most Big Fours
-    expect(honeypotAward?.winner).toBe('Charlie');
+    expect(honeypotAward!.winner).toBe('Charlie');
   });
 
   it('should NOT award Honeypot if no player has 2+ Big Fours', () => {
@@ -176,11 +177,10 @@ describe('Honeypot Award - Big Four Detection', () => {
     expect(awardData.playerStats.Charlie.bigFours).toBe(0);
     expect(awardData.playerStats.Diana.bigFours).toBe(0);
     
-    const gameAwards = selectGameAwards(awardData);
-    const honeypotAward = gameAwards.find(award => award.id === 'honeypot');
-    
+    const honeypotAward = evaluateAward(honeypotDef, awardData);
+
     // Should NOT award Honeypot since no one has 2+ Big Fours
-    expect(honeypotAward).toBeUndefined();
+    expect(honeypotAward).toBeNull();
   });
 
   it('should prioritize Honeypot as important award', () => {
@@ -207,15 +207,14 @@ describe('Honeypot Award - Big Four Detection', () => {
     expect(awardData.playerStats.Charlie.bigFours).toBe(1); // 1 Pepper
     expect(awardData.playerStats.Diana.bigFours).toBe(1);   // 1 x 4D
     
-    const gameAwards = selectGameAwards(awardData);
-    const honeypotAward = gameAwards.find(award => award.id === 'honeypot');
-    
+    const honeypotAward = evaluateAward(honeypotDef, awardData);
+
     // Should find the Honeypot award
-    expect(honeypotAward).toBeDefined();
-    expect(honeypotAward?.important).toBe(true);
-    
+    expect(honeypotAward).toBeTruthy();
+    expect(honeypotAward!.important).toBe(true);
+
     // Alice should win with 2 Big Fours (only player with 2+)
-    expect(honeypotAward?.winner).toBe('Alice');
+    expect(honeypotAward!.winner).toBe('Alice');
   });
 
   it('should handle mixed bid types correctly for Big Four detection', () => {
@@ -249,12 +248,11 @@ describe('Honeypot Award - Big Four Detection', () => {
     // Diana: 0 Big Fours (Diana doesn't bid in any hands, or doesn't get Big Fours)
     expect(awardData.playerStats.Diana.bigFours).toBe(0);
     
-    const gameAwards = selectGameAwards(awardData);
-    const honeypotAward = gameAwards.find(award => award.id === 'honeypot');
-    
+    const honeypotAward = evaluateAward(honeypotDef, awardData);
+
     // Only Alice qualifies with 2+ Big Fours
-    expect(honeypotAward).toBeDefined();
-    expect(honeypotAward?.winner).toBe('Alice');
+    expect(honeypotAward).toBeTruthy();
+    expect(honeypotAward!.winner).toBe('Alice');
   });
 
   it('picks the Honeypot winner deterministically when players are tied', () => {
@@ -273,13 +271,11 @@ describe('Honeypot Award - Big Four Detection', () => {
     expect(awardData.playerStats.Alice.bigFours).toBe(2);
     expect(awardData.playerStats.Diana.bigFours).toBe(2);
 
-    // Even when Math.random would pick different indices on each call,
-    // the deterministic tie-break (first by name) must return the same winner.
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    const firstWinner = selectGameAwards(awardData).find(a => a.id === 'honeypot')?.winner;
-
-    vi.spyOn(Math, 'random').mockReturnValue(0.99);
-    const secondWinner = selectGameAwards(awardData).find(a => a.id === 'honeypot')?.winner;
+    // evaluateAward's own tie-break (first tied player by name) must return the
+    // same winner on every evaluation of the same completed game, independent of
+    // any randomness in the outer award SELECTION.
+    const firstWinner = evaluateAward(honeypotDef, awardData)?.winner;
+    const secondWinner = evaluateAward(honeypotDef, awardData)?.winner;
 
     expect(firstWinner).toBeDefined();
     expect(firstWinner).toBe(secondWinner);

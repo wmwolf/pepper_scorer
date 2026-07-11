@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { trackAwardData } from '@/lib/statistics-util';
-import { selectGameAwards } from '@/lib/pepper-awards';
+import { evaluateAward, gameAwards } from '@/lib/pepper-awards';
 
 describe('Overreaching Award Bug Fix', () => {
   it('should not award overreaching to player with only 1 failed bid (Susie bug fix)', () => {
@@ -33,20 +33,17 @@ describe('Overreaching Award Bug Fix', () => {
     expect(susieStats.failedBidValues).toEqual([7]); // Only Moon (7 points) failed
     expect(susieStats.failedBidValues.length).toBe(1); // Should have exactly 1 failed bid
     
-    // Generate awards and verify Susie doesn't get overreaching
-    const gameAwards = selectGameAwards(awardData, players);
-    
+    // Deterministically evaluate the overreaching award. Because no player has
+    // 2+ failed bids, it must not be earned at all (and certainly not by Susie).
+    // Using evaluateAward instead of the now-random selection makes this negative
+    // assertion reliable: an absent award under random selection could be chance,
+    // which would NOT prove the bug fix.
+    const overreachingDef = gameAwards.find(d => d.id === 'overreaching')!;
+    const result = evaluateAward(overreachingDef, awardData);
+
     // Susie should not receive the overreaching award (requires 2+ failed bids)
-    const overreachingAward = gameAwards?.find(award => 
-      award.title?.toLowerCase().includes('overreaching')
-    );
-    
-    if (overreachingAward) {
-      expect(overreachingAward.recipient).not.toBe('Susie');
-    }
-    
-    // Verify no one gets overreaching if no one has 2+ failed bids  
-    expect(overreachingAward).toBeUndefined();
+    // and no one qualifies here, so the award is not earned.
+    expect(result).toBeNull();
   });
   
   it('should correctly evaluate Pepper bids as successful when appropriate', () => {
@@ -119,14 +116,13 @@ describe('Overreaching Award Bug Fix', () => {
     // Charlie: 1 failed bid, should not qualify  
     expect(awardData.playerStats.Charlie.failedBidValues.length).toBe(1);
     
-    const gameAwards = selectGameAwards(awardData, players);
-    const overreachingAward = gameAwards?.find(award => 
-      award.title?.toLowerCase().includes('overreaching')
-    );
-    
+    // Deterministically evaluate: only Alice has 2+ failed bids, so she must be
+    // the overreaching winner.
+    const overreachingDef = gameAwards.find(d => d.id === 'overreaching')!;
+    const result = evaluateAward(overreachingDef, awardData);
+
     // Only Alice should be eligible for overreaching award
-    if (overreachingAward) {
-      expect(overreachingAward.recipient).toBe('Alice');
-    }
+    expect(result).toBeTruthy();
+    expect(result!.winner).toBe('Alice');
   });
 });

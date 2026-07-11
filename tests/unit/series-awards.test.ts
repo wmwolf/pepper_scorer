@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { 
+import {
   selectSeriesAwards,
-  seriesAwards
+  seriesAwards,
+  evaluateAward
 } from '../../src/lib/pepper-awards'
-import { 
+import {
   trackAwardData,
   initializeAwardTracking,
-  type AwardTrackingData 
+  type AwardTrackingData
 } from '../../src/lib/statistics-util'
+import { seededRng } from '../helpers/seededRng'
 
 describe('Series Awards', () => {
   const players = ['Alice', 'Bob', 'Charlie', 'Dana']
@@ -63,9 +65,10 @@ describe('Series Awards', () => {
         gameCompleted: true
       }
       
-      const selectedAwards = selectSeriesAwards(seriesData)
-      const seriesMVP = selectedAwards.find(award => award.id === 'series_mvp')
-      
+      // Selection is now random per category, so evaluate the specific award
+      // directly for a deterministic winner assertion.
+      const seriesMVP = evaluateAward(seriesAwards.find(d => d.id === 'series_mvp')!, seriesData)
+
       expect(seriesMVP).toBeTruthy()
       // Alice should have highest net points: Game1: +8, Game2: +4 = +12
       // Bob should have: Game1: +10, Game2: +5 = +15
@@ -124,9 +127,8 @@ describe('Series Awards', () => {
         gameCompleted: true
       }
       
-      const selectedAwards = selectSeriesAwards(seriesData)
-      const seriesMVP = selectedAwards.find(award => award.id === 'series_mvp')
-      
+      const seriesMVP = evaluateAward(seriesAwards.find(d => d.id === 'series_mvp')!, seriesData)
+
       // Check the net points for context
       const aliceNetPoints = seriesData.playerStats.Alice.netPoints
       const bobNetPoints = seriesData.playerStats.Bob.netPoints
@@ -196,9 +198,8 @@ describe('Series Awards', () => {
         gameCompleted: true
       }
       
-      const selectedAwards = selectSeriesAwards(seriesData)
-      const seriesMVP = selectedAwards.find(award => award.id === 'series_mvp')
-      
+      const seriesMVP = evaluateAward(seriesAwards.find(d => d.id === 'series_mvp')!, seriesData)
+
       // Charlie should win MVP with only 1 bid across 2 games
       expect(seriesMVP?.winner).toBe('Charlie')
       expect(seriesData.playerStats.Charlie.bidsWon).toBe(1)
@@ -272,9 +273,8 @@ describe('Series Awards', () => {
       
       seriesData.gameCompleted = true
       
-      const selectedAwards = selectSeriesAwards(seriesData)
-      const defensiveSpecialists = selectedAwards.find(award => award.id === 'defensive_specialists')
-      
+      const defensiveSpecialists = evaluateAward(seriesAwards.find(d => d.id === 'defensive_specialists')!, seriesData)
+
       expect(defensiveSpecialists).toBeTruthy()
       expect(defensiveSpecialists?.winner).toBe('Team 2') // 80% vs 33.3%
     })
@@ -287,9 +287,8 @@ describe('Series Awards', () => {
       seriesData.teamStats['Team 2'].highValueBids = { attempts: 3, successes: 2 }
       seriesData.gameCompleted = true
       
-      const selectedAwards = selectSeriesAwards(seriesData)
-      const bidBullies = selectedAwards.find(award => award.id === 'bid_bullies')
-      
+      const bidBullies = evaluateAward(seriesAwards.find(d => d.id === 'bid_bullies')!, seriesData)
+
       expect(bidBullies).toBeTruthy()
       expect(bidBullies?.winner).toBe('Team 1') // 4 successful high-value bids vs 2
     })
@@ -301,9 +300,8 @@ describe('Series Awards', () => {
       seriesData.teamStats['Team 2'].longestStreak = 5
       seriesData.gameCompleted = true
       
-      const selectedAwards = selectSeriesAwards(seriesData)
-      const streakMasters = selectedAwards.find(award => award.id === 'streak_masters')
-      
+      const streakMasters = evaluateAward(seriesAwards.find(d => d.id === 'streak_masters')!, seriesData)
+
       expect(streakMasters).toBeTruthy()
       expect(streakMasters?.winner).toBe('Team 1') // 8-hand streak vs 5
     })
@@ -327,44 +325,12 @@ describe('Series Awards', () => {
       
       seriesData.gameCompleted = true
       
-      // Direct test of award evaluation logic
+      // Direct test of the real award evaluation logic
       const suitSpecialistAward = seriesAwards.find(a => a.id === 'suit_specialist')
       expect(suitSpecialistAward).toBeTruthy()
-      
-      // Import evaluateAward function - we'll need to access it
-      const evaluateAward = (award: any, data: any) => {
-        // This is a simplified version of the evaluation logic for testing
-        const playerStats = Object.values(data.playerStats) as any[]
-        const qualifyingPlayers = playerStats.filter(player => {
-          return Object.values(player.trumpBids).some((data: any) => data.attempts >= 4)
-        })
-        
-        if (qualifyingPlayers.length === 0) return null
-        
-        const playersWithBestSuit = qualifyingPlayers.map(player => {
-          let bestSuccessRate = 0
-          
-          Object.entries(player.trumpBids).forEach(([suit, data]: [string, any]) => {
-            if (data.attempts >= 4) {
-              const successRate = data.successes / data.attempts
-              if (successRate > bestSuccessRate) {
-                bestSuccessRate = successRate
-              }
-            }
-          })
-          
-          return { player, bestSuccessRate }
-        })
-        
-        const winnerData = playersWithBestSuit.reduce((best, current) => 
-          current.bestSuccessRate > best.bestSuccessRate ? current : best
-        )
-        
-        return { ...award, winner: winnerData.player.name }
-      }
-      
-      const result = evaluateAward(suitSpecialistAward, seriesData)
-      
+
+      const result = evaluateAward(suitSpecialistAward!, seriesData)
+
       expect(result).toBeTruthy()
       expect(result?.winner).toBe('Alice') // Highest rate (83.3%) with min 4 attempts
     })
@@ -383,27 +349,12 @@ describe('Series Awards', () => {
       
       seriesData.gameCompleted = true
       
-      // Direct test of award evaluation logic
+      // Direct test of the real award evaluation logic
       const pepperPerfectAward = seriesAwards.find(a => a.id === 'pepper_perfect')
       expect(pepperPerfectAward).toBeTruthy()
-      
-      const evaluateAward = (award: any, data: any) => {
-        const playerStats = Object.values(data.playerStats) as any[]
-        const qualifyingPlayers = playerStats.filter(player => 
-          player.pepperRoundBids.attempts > 0 && 
-          player.pepperRoundBids.attempts === player.pepperRoundBids.successes &&
-          player.pepperRoundBids.opponents_set > 0
-        )
-        
-        if (qualifyingPlayers.length === 0) return null
-        
-        // For this award, first qualifying player wins (could add tiebreaker logic)
-        const winner = qualifyingPlayers[0]
-        return { ...award, winner: winner.name }
-      }
-      
-      const result = evaluateAward(pepperPerfectAward, seriesData)
-      
+
+      const result = evaluateAward(pepperPerfectAward!, seriesData)
+
       expect(result).toBeTruthy()
       expect(result?.winner).toBe('Alice') // Perfect record + set opponents
     })
@@ -426,8 +377,7 @@ describe('Series Awards', () => {
 
       seriesData.gameCompleted = true
 
-      const selectedAwards = selectSeriesAwards(seriesData)
-      const moonStruck = selectedAwards.find(award => award.id === 'moon_struck')
+      const moonStruck = evaluateAward(seriesAwards.find(d => d.id === 'moon_struck')!, seriesData)
 
       expect(moonStruck).toBeTruthy()
       expect(moonStruck?.winner).toBe('Alice') // 5 failed moons vs Bob's 3
@@ -450,57 +400,41 @@ describe('Series Awards', () => {
       
       seriesData.gameCompleted = true
       
-      const selectedAwards = selectSeriesAwards(seriesData)
-      const feastOrFamine = selectedAwards.find(award => award.id === 'feast_or_famine')
-      
+      const feastOrFamine = evaluateAward(seriesAwards.find(d => d.id === 'feast_or_famine')!, seriesData)
+
       expect(feastOrFamine).toBeTruthy()
       expect(feastOrFamine?.winner).toBe('Alice') // Highest variance in bid results
     })
 
     it('evaluates Gambling Problem award correctly', () => {
+      // The real Gambling Problem award is a TEAM award: the team that most often
+      // went set defending a PLAYED 4/5 bid (which could have been negotiated). It
+      // reads the actual hands, so craft hands where each defending set = a played
+      // 4/5 bid the defenders got shut out on (tricks === 0 → defenders go negative).
       const seriesData = initializeAwardTracking(players, teams)
-      
-      // Alice: multiple failed low bids (4 and 5) that could have been negotiated
-      seriesData.playerStats.Alice.failedBidValues = [4, 5, 4, 5, 4] // 5 failed low bids
-      seriesData.playerStats.Alice.bidsWon = 8
-      
-      // Bob: some failed bids but fewer low ones
-      seriesData.playerStats.Bob.failedBidValues = [6, 4, 7, 5] // 2 failed low bids
-      seriesData.playerStats.Bob.bidsWon = 6
-      
-      // Charlie: mostly high bid failures
-      seriesData.playerStats.Charlie.failedBidValues = [6, 7, 6] // 0 failed low bids
-      seriesData.playerStats.Charlie.bidsWon = 5
-      
+
+      // Team 1 = index 0 (seats 1 & 3 bid); Team 2 = index 1 (seats 2 & 4 bid).
+      // A defender is set only on decision 'P' with tricks '0'.
+      seriesData.hands = [
+        '124HP0', // seat 2 (Team 2) bids 4, played, defenders (Team 1) shut out -> Team 1 set
+        '145HP0', // seat 4 (Team 2) bids 5, played, defenders (Team 1) shut out -> Team 1 set
+        '114HP0', // seat 1 (Team 1) bids 4, played, defenders (Team 2) shut out -> Team 2 set (only 1)
+        '236HP2', // seat 3 bids 6 (not a 4/5 bid) -> ignored by this award
+      ]
       seriesData.gameCompleted = true
-      
-      // Direct test of award evaluation logic
+
+      // Direct test of the real award evaluation logic.
       const gamblingProblemAward = seriesAwards.find(a => a.id === 'gambling_problem')
       expect(gamblingProblemAward).toBeTruthy()
-      
-      const evaluateAward = (award: any, data: any) => {
-        const playerStats = Object.values(data.playerStats) as any[]
-        const qualifyingPlayers = playerStats.filter(player => {
-          const lowFailedBids = player.failedBidValues.filter((val: number) => val <= 5).length
-          return lowFailedBids >= 3 // Minimum threshold for gambling problem
-        })
-        
-        if (qualifyingPlayers.length === 0) return null
-        
-        // Find player with most low failed bids
-        const winner = qualifyingPlayers.reduce((worst, current) => {
-          const worstLowFails = worst.failedBidValues.filter((val: number) => val <= 5).length
-          const currentLowFails = current.failedBidValues.filter((val: number) => val <= 5).length
-          return currentLowFails > worstLowFails ? current : worst
-        })
-        
-        return { ...award, winner: winner.name }
-      }
-      
-      const result = evaluateAward(gamblingProblemAward, seriesData)
-      
+
+      // Regression guard: `gambling_problem` is declared `type: 'team'`, and its evaluation `case`
+      // must live in evaluateAward's team switch. It previously sat in the player switch, so the
+      // team-typed award was unreachable (dispatch keys off award.type) and could NEVER be given.
+      // Now it evaluates correctly: Team 1 (2 defensive sets against played 4/5 bids, meeting the
+      // >=2 minimum) beats Team 2 (only 1).
+      const result = evaluateAward(gamblingProblemAward!, seriesData)
       expect(result).toBeTruthy()
-      expect(result?.winner).toBe('Alice') // Most failed low bids (5 vs 2 vs 0)
+      expect(result?.winner).toBe('Team 1')
     })
   })
 
@@ -518,11 +452,26 @@ describe('Series Awards', () => {
       
       seriesData.gameCompleted = true
       
-      const selectedAwards = selectSeriesAwards(seriesData)
-      
+      // Both awards must be ELIGIBLE for this data (deterministic), even though
+      // which one actually gets picked per category is now random.
+      const mvpEligible = evaluateAward(seriesAwards.find(d => d.id === 'series_mvp')!, seriesData)
+      const bidBulliesEligible = evaluateAward(seriesAwards.find(d => d.id === 'bid_bullies')!, seriesData)
+      expect(mvpEligible).toBeTruthy()
+      expect(mvpEligible?.winner).toBe('Alice') // Highest net points
+      expect(bidBulliesEligible).toBeTruthy()
+      expect(bidBulliesEligible?.winner).toBe('Team 1') // 5 successful high-value bids
+
+      // And the selection returns a valid spread: up to 3 awards across distinct
+      // categories, each with a real winner.
+      const selectedAwards = selectSeriesAwards(seriesData, seededRng(1))
+
       expect(selectedAwards.length).toBeGreaterThan(1)
-      expect(selectedAwards.some(a => a.id === 'series_mvp')).toBe(true)
-      expect(selectedAwards.some(a => a.id === 'bid_bullies')).toBe(true)
+      expect(selectedAwards.length).toBeLessThanOrEqual(3)
+      // Every selected award has a valid winner name.
+      expect(selectedAwards.every(a => typeof a.winner === 'string' && a.winner.length > 0)).toBe(true)
+      // Distinct categories: one team + one player + one dubious at most.
+      const uniqueIds = new Set(selectedAwards.map(a => a.id))
+      expect(uniqueIds.size).toBe(selectedAwards.length)
     })
 
     it('handles empty or minimal series data gracefully', () => {
