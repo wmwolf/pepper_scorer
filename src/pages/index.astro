@@ -10,6 +10,8 @@ import ResumeGameModal from '../components/resume-modal.astro';
     <div id="auth-section" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
       <div id="auth-logged-out" class="text-center">
         <p class="text-blue-700 mb-3"><strong>Pepper Scorer in the Cloud!</strong> Sign in to enable multiplayer features.</p>
+        <!-- Google Identity Services renders its official button here when configured (production). -->
+        <div id="gsi-button-container" class="hidden flex justify-center mb-2"></div>
         <div class="space-y-2">
           <button id="sign-in-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors block w-full sm:w-auto sm:inline-block">
             Sign in with Google
@@ -18,7 +20,6 @@ import ResumeGameModal from '../components/resume-modal.astro';
             Continue without signing in
           </button>
         </div>
-        <p class="text-xs text-gray-600 mt-2">Note: Safari/DuckDuckGo users may experience auth issues. Consider using Chrome or continuing without signing in.</p>
       </div>
 
       <div id="auth-logged-in" class="hidden">
@@ -192,7 +193,8 @@ import ResumeGameModal from '../components/resume-modal.astro';
 <script>
   import { GameManager } from '../lib/gameState';
   import { getPath } from '../lib/path-utils';
-  import { signInWithGoogle, signInWithGoogleRedirect, completeRedirectSignIn, prefersRedirectSignIn, signOutUser, onAuthStateChange, getCurrentUser, searchUsers } from '../lib/auth';
+  import { signInWithGoogle, signInWithGoogleRedirect, signInWithGoogleCredential, useGoogleIdentityServices, completeRedirectSignIn, prefersRedirectSignIn, signOutUser, onAuthStateChange, getCurrentUser, searchUsers } from '../lib/auth';
+  import { googleOAuthClientId } from '../lib/firebase';
 
   // Check for unfinished game on load
   document.addEventListener('DOMContentLoaded', async () => {
@@ -584,8 +586,56 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
       }
     };
 
-    // Bind the handler EXACTLY once. (Multiple bindings previously caused overlapping popups.)
-    signInBtn.addEventListener('click', handleSignIn);
+    // In production, prefer Google Identity Services: it returns an ID token via a JS callback and
+    // we exchange it with signInWithCredential — no popup/redirect and no cross-origin auth handler,
+    // so it works on iOS Safari (which ITP-breaks signInWithPopup/Redirect). Local/emulator keeps
+    // the popup flow (the Auth emulator's fake Google can't validate a real GIS token).
+    const loadGisScript = () => new Promise((resolve, reject) => {
+      if ((window as any).google?.accounts?.id) return resolve(undefined);
+      const s = document.createElement('script');
+      s.src = 'https://accounts.google.com/gsi/client';
+      s.async = true;
+      s.onload = () => resolve(undefined);
+      s.onerror = () => reject(new Error('Failed to load Google Identity Services'));
+      document.head.appendChild(s);
+    });
+
+    const setupGis = async () => {
+      await loadGisScript();
+      const google = (window as any).google;
+      if (!google?.accounts?.id) throw new Error('GIS unavailable after load');
+      google.accounts.id.initialize({
+        client_id: googleOAuthClientId,
+        auto_select: false,
+        callback: async (response: { credential: string }) => {
+          try {
+            await signInWithGoogleCredential(response.credential); // auth listener updates the UI
+          } catch (err) {
+            console.error('Google Identity Services sign-in failed:', err);
+            alert('Google sign-in failed. Please try again.');
+          }
+        },
+      });
+      const container = document.getElementById('gsi-button-container');
+      if (container) {
+        google.accounts.id.renderButton(container, {
+          theme: 'filled_blue', size: 'large', text: 'signin_with', shape: 'pill',
+        });
+        container.classList.remove('hidden');
+      }
+      signInBtn.style.display = 'none'; // GIS's official button replaces our custom one
+    };
+
+    if (useGoogleIdentityServices()) {
+      setupGis().catch((err) => {
+        console.error('Falling back to popup sign-in:', err);
+        signInBtn.style.display = '';
+        signInBtn.addEventListener('click', handleSignIn);
+      });
+    } else {
+      // Bind the handler EXACTLY once. (Multiple bindings previously caused overlapping popups.)
+      signInBtn.addEventListener('click', handleSignIn);
+    }
 
   } else {
     console.error('Sign-in button not found! Check DOM structure.');

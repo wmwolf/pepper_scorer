@@ -26,6 +26,12 @@ const firebaseConfig: FirebaseConfig = {
   appId: import.meta.env.PUBLIC_FIREBASE_APP_ID || ''
 };
 
+// OAuth Web client ID (from the Firebase project's Google provider / Google Cloud Console).
+// Public value, baked in at build time. When present (and not in emulator mode), the app uses
+// Google Identity Services for sign-in instead of signInWithPopup/Redirect — GIS returns an ID
+// token via a JS callback, which sidesteps iOS Safari's cross-origin storage (ITP) breakage.
+export const googleOAuthClientId = import.meta.env.PUBLIC_GOOGLE_OAUTH_CLIENT_ID || '';
+
 // Check if Firebase is configured
 export const isFirebaseConfigured = () => {
   const configured = Boolean(

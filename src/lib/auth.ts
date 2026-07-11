@@ -3,13 +3,14 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  signInWithCredential,
   GoogleAuthProvider,
   signOut,
   onAuthStateChanged,
   type User
 } from 'firebase/auth';
 import { ref, set, get } from 'firebase/database';
-import { getFirebaseAuth, getFirebaseDatabase, isFirebaseConfigured } from './firebase';
+import { getFirebaseAuth, getFirebaseDatabase, isFirebaseConfigured, googleOAuthClientId } from './firebase';
 
 export interface PepperUser {
   uid: string;
@@ -119,6 +120,28 @@ export const completeRedirectSignIn = async (): Promise<PepperUser | null> => {
   }
   return null;
 };
+
+// Exchange a Google ID token (from Google Identity Services) for a Firebase session. This is a
+// direct API call — no popup, no redirect, no cross-origin auth handler — so it works on iOS
+// Safari where signInWithPopup/Redirect fail (ITP partitions the firebaseapp.com storage).
+export const signInWithGoogleCredential = async (idToken: string): Promise<PepperUser | null> => {
+  if (!isFirebaseConfigured()) return null;
+  const auth = getFirebaseAuth();
+  if (!auth) return null;
+  try {
+    const result = await signInWithCredential(auth, GoogleAuthProvider.credential(idToken));
+    return await createOrUpdateUser(result.user);
+  } catch (error) {
+    console.error('Error signing in with Google credential:', error);
+    return null;
+  }
+};
+
+// Use Google Identity Services (GIS) for sign-in? Only when a client ID is configured AND we're
+// not in emulator mode (the Auth emulator's fake-Google popup can't validate a real GIS token, so
+// local testing keeps using the popup flow).
+export const useGoogleIdentityServices = (): boolean =>
+  Boolean(googleOAuthClientId) && import.meta.env.PUBLIC_FIREBASE_EMULATOR !== 'true';
 
 // Should this device use the redirect flow instead of the popup? iOS (incl. iPadOS reporting as
 // Mac) and Android block or mishandle the OAuth popup; redirect (full-page navigation) is reliable.
