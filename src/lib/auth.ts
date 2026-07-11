@@ -187,20 +187,36 @@ const createOrUpdateUser = async (firebaseUser: User): Promise<PepperUser> => {
   if (snapshot.exists()) {
     // Existing user - update last login
     const existingUser = snapshot.val() as PepperUser;
+
+    // Only update displayName from Google if the user hasn't set a custom one.
+    const displayName = existingUser.hasCustomDisplayName
+      ? existingUser.displayName
+      : (firebaseUser.displayName || existingUser.displayName);
+
+    // Self-healing migration: legacy usernames were the email local part (all accounts created
+    // before 2026-07-11), which leaks the address through the public directory search. If this
+    // username still equals the email local part, regenerate it from the display name. One-time —
+    // after migration the username no longer matches, so this won't fire again.
+    let username = existingUser.username;
+    const emailLocalPart = firebaseUser.email?.split('@')[0]?.toLowerCase();
+    if (username && emailLocalPart && username.toLowerCase() === emailLocalPart) {
+      username = await generateUniqueUsername(slugifyDisplayName(displayName || '') || 'player');
+    }
+
     pepperUser = {
       ...existingUser,
+      username,
       lastLogin: now,
-      // Only update displayName from Google if user hasn't set a custom one
-      displayName: existingUser.hasCustomDisplayName
-        ? existingUser.displayName
-        : (firebaseUser.displayName || existingUser.displayName),
+      displayName,
       email: firebaseUser.email || existingUser.email,
       photoURL: cleanPhotoURL(firebaseUser.photoURL) || existingUser.photoURL
     };
   } else {
-    // New user - create profile
-    const baseUsername = firebaseUser.email?.split('@')[0] || 'player';
-    const username = await generateUniqueUsername(baseUsername);
+    // New user - create profile. Derive the username from the display name, NOT the email local
+    // part: usernames are publicly searchable, so an email-derived one would leak the address.
+    const username = await generateUniqueUsername(
+      slugifyDisplayName(firebaseUser.displayName || '') || 'player'
+    );
 
     pepperUser = {
       uid: firebaseUser.uid,
@@ -228,6 +244,20 @@ const createOrUpdateUser = async (firebaseUser: User): Promise<PepperUser> => {
 
   return pepperUser;
 };
+
+// Turn a display name into a username slug: lowercase, accent-stripped, alphanumerics joined by
+// single hyphens, trimmed to a reasonable length. Deliberately NOT derived from the email — the
+// username is publicly searchable, so it must not encode the address. Returns '' when nothing
+// usable remains (callers fall back to 'player').
+const slugifyDisplayName = (name: string): string =>
+  name
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 30)
+    .replace(/-+$/g, '');
 
 // Generate unique username
 const generateUniqueUsername = async (baseUsername: string): Promise<string> => {
