@@ -15,7 +15,7 @@ import ResumeGameModal from '../components/resume-modal.astro';
              exactly one based on useGoogleIdentityServices(), so they never show together. -->
         <div id="gsi-button-container" class="hidden flex justify-center mb-2"></div>
         <div class="space-y-2">
-          <button id="sign-in-btn" class="hidden px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors w-full sm:w-auto sm:inline-block">
+          <button id="sign-in-btn" style="display: none;" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors block w-full sm:w-auto sm:inline-block">
             Sign in with Google
           </button>
           <button id="skip-auth-btn" class="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors block w-full sm:w-auto sm:inline-block sm:ml-2 text-sm">
@@ -502,7 +502,9 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
   const enablePopupSignIn = () => {
     if (!signInBtn) { console.error('Sign-in button not found! Check DOM structure.'); return; }
     let signingIn = false;
-    signInBtn.classList.remove('hidden');
+    // Reveal via inline style (not a `hidden` class): the button also carries `sm:inline-block`,
+    // which would override a `hidden` class at desktop widths and show it even on the GIS path.
+    signInBtn.style.display = '';
     signInBtn.addEventListener('click', async (e) => {
       e.preventDefault();
       if (signingIn) return;
