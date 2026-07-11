@@ -27,12 +27,18 @@ This document provides step-by-step instructions for setting up Firebase for the
      - Add your domain (e.g., `localhost` for development)
      - Add authorized domains for production
 
+> Note: for iOS Safari support, sign-in uses **Google Identity Services** (see the Google Sign-In
+> section below) rather than the OAuth popup/redirect, which Safari's tracking protection breaks
+> for cross-origin auth domains.
+
 ## Step 3: Enable Realtime Database
 
 1. Click on "Realtime Database" in the left sidebar
 2. Click "Create Database"
 3. Choose your database location (closest to your users)
-4. Start in **test mode** (we'll add security rules later)
+4. Start in **locked mode** — the real rules are version-controlled and deployed from the repo
+   (see "Security rules" below). Do NOT rely on "test mode": its rules are time-limited and expire
+   to deny-all.
 5. Click "Done"
 
 ## Step 4: Get Web App Configuration
@@ -83,46 +89,45 @@ PUBLIC_FIREBASE_APP_ID=your-app-id
 .env.production
 ```
 
-## Step 6: Configure Database Security Rules (Optional - for production)
+## Step 6: Google Sign-In (Google Identity Services)
 
-For development, test mode is fine. For production, update the database rules:
+iOS Safari's tracking protection breaks the OAuth popup/redirect flow when the auth handler
+(`<project>.firebaseapp.com`) is a different origin than the app. To fix it, the app uses **Google
+Identity Services** (GIS), which returns an ID token via a JS callback that we exchange with
+`signInWithCredential` — no popup, no redirect, no cross-origin handler.
 
-1. Go to "Realtime Database" → "Rules" tab
-2. Replace the default rules with:
+1. Get the OAuth **Web client** ID: Firebase console → Authentication → Sign-in method → Google →
+   *Web SDK configuration* → "Web client ID" (this is an auto-created client in your project's
+   Google Cloud credentials).
+2. Authorize your origins: Google Cloud console → APIs & Services → Credentials → open that Web
+   client → **Authorized JavaScript origins** → add your app origins (e.g. `https://billwolf.space`
+   and `http://localhost:4321`). Origins are scheme + host only (no path).
+3. Set `PUBLIC_GOOGLE_OAUTH_CLIENT_ID` (in `.env` and, for deploys, as a GitHub Actions secret).
 
-```json
-{
-  "rules": {
-    "users": {
-      "$userId": {
-        ".read": true,
-        ".write": "$userId === auth.uid"
-      }
-    },
-    "games": {
-      "$gameId": {
-        ".read": "auth != null && (root.child('userGames').child(auth.uid).child($gameId).exists() || data.child('metadata/roomCode').val() != null)",
-        ".write": "auth != null && data.child('metadata/createdBy').val() === auth.uid"
-      }
-    },
-    "userGames": {
-      "$userId": {
-        ".read": "$userId === auth.uid",
-        ".write": "$userId === auth.uid"
-      }
-    }
-  }
-}
+When this value is unset, or when running against the emulator, the app falls back to the
+popup/redirect flow (fine for desktop and local emulator testing).
+
+## Security rules
+
+The Realtime Database rules are **version-controlled** in `database.rules.json` (not edited in the
+console) and deployed with:
+
+```sh
+firebase deploy --only database
 ```
 
-3. Click "Publish"
+They restrict writes to seated, authenticated players (game creation to the creator; `gameState`/
+`bidding`/`presence` to seated players; immutable `metadata` except status/lastUpdated/seriesId).
+The rules are covered by emulator tests — see below. Requires `firebase-tools` and a `.firebaserc`
+pointing at your project.
 
-## Step 7: Test the Configuration
+## Testing
 
-1. Start your development server: `npm run dev`
-2. Open your browser to `http://localhost:4321`
-3. Check the browser console for any Firebase-related errors
-4. If everything is working, you should see "Firebase initialized successfully" in the console
+- **App config:** start `npm run dev`, open `http://localhost:4321`, and check the console for
+  Firebase warnings. "Firebase configuration incomplete" means an env var is missing.
+- **Local multiplayer:** `npm run dev:emulator` runs the app against the Auth + Database emulators
+  with fake accounts — see [LOCAL_MULTIPLAYER_TESTING.md](./LOCAL_MULTIPLAYER_TESTING.md).
+- **Rules + wiring:** `npm run test:emulator` runs hermetic emulator tests (needs a Java runtime).
 
 ## Troubleshooting
 
@@ -150,6 +155,8 @@ For development, test mode is fine. For production, update the database rules:
 
 Your `.env` file should look something like this (with your actual values):
 
+See `.env.example` for the full, documented list. A filled-in `.env` looks like:
+
 ```bash
 PUBLIC_FIREBASE_API_KEY=AIzaSyDOCAbC123dEf456GhI789jKl012-MnO
 PUBLIC_FIREBASE_AUTH_DOMAIN=pepper-scorer-12345.firebaseapp.com
@@ -158,20 +165,17 @@ PUBLIC_FIREBASE_PROJECT_ID=pepper-scorer-12345
 PUBLIC_FIREBASE_STORAGE_BUCKET=pepper-scorer-12345.appspot.com
 PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789012
 PUBLIC_FIREBASE_APP_ID=1:123456789012:web:abcdef123456
+PUBLIC_GOOGLE_OAUTH_CLIENT_ID=123456789012-abc123.apps.googleusercontent.com
 ```
 
-## Next Steps
-
-Once Firebase is configured:
-
-1. Test authentication by implementing sign-in/sign-out buttons
-2. Test database connectivity by creating a simple game
-3. Implement real-time game synchronization
-4. Add mobile bidding interface
+For production (GitHub Pages), these are set as GitHub Actions **secrets** (same names) and injected
+at build time by `.github/workflows/astro.yml`.
 
 ## Security Notes
 
-- Never commit your `.env` file to version control
-- Use different Firebase projects for development and production
-- Review and update security rules before going to production
-- Consider setting up Firebase usage alerts to monitor costs
+- Never commit your `.env` file to version control (it is git-ignored).
+- Firebase web config values (including the API key and OAuth client ID) are public by design —
+  they ship in the client bundle; access is controlled by the security rules + authorized domains,
+  not by hiding these values.
+- Keep `database.rules.json` locked down and deployed (`firebase deploy --only database`) before
+  exposing multiplayer to real users.

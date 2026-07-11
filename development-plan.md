@@ -3,6 +3,28 @@
 ## Project Overview
 Modernizing the Pepper card game scoring application by moving from Bootstrap 4 and CoffeeScript to Astro and Tailwind CSS, while adding Firebase integration for real-time multiplayer features, user authentication, and comprehensive statistics tracking.
 
+## Current status (2026-07-11)
+The `firebase-integration` branch was **merged into `main`** (Firebase is now on the mainline; that
+branch is deleted). Live at https://billwolf.space/pepper_scorer/ via GitHub Pages.
+
+- **Phases 1–8: done.** Core scoring, series, stats/awards, Firebase auth, schema/migration,
+  real-time sync, and the mobile bidding interface (Phase 8) — including the **concurrent-entry
+  auction** (8b redesign), **host-based turn gating** (bid winner picks their own trump), the
+  reveal pause + bogus-bid demotion, and numerous multiplayer bug fixes flushed out by real
+  4-device testing (sync coalescing, RTDB-`undefined` writes, empty-`entries` auction freeze).
+- **Phase 11 security: done.** Strict rules version-controlled in `database.rules.json` and
+  **deployed**; emulator harness green in CI (rules + wiring, incl. a 4-client auction flow).
+- **Mobile auth:** iOS Safari broke `signInWithPopup`/`Redirect` (cross-origin authDomain + ITP);
+  fixed with **Google Identity Services** (`signInWithCredential`). Deployed; pending a final
+  stock-iPhone confirmation.
+- **Not started:** Phase 9 (user management & game discovery), Phase 10 (advanced stats/history),
+  and Phase 11's production polish (PWA/offline, monitoring, backup). See "Recommended sequencing"
+  below. Remaining Phase-8 follow-ups: real multi-device QA at scale and the deferred
+  mixed-phone/non-phone auction mode.
+
+The detailed per-phase notes below are the historical decision trail; the summary above is the
+current state of record.
+
 ## Completed Phases ✅
 
 ### Phase 1: Project Setup and Core Components ✅
