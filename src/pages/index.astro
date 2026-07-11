@@ -10,10 +10,12 @@ import ResumeGameModal from '../components/resume-modal.astro';
     <div id="auth-section" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
       <div id="auth-logged-out" class="text-center">
         <p class="text-blue-700 mb-3"><strong>Pepper Scorer in the Cloud!</strong> Sign in to enable multiplayer features.</p>
-        <!-- Google Identity Services renders its official button here when configured (production). -->
+        <!-- Google Identity Services renders its official button here in production. The custom
+             button below is only for local emulator testing. Both start hidden; setup reveals
+             exactly one based on useGoogleIdentityServices(), so they never show together. -->
         <div id="gsi-button-container" class="hidden flex justify-center mb-2"></div>
         <div class="space-y-2">
-          <button id="sign-in-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors block w-full sm:w-auto sm:inline-block">
+          <button id="sign-in-btn" class="hidden px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors w-full sm:w-auto sm:inline-block">
             Sign in with Google
           </button>
           <button id="skip-auth-btn" class="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition-colors block w-full sm:w-auto sm:inline-block sm:ml-2 text-sm">
@@ -193,7 +195,7 @@ import ResumeGameModal from '../components/resume-modal.astro';
 <script>
   import { GameManager } from '../lib/gameState';
   import { getPath } from '../lib/path-utils';
-  import { signInWithGoogle, signInWithGoogleRedirect, signInWithGoogleCredential, useGoogleIdentityServices, completeRedirectSignIn, prefersRedirectSignIn, signOutUser, onAuthStateChange, getCurrentUser, searchUsers } from '../lib/auth';
+  import { signInWithGoogle, signInWithGoogleCredential, useGoogleIdentityServices, signOutUser, onAuthStateChange, getCurrentUser, searchUsers } from '../lib/auth';
   import { googleOAuthClientId } from '../lib/firebase';
 
   // Check for unfinished game on load
@@ -483,183 +485,92 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
   // Set up auth state listener
   onAuthStateChange(updateAuthUI);
 
-  // Complete a pending redirect sign-in (mobile flow returns here after Google). The auth-state
-  // listener updates the UI once it resolves; getRedirectResult is a no-op when none is pending.
-  completeRedirectSignIn().catch((err) => console.error('Redirect sign-in completion failed:', err));
-
   // Check current user on load
   const currentUser = getCurrentUser();
   if (currentUser) {
     updateAuthUI(currentUser);
   }
 
-  // Sign in button
-  if (signInBtn) {
-    // Guard against overlapping sign-in attempts. Previously the button was bound THREE ways
-    // (addEventListener + .onclick + a document-level click delegation), so a single tap fired
-    // signInWithGoogle() multiple times and each new popup cancelled the previous one
-    // (auth/cancelled-popup-request) — the "clunky, needs multiple attempts" behaviour.
+  // Sign-in wiring. Production uses Google Identity Services (GIS) — an ID token exchanged via
+  // signInWithCredential, with no popup/redirect and no cross-origin auth handler, so it works on
+  // iOS Safari (which ITP-breaks signInWithPopup/Redirect). Local emulator testing can't validate a
+  // real GIS token, so it falls back to the popup flow on our custom button. Exactly one of the two
+  // buttons is ever revealed; both start hidden.
+
+  // Popup sign-in (emulator path, and the fallback if GIS fails to load). Reveals the custom button
+  // and wires it once. A guard prevents overlapping popups (each new popup cancels the previous).
+  const enablePopupSignIn = () => {
+    if (!signInBtn) { console.error('Sign-in button not found! Check DOM structure.'); return; }
     let signingIn = false;
-
-    const handleSignIn = async (e) => {
-      if (signingIn) { e?.preventDefault?.(); return; }
+    signInBtn.classList.remove('hidden');
+    signInBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      if (signingIn) return;
       signingIn = true;
+      signInBtn.disabled = true;
+      signInBtn.textContent = 'Opening Google Sign-In...';
       try {
-        e.preventDefault(); // Prevent any default behavior
-        e.stopPropagation(); // Stop event bubbling
-
-
-        // Immediately show loading state
-        signInBtn.disabled = true;
-        signInBtn.textContent = 'Opening Google Sign-In...';
-
-        // Hide the logged-out section and show a loading state
-        if (loggedOutSection) {
-          loggedOutSection.style.display = 'none';
-        }
-
-        // Show loading state in auth section
-        const authSection = document.getElementById('auth-section');
-        if (authSection) {
-          const loadingDiv = document.createElement('div');
-          loadingDiv.id = 'auth-loading';
-          loadingDiv.className = 'text-center py-4';
-          loadingDiv.innerHTML = `
-            <div class="flex items-center justify-center space-x-2">
-              <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-              <span class="text-blue-700">Signing in with Google...</span>
-            </div>
-          `;
-          authSection.appendChild(loadingDiv);
-        }
-
-        // Mobile (esp. iOS Safari) blocks the OAuth popup — use a full-page redirect. This
-        // navigates away and returns to this page, where completeRedirectSignIn() (on load)
-        // finishes the sign-in. Nothing after this runs (the page unloads).
-        if (prefersRedirectSignIn()) {
-          signInBtn.textContent = 'Redirecting to Google…';
-          await signInWithGoogleRedirect();
-          return;
-        }
-
         const user = await signInWithGoogle();
-
-        // Clean up loading state
-        const loadingDiv = document.getElementById('auth-loading');
-        if (loadingDiv) {
-          loadingDiv.remove();
-        }
-
-        if (user) {
-          // Success will be handled by the auth state change listener
-          // No need to reset UI here - it will update automatically
-        } else {
-          // Sign-in was cancelled or failed — restore the original sign-in UI.
-          if (loggedOutSection) {
-            loggedOutSection.style.display = 'block';
-          }
+        // On success the auth-state listener swaps in the signed-in UI; on cancel/failure we restore
+        // the button for another attempt.
+        if (!user) {
           signInBtn.disabled = false;
           signInBtn.textContent = 'Sign in with Google';
         }
       } catch (error) {
         console.error('Error signing in:', error);
-
-        // Popup failed (blocked, COOP, etc.) — fall back to the redirect flow, which navigates
-        // the whole page and is far more robust. This is the automatic recovery path.
-        try {
-          signInBtn.textContent = 'Redirecting to Google…';
-          await signInWithGoogleRedirect();
-          return;
-        } catch (redirectError) {
-          console.error('Redirect sign-in also failed:', redirectError);
-          if (loggedOutSection) loggedOutSection.style.display = 'block';
-          const loadingDiv = document.getElementById('auth-loading');
-          if (loadingDiv) loadingDiv.remove();
-          signInBtn.disabled = false;
-          signInBtn.textContent = 'Sign in with Google';
-          alert('Google sign-in failed. Please try again, or use another browser.');
-        }
+        signInBtn.disabled = false;
+        signInBtn.textContent = 'Sign in with Google';
       } finally {
-        // Allow a fresh attempt once this one settles (success transitions the UI via the auth
-        // state listener; failure re-enables the button above).
         signingIn = false;
       }
-    };
-
-    // In production, prefer Google Identity Services: it returns an ID token via a JS callback and
-    // we exchange it with signInWithCredential — no popup/redirect and no cross-origin auth handler,
-    // so it works on iOS Safari (which ITP-breaks signInWithPopup/Redirect). Local/emulator keeps
-    // the popup flow (the Auth emulator's fake Google can't validate a real GIS token).
-    const loadGisScript = () => new Promise((resolve, reject) => {
-      if ((window as any).google?.accounts?.id) return resolve(undefined);
-      const s = document.createElement('script');
-      s.src = 'https://accounts.google.com/gsi/client';
-      s.async = true;
-      s.onload = () => resolve(undefined);
-      s.onerror = () => reject(new Error('Failed to load Google Identity Services'));
-      document.head.appendChild(s);
     });
+  };
 
-    const setupGis = async () => {
-      await loadGisScript();
-      const google = (window as any).google;
-      if (!google?.accounts?.id) throw new Error('GIS unavailable after load');
-      google.accounts.id.initialize({
-        client_id: googleOAuthClientId,
-        auto_select: false,
-        callback: async (response: { credential: string }) => {
-          try {
-            await signInWithGoogleCredential(response.credential); // auth listener updates the UI
-          } catch (err) {
-            console.error('Google Identity Services sign-in failed:', err);
-            alert('Google sign-in failed. Please try again.');
-          }
-        },
-      });
-      const container = document.getElementById('gsi-button-container');
-      if (container) {
-        google.accounts.id.renderButton(container, {
-          theme: 'filled_blue', size: 'large', text: 'signin_with', shape: 'pill',
-        });
-        container.classList.remove('hidden');
-      }
-    };
+  // Load Google Identity Services and render its official button into #gsi-button-container.
+  const loadGisScript = () => new Promise((resolve, reject) => {
+    if ((window as any).google?.accounts?.id) return resolve(undefined);
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true;
+    s.onload = () => resolve(undefined);
+    s.onerror = () => reject(new Error('Failed to load Google Identity Services'));
+    document.head.appendChild(s);
+  });
 
-    if (useGoogleIdentityServices()) {
-      // Hide our custom button up front — GIS renders its own official button. Restore it only if
-      // GIS fails to load (fallback), so the two never show together.
-      signInBtn.style.display = 'none';
-      setupGis().catch((err) => {
-        console.error('Falling back to popup sign-in:', err);
-        signInBtn.style.display = '';
-        signInBtn.addEventListener('click', handleSignIn);
-      });
-    } else {
-      // Bind the handler EXACTLY once. (Multiple bindings previously caused overlapping popups.)
-      signInBtn.addEventListener('click', handleSignIn);
-    }
-
-  } else {
-    console.error('Sign-in button not found! Check DOM structure.');
-
-    // Method 6: Last resort - event delegation without element reference
-    document.addEventListener('click', (e) => {
-      if (e.target && e.target.id === 'sign-in-btn') {
-        // Try to find the button again
-        const btn = document.getElementById('sign-in-btn');
-        if (btn) {
-          const handleSignIn = async (e) => {
-            // Call signInWithGoogle directly for fallback
-            try {
-              const user = await signInWithGoogle();
-            } catch (error) {
-              console.error('Fallback sign-in error:', error);
-            }
-          };
-          handleSignIn(e);
+  const setupGis = async () => {
+    await loadGisScript();
+    const google = (window as any).google;
+    if (!google?.accounts?.id) throw new Error('GIS unavailable after load');
+    google.accounts.id.initialize({
+      client_id: googleOAuthClientId,
+      auto_select: false,
+      callback: async (response: { credential: string }) => {
+        try {
+          await signInWithGoogleCredential(response.credential); // auth listener updates the UI
+        } catch (err) {
+          console.error('Google Identity Services sign-in failed:', err);
+          alert('Google sign-in failed. Please try again.');
         }
-      }
+      },
     });
+    const container = document.getElementById('gsi-button-container');
+    if (container) {
+      google.accounts.id.renderButton(container, {
+        theme: 'filled_blue', size: 'large', text: 'signin_with', shape: 'pill',
+      });
+      container.classList.remove('hidden');
+    }
+  };
+
+  if (useGoogleIdentityServices()) {
+    setupGis().catch((err) => {
+      // GIS blocked/offline — fall back to the popup so sign-in still works.
+      console.error('Google Identity Services failed to load; falling back to popup sign-in:', err);
+      enablePopupSignIn();
+    });
+  } else {
+    enablePopupSignIn();
   }
 
   // Sign out button
@@ -946,27 +857,6 @@ window.debugAuth = function() {
   console.log('========================');
 };
 
-window.tryDirectRedirect = async function() {
-  console.log('Attempting direct redirect authentication...');
-  try {
-    const { signInWithGoogleRedirect } = await import('../lib/auth');
-    await signInWithGoogleRedirect();
-  } catch (error) {
-    console.error('Direct redirect failed:', error);
-  }
-};
-
-window.forceHandleRedirect = async function() {
-  console.log('Force checking redirect result...');
-  try {
-    const { handleRedirectResult } = await import('../lib/auth');
-    const result = await handleRedirectResult();
-    console.log('Forced redirect result:', result);
-  } catch (error) {
-    console.error('Force redirect handling failed:', error);
-  }
-};
-
 window.forceAuthStateCheck = async function() {
   console.log('Force checking auth state...');
   try {
@@ -988,134 +878,6 @@ window.forceAuthStateCheck = async function() {
     }
   } catch (error) {
     console.error('Force auth state check failed:', error);
-  }
-};
-
-window.diagnoseAuthDomain = async function() {
-  console.log('=== AUTH DOMAIN DIAGNOSIS ===');
-  try {
-    const { firebaseConfig, isFirebaseConfigured } = await import('../lib/firebase');
-
-    console.log('Firebase configured:', isFirebaseConfigured());
-    console.log('Current URL details:', {
-      href: window.location.href,
-      origin: window.location.origin,
-      hostname: window.location.hostname,
-      protocol: window.location.protocol,
-      port: window.location.port,
-      pathname: window.location.pathname
-    });
-
-    console.log('Firebase config details:', {
-      authDomain: firebaseConfig.authDomain,
-      apiKey: firebaseConfig.apiKey?.substring(0, 10) + '...',
-      projectId: firebaseConfig.projectId
-    });
-
-    // Check redirect URL configuration
-    const authDomain = firebaseConfig.authDomain;
-    const currentOrigin = window.location.origin;
-    const currentHostname = window.location.hostname;
-    const currentPath = window.location.pathname;
-    const fullURL = currentOrigin + currentPath;
-    const isDevelopment = currentOrigin.includes('localhost') || currentOrigin.includes('127.0.0.1');
-
-    console.log('URL and domain analysis:', {
-      authDomain,
-      currentOrigin,
-      currentHostname,
-      currentPath,
-      fullURL,
-      isDevelopment,
-      hostnameAuthorized: currentHostname === 'localhost' || authDomain?.includes(currentHostname)
-    });
-
-    // Check if this is the base path issue
-    if (isDevelopment) {
-      const hasBasePath = currentPath !== '/' && currentPath !== '';
-
-      if (hasBasePath) {
-        console.warn('🎯 POTENTIAL ISSUE: Base Path Configuration');
-        console.warn('Current path:', currentPath);
-        console.warn('Full URL:', fullURL);
-        console.warn('');
-        console.warn('Firebase will redirect back to this exact URL after authentication.');
-        console.warn('If authentication fails, the issue might be:');
-        console.warn('1. Astro base path configuration conflicts with Firebase redirects');
-        console.warn('2. Firebase not handling the /pepper_scorer path correctly');
-        console.warn('3. Need to test auth from root path (/) vs base path');
-        console.warn('');
-        console.warn('🧪 Try these tests:');
-        console.warn('1. Test auth from http://localhost:4321/ (root)');
-        console.warn('2. Test auth from http://localhost:4321/pepper_scorer/ (current)');
-        console.warn('3. Check if Astro base path should be removed for development');
-      } else {
-        console.log('✅ Using root path - no base path conflicts');
-      }
-
-      // Check hostname authorization
-      const hostnameAuthorized = currentHostname === 'localhost' || authDomain?.includes(currentHostname);
-      if (!hostnameAuthorized) {
-        console.error('🔴 HOSTNAME NOT AUTHORIZED');
-        console.error('Add localhost to Firebase authorized domains');
-      } else {
-        console.log('✅ Hostname authorized in Firebase');
-      }
-    } else {
-      console.log('ℹ️  Production environment detected');
-    }
-
-    // Check sessionStorage
-    console.log('SessionStorage state:', {
-      hasRedirectAttempt: !!sessionStorage.getItem('pepper_auth_redirect_attempt'),
-      redirectAttemptTime: sessionStorage.getItem('pepper_auth_redirect_attempt'),
-      redirectInfo: sessionStorage.getItem('pepper_auth_redirect_info'),
-      allKeys: Object.keys(sessionStorage)
-    });
-
-    // Check localStorage
-    console.log('LocalStorage state:', {
-      hasCurrentGame: !!localStorage.getItem('currentGame'),
-      allKeys: Object.keys(localStorage)
-    });
-
-  } catch (error) {
-    console.error('Auth domain diagnosis failed:', error);
-  }
-  console.log('==============================');
-};
-
-window.tryAlternativeAuth = async function() {
-  console.log('Trying alternative authentication method...');
-  try {
-    const { signInWithGoogleAlternative } = await import('../lib/auth');
-    const result = await signInWithGoogleAlternative();
-    console.log('Alternative auth result:', result);
-  } catch (error) {
-    console.error('Alternative auth failed:', error);
-  }
-};
-
-window.testAuthFromRoot = function() {
-  console.log('🧪 NOTE: Astro config now uses root path in development');
-  console.log('Current URL:', window.location.href);
-  console.log('Base URL from environment:', import.meta.env.BASE_URL || 'undefined');
-  console.log('');
-  console.log('✅ No need to navigate to root - auth should work from current page now');
-  console.log('The astro.config.mjs has been updated to use base: "/" in development');
-  console.log('');
-  console.log('🔄 Please restart your dev server (npm run dev) for the config change to take effect');
-};
-
-window.testReturnFromRoot = function() {
-  console.log('Checking if we should return to original path...');
-  if (typeof sessionStorage !== 'undefined') {
-    const returnPath = sessionStorage.getItem('pepper_return_path');
-    if (returnPath && returnPath !== '/') {
-      console.log('Returning to original path:', returnPath);
-      sessionStorage.removeItem('pepper_return_path');
-      window.location.href = window.location.origin + returnPath;
-    }
   }
 };
 
