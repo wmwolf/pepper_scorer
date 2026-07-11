@@ -877,15 +877,20 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
       }
       
       case 'bid_bullies': {
-        // Team with most successful high-value bids (6, Moon, Double Moon)
-        const qualifyingTeams = teamStats.filter(team => team.highValueBids.successes > 0);
+        // Team with the most successful high-value bids (6, Moon, Double Moon). Require a real habit
+        // of it (3+ across the series) and a clear untied lead — not just "made one more than you".
+        const qualifyingTeams = teamStats.filter(team => team.highValueBids.successes >= 3);
         if (qualifyingTeams.length === 0) return null;
-        
-        const winner = qualifyingTeams.reduce((most, current) => 
+
+        const winner = qualifyingTeams.reduce((most, current) =>
           current.highValueBids.successes > most.highValueBids.successes ? current : most
         );
-        
-        return { 
+        const tiedForLead = qualifyingTeams.some(
+          t => t !== winner && t.highValueBids.successes === winner.highValueBids.successes
+        );
+        if (tiedForLead) return null;
+
+        return {
           ...award, 
           winner: winner.name,
           statDetails: calculateAwardStats(award.id, winner.name, data)
@@ -893,14 +898,16 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
       }
       
       case 'streak_masters': {
-        // Team with longest scoring streak
-        const winner = teamStats.reduce((longest, current) => 
+        // Team with the longest scoring streak — require a genuine run (4+), not a lucky pair.
+        const winner = teamStats.reduce((longest, current) =>
           current.longestStreak > longest.longestStreak ? current : longest
         );
-        
-        if (winner.longestStreak <= 1) return null; // At least 2+ streak to qualify
-        
-        return { 
+
+        if (winner.longestStreak < 4) return null;
+        const tiedForLead = teamStats.some(t => t !== winner && t.longestStreak === winner.longestStreak);
+        if (tiedForLead) return null;
+
+        return {
           ...award, 
           winner: winner.name,
           statDetails: calculateAwardStats(award.id, winner.name, data)
@@ -911,12 +918,14 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
         // Team with highest defensive success rate (series)
         const qualifyingTeams = teamStats.filter(team => team.totalDefenses >= 5); // Higher minimum for series
         if (qualifyingTeams.length === 0) return null;
-        
-        const winner = qualifyingTeams.reduce((best, current) => 
+
+        const winner = qualifyingTeams.reduce((best, current) =>
           current.defensiveSuccessRate > best.defensiveSuccessRate ? current : best
         );
-        
-        if (winner.defensiveSuccessRate === 0) return null;
+
+        // A "specialist" must defend better than a coin flip — not merely be the highest of two poor
+        // rates. Without a floor this fires every series.
+        if (winner.defensiveSuccessRate < 0.5) return null;
 
         return {
           ...award,
@@ -1031,15 +1040,18 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
       }
       
       case 'bid_royalty': {
-        // Player who won the most bids
-        const winner = playerStats.reduce((most, current) => 
+        // Player who DOMINATED the bidding: the most bids won (min 3), with a clear untied lead.
+        // Without these floors this award trivially fires every game (someone always bids the most).
+        const winner = playerStats.reduce((most, current) =>
           current.bidsWon > most.bidsWon ? current : most
         );
-        
-        if (winner.bidsWon === 0) return null;
-        
-        return { 
-          ...award, 
+
+        if (winner.bidsWon < 3) return null;
+        const tiedForLead = playerStats.some(p => p !== winner && p.bidsWon === winner.bidsWon);
+        if (tiedForLead) return null;
+
+        return {
+          ...award,
           winner: winner.name,
           statDetails: calculateAwardStats(award.id, winner.name, data)
         };
@@ -1298,15 +1310,20 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
       }
       
       case 'series_mvp': {
-        // Player with highest net points (even if all are negative)
+        // Player with the highest net points — but an MVP must be a net-POSITIVE contributor and the
+        // clear (untied) leader, not merely "least bad". Without these floors this fires every series.
         if (playerStats.length === 0) return null;
-        
-        const winner = playerStats.reduce((best, current) => 
+
+        const winner = playerStats.reduce((best, current) =>
           current.netPoints > best.netPoints ? current : best
         );
-        
-        return { 
-          ...award, 
+
+        if (winner.netPoints <= 0) return null;
+        const tiedForLead = playerStats.some(p => p !== winner && p.netPoints === winner.netPoints);
+        if (tiedForLead) return null;
+
+        return {
+          ...award,
           winner: winner.name,
           statDetails: calculateAwardStats(award.id, winner.name, data)
         };
@@ -1339,11 +1356,13 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
           return { player, bestSuit, bestSuccessRate };
         });
         
-        const winnerData = playersWithBestSuit.reduce((best, current) => 
+        const winnerData = playersWithBestSuit.reduce((best, current) =>
           current.bestSuccessRate > best.bestSuccessRate ? current : best
         );
-        
-        if (winnerData.bestSuccessRate === 0) return null;
+
+        // A specialist must actually be GOOD in their suit (>=60%), not merely the least-bad of the
+        // qualifiers. Without a real floor this fires almost every series.
+        if (winnerData.bestSuccessRate < 0.6) return null;
         
         return { 
           ...award, 
@@ -1413,19 +1432,22 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
           return { player, stdDev };
         });
         
-        const winnerData = playersWithStdDev.reduce((highest, current) => 
+        const winnerData = playersWithStdDev.reduce((highest, current) =>
           current.stdDev > highest.stdDev ? current : highest
         );
-        
-        return { 
-          ...award, 
+
+        // Require genuinely wild swings, not just the highest of several steady players.
+        if (winnerData.stdDev < 6) return null;
+
+        return {
+          ...award,
           winner: winnerData.player.name,
           statDetails: calculateAwardStats(award.id, winnerData.player.name, data)
         };
       }
     }
   }
-  
+
   return null; // No winner determined for this award
 }
 
@@ -1448,10 +1470,33 @@ function awardCategory(award: AwardDefinition): AwardCategory {
   return award.type;
 }
 
-// Uniform random pick from a list. `rng()` returns a float in [0, 1).
-function pickRandom<T>(items: T[], rng: () => number): T | null {
+// Selection weights: when several awards in a category are eligible, higher-weighted ones are more
+// likely to be picked. Rarer / more notable awards are weighted UP so they aren't drowned out by
+// the always-on generic ones (e.g. bid_royalty). Anything not listed defaults to weight 1. These
+// only affect which eligible award SURFACES — never whether it's eligible. Tune freely.
+const AWARD_WEIGHTS: Record<string, number> = {
+  // Rare + notable — showcase these.
+  remember_the_time: 3, honeypot: 3, shoot_for_the_moons: 3, moon_struck: 3, pepper_perfect: 3,
+  // Uncommon / characterful.
+  footprints_in_the_sand: 2, playing_it_safe: 2, bid_specialists: 2, no_trump_no_problem: 2,
+  false_confidence: 2, helping_hand: 2, clutch_player: 2, suit_specialist: 2,
+  // Everything else (bid_royalty, trump_master, overreaching, defensive_fortress,
+  // defensive_specialists, bid_bullies, streak_masters, series_mvp, feast_or_famine,
+  // gambling_problem) defaults to weight 1.
+};
+const awardWeight = (id: string): number => AWARD_WEIGHTS[id] ?? 1;
+
+// Weighted random pick. `rng()` returns a float in [0, 1). Weight 0 or a single item still works.
+function weightedPick(items: AwardWithWinner[], rng: () => number): AwardWithWinner | null {
   if (items.length === 0) return null;
-  return items[Math.min(items.length - 1, Math.floor(rng() * items.length))];
+  const weights = items.map(a => awardWeight(a.id));
+  const total = weights.reduce((sum, w) => sum + w, 0);
+  let r = rng() * total;
+  for (let i = 0; i < items.length; i++) {
+    r -= weights[i];
+    if (r < 0) return items[i];
+  }
+  return items[items.length - 1]; // floating-point safety net
 }
 
 /**
@@ -1461,7 +1506,8 @@ function pickRandom<T>(items: T[], rng: () => number): T | null {
  * Why random: the previous algorithm walked a fixed list and took the FIRST eligible award per
  * bucket, which structurally starved most awards — e.g. `footprints_in_the_sand` was eligible in
  * ~half of games yet surfaced in none, because `bid_royalty`/`trump_master` always came first.
- * Sampling among the eligible gives every award a fair shot and adds variety across replays.
+ * Weighted sampling among the eligible gives every award a shot (with rarer/notable ones favoured
+ * via AWARD_WEIGHTS) and adds variety across games.
  *
  * `rng` is injectable so tests can seed it for determinism; production uses Math.random.
  */
@@ -1476,7 +1522,7 @@ function selectAwardsByCategory(
       .filter(a => awardCategory(a) === category)
       .map(a => evaluateAward(a, data))
       .filter((r): r is AwardWithWinner => r !== null);
-    const pick = pickRandom(eligible, rng);
+    const pick = weightedPick(eligible, rng);
     if (pick) selected.push(pick);
   }
   return selected;

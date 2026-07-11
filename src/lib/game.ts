@@ -1455,8 +1455,9 @@ function createConfettiEffect() {
     // Now we'll use our award system to find and render awards
     Promise.all([
       import('../lib/statistics-util.ts'),
-      import('../lib/pepper-awards.ts')
-    ]).then(async ([statsModule, awardsModule]) => {
+      import('../lib/pepper-awards.ts'),
+      import('../lib/awardRng.ts')
+    ]).then(async ([statsModule, awardsModule, rngModule]) => {
       try {
         
         // Generate award data - explicitly access properties to avoid namespace issues
@@ -1476,9 +1477,11 @@ function createConfettiEffect() {
         );
         
         
-        // Select awards for the game - explicitly access properties to avoid namespace issues
+        // Select awards for the game. Seed selection from the game's hands so every device (and
+        // every refresh) shows the same awards for the same game — see awardRng.ts.
         const { selectGameAwards } = awardsModule;
-        const gameAwards = selectGameAwards(awardData);
+        const { rngFromHands } = rngModule;
+        const gameAwards = selectGameAwards(awardData, rngFromHands(awardData.hands));
         
         // Select series awards if series is complete
         let seriesAwards: Array<{id: string; name: string; description: string; technicalDefinition: string; type: string; scope: string; icon: string; winner: string; statDetails?: string}> = [];
@@ -1495,7 +1498,8 @@ function createConfettiEffect() {
             gameManager.state.seriesWinner
           );
           
-          seriesAwards = selectSeriesAwards(seriesAwardData);
+          // Seed from the aggregated series hands (identical across devices) for the same reason.
+          seriesAwards = selectSeriesAwards(seriesAwardData, rngFromHands(seriesAwardData.hands));
         }
         
         // Create victory celebration with awards

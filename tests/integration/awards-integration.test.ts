@@ -6,6 +6,7 @@ import {
   newGame, setBidder, setBid, setTrump, setDecision, setTricks,
 } from '../helpers/gameActions';
 import type { Bid } from '../helpers/gameActions';
+import { seededRng } from '../helpers/seededRng';
 
 // The awards pipeline is fed by three real functions with the following shapes:
 //   trackAwardData(hands, players, teams, finalScores, winnerIndex) -> AwardTrackingData
@@ -208,8 +209,13 @@ describe('Awards Integration', () => {
       expect(awardData.teamStats['Team 1'].totalBids).toBeGreaterThan(0);
       expect(awardData.teamStats['Team 2'].totalBids).toBeGreaterThan(0);
 
-      const selectedAwards = selectGameAwards(awardData);
-      expect(selectedAwards.length).toBeGreaterThan(0);
+      // A short, unwon exhibition game may legitimately earn no awards under the tightened
+      // thresholds (nobody dominated the bidding, went on a comeback, or failed enough bids). The
+      // point of this test is that the award pipeline runs and only ever returns real, valid awards.
+      const selectedAwards = selectGameAwards(awardData, seededRng(1));
+      const validRecipients = [...PLAYERS, ...TEAMS];
+      expect(selectedAwards.length).toBeLessThanOrEqual(3);
+      selectedAwards.forEach(a => expect(validRecipients).toContain(a.winner));
     });
   });
 

@@ -101,6 +101,13 @@ describe('Award selection — statistical regression', () => {
     expect(starved).toEqual([]);
   });
 
+  it('favours higher-weighted awards (weighting actually biases selection)', () => {
+    // honeypot (weight 3) and bid_royalty (weight 1) are both player-category awards, so they
+    // compete in the same draw. Per unit of eligibility, the heavier one must surface more often.
+    const ratio = (id: string) => t.selected[id] / Math.max(1, t.eligible[id]);
+    expect(ratio('honeypot')).toBeGreaterThan(ratio('bid_royalty'));
+  });
+
   it('specifically surfaces footprints_in_the_sand (the previously-dead award)', () => {
     // Regression pin: this award was eligible ~50% of games yet selected in 0 under the old code.
     expect(t.eligible['footprints_in_the_sand']).toBeGreaterThan(MIN_SAMPLE);
