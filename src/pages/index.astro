@@ -623,10 +623,12 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
         });
         container.classList.remove('hidden');
       }
-      signInBtn.style.display = 'none'; // GIS's official button replaces our custom one
     };
 
     if (useGoogleIdentityServices()) {
+      // Hide our custom button up front — GIS renders its own official button. Restore it only if
+      // GIS fails to load (fallback), so the two never show together.
+      signInBtn.style.display = 'none';
       setupGis().catch((err) => {
         console.error('Falling back to popup sign-in:', err);
         signInBtn.style.display = '';
