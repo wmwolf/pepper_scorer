@@ -397,6 +397,32 @@ function calculateAwardStats(awardId: string, winnerName: string, data: AwardTra
       }
     }
     
+    case 'dynamic_duo': {
+      const teamIndex = Object.keys(data.teamStats).indexOf(winnerName);
+      const mates = Object.values(data.playerStats).filter(p => p.team === teamIndex);
+      const pts = mates.map(p => `${p.name} ${p.netPoints >= 0 ? '+' : ''}${p.netPoints}`).join(', ');
+      return `A balanced attack — ${pts} net offensive points`;
+    }
+
+    case 'great_minds': {
+      const teamIndex = Object.keys(data.teamStats).indexOf(winnerName);
+      const mates = Object.values(data.playerStats).filter(p => p.team === teamIndex);
+      const modal = (p: { trumpBids: Record<string, { attempts: number }> }) =>
+        Object.entries(p.trumpBids).reduce(
+          (best, [s, r]) => (r.attempts > best.count ? { suit: s, count: r.attempts } : best),
+          { suit: '', count: 0 }
+        );
+      const suitNames: Record<string, string> = { C: 'Clubs', D: 'Diamonds', S: 'Spades', H: 'Hearts', N: 'No-trump' };
+      const suit = mates[0] ? modal(mates[0]).suit : '';
+      return `Both partners leaned on ${suitNames[suit] ?? suit}`;
+    }
+
+    case 'misery_loves_company':
+      return `Both partners on ${winnerName} went set at least twice on offense`;
+
+    case 'brick_wall':
+      return `${winnerName} took all six tricks on defense — a total shutout`;
+
     default:
       return `${winnerName} earned this award`;
   }
@@ -438,7 +464,47 @@ export const gameAwards: AwardDefinition[] = [
     important: true,
     icon: 'clock-rewind'
   },
-  
+  {
+    id: 'dynamic_duo',
+    name: 'Dynamic Duo',
+    description: 'A genuinely balanced two-player attack',
+    technicalDefinition: 'Team whose BOTH players each scored at least 10 net offensive points (net points on the hands they bid). The opposite of one partner carrying the other.',
+    type: 'team',
+    scope: 'game',
+    important: false,
+    icon: 'medal'
+  },
+  {
+    id: 'great_minds',
+    name: 'Great Minds Think Alike',
+    description: 'Partners who independently leaned on the very same trump',
+    technicalDefinition: 'Both teammates called the same suit (or no-trump) as their most-frequent trump choice, with at least 3 bids each in that choice.',
+    type: 'team',
+    scope: 'game',
+    important: false,
+    icon: 'scale'
+  },
+  {
+    id: 'misery_loves_company',
+    name: 'Misery Loves Company',
+    description: 'Both partners crashed and burned on offense',
+    technicalDefinition: 'Team whose BOTH players each went set on at least 2 unforced (non-pepper-round) bids.',
+    type: 'team',
+    scope: 'game',
+    important: false,
+    icon: 'thumbs-down'
+  },
+  {
+    id: 'brick_wall',
+    name: 'Brick Wall',
+    description: 'Defenders who swept every trick to bury a bid',
+    technicalDefinition: 'The defending team took ALL SIX tricks on a played hand, setting the bidders completely. Exceedingly rare.',
+    type: 'team',
+    scope: 'game',
+    important: true,
+    icon: 'shield-check'
+  },
+
   // Player Awards
   {
     id: 'trump_master',
@@ -822,13 +888,113 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
       case 'remember_the_time': {
         // Team that overcame a 30+ point deficit
         const comebackTeam = teamStats.find(team => team.comebackAchieved);
-        return comebackTeam ? { 
-          ...award, 
+        return comebackTeam ? {
+          ...award,
           winner: comebackTeam.name,
           statDetails: calculateAwardStats(award.id, comebackTeam.name, data)
         } : null;
       }
-      
+
+      case 'dynamic_duo': {
+        // Both teammates each scored >=10 net offensive points (net points on hands they bid).
+        // The opposite of footprints_in_the_sand (one partner carrying the other).
+        const players = Object.values(data.playerStats);
+        for (let teamIndex = 0; teamIndex < teamStats.length; teamIndex++) {
+          const teammates = players.filter(p => p.team === teamIndex);
+          if (teammates.length !== 2) continue;
+          if (teammates.every(p => p.netPoints >= 10)) {
+            return {
+              ...award,
+              winner: teamStats[teamIndex].name,
+              statDetails: calculateAwardStats(award.id, teamStats[teamIndex].name, data)
+            };
+          }
+        }
+        return null;
+      }
+
+      case 'great_minds': {
+        // Both teammates share a most-called trump (incl. no-trump), each with >=3 bids in it.
+        const modalTrump = (p: { trumpBids: Record<string, { attempts: number }> }) => {
+          let suit = '';
+          let count = 0;
+          for (const [s, rec] of Object.entries(p.trumpBids)) {
+            if (rec.attempts > count) { count = rec.attempts; suit = s; }
+          }
+          return { suit, count };
+        };
+        const players = Object.values(data.playerStats);
+        for (let teamIndex = 0; teamIndex < teamStats.length; teamIndex++) {
+          const teammates = players.filter(p => p.team === teamIndex);
+          if (teammates.length !== 2) continue;
+          const a = modalTrump(teammates[0]);
+          const b = modalTrump(teammates[1]);
+          if (a.suit && a.suit === b.suit && a.count >= 3 && b.count >= 3) {
+            return {
+              ...award,
+              winner: teamStats[teamIndex].name,
+              statDetails: calculateAwardStats(award.id, teamStats[teamIndex].name, data)
+            };
+          }
+        }
+        return null;
+      }
+
+      case 'misery_loves_company': {
+        // Both teammates each went set on >=2 unforced (non-pepper-round) offensive bids.
+        const playerNames = Object.keys(data.playerStats);
+        const setsByName: Record<string, number> = {};
+        data.hands.forEach((hand, handIndex) => {
+          if (isPepperRound(handIndex) || !isHandComplete(hand)) return;
+          if (hand.length >= 2 && hand[1] === '0') return; // throw-in — nobody bid
+          try {
+            const { bidWinner } = decodeHand(hand);
+            const bidderTeamIndex = (bidWinner - 1) % 2;
+            const [score1, score2] = calculateScore(hand);
+            const bidderScore = bidderTeamIndex === 0 ? score1 : score2;
+            if (bidderScore < 0) { // the bidder's team went set (a fold would be non-negative)
+              const name = playerNames[bidWinner - 1];
+              setsByName[name] = (setsByName[name] ?? 0) + 1;
+            }
+          } catch { /* skip malformed hands */ }
+        });
+        const players = Object.values(data.playerStats);
+        for (let teamIndex = 0; teamIndex < teamStats.length; teamIndex++) {
+          const teammates = players.filter(p => p.team === teamIndex);
+          if (teammates.length !== 2) continue;
+          if (teammates.every(p => (setsByName[p.name] ?? 0) >= 2)) {
+            return {
+              ...award,
+              winner: teamStats[teamIndex].name,
+              statDetails: calculateAwardStats(award.id, teamStats[teamIndex].name, data)
+            };
+          }
+        }
+        return null;
+      }
+
+      case 'brick_wall': {
+        // Defending team took ALL 6 tricks on a played hand (blanked the bidders). Very rare.
+        const walls = [0, 0];
+        data.hands.forEach(hand => {
+          if (!isHandComplete(hand)) return;
+          if (hand.length >= 2 && hand[1] === '0') return; // throw-in
+          try {
+            const { bidWinner, decision, tricks } = decodeHand(hand);
+            if (decision !== 'P' || tricks !== 6) return; // must be played, defenders take all 6
+            const bidderTeamIndex = (bidWinner - 1) % 2;
+            walls[1 - bidderTeamIndex]++;
+          } catch { /* skip malformed hands */ }
+        });
+        if (walls[0] === 0 && walls[1] === 0) return null;
+        const best = walls[0] >= walls[1] ? 0 : 1;
+        return {
+          ...award,
+          winner: teamStats[best].name,
+          statDetails: calculateAwardStats(award.id, teamStats[best].name, data)
+        };
+      }
+
       case 'helping_hand': {
         // Team that gave away the most points in negotiations
         const teamsWithNegotiations = teamStats.map(team => {
@@ -1477,9 +1643,10 @@ function awardCategory(award: AwardDefinition): AwardCategory {
 const AWARD_WEIGHTS: Record<string, number> = {
   // Rare + notable — showcase these.
   remember_the_time: 3, honeypot: 3, shoot_for_the_moons: 3, moon_struck: 3, pepper_perfect: 3,
+  brick_wall: 3, great_minds: 3, dynamic_duo: 3,
   // Uncommon / characterful.
   footprints_in_the_sand: 2, playing_it_safe: 2, bid_specialists: 2, no_trump_no_problem: 2,
-  false_confidence: 2, helping_hand: 2, clutch_player: 2, suit_specialist: 2,
+  false_confidence: 2, helping_hand: 2, clutch_player: 2, suit_specialist: 2, misery_loves_company: 2,
   // Everything else (bid_royalty, trump_master, overreaching, defensive_fortress,
   // defensive_specialists, bid_bullies, streak_masters, series_mvp, feast_or_famine,
   // gambling_problem) defaults to weight 1.
