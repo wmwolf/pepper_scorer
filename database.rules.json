@@ -1,7 +1,14 @@
 {
   "rules": {
     "users": {
-      ".read": true,
+      "$userId": {
+        ".read": "auth != null && $userId === auth.uid",
+        ".write": "auth != null && $userId === auth.uid"
+      }
+    },
+
+    "directory": {
+      ".read": "auth != null",
       "$userId": {
         ".write": "auth != null && $userId === auth.uid"
       }

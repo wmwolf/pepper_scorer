@@ -63,11 +63,25 @@ beforeEach(async () => {
 })
 
 describe('users', () => {
-  it('allows public read but only self-write', async () => {
+  it('allows only self-read and self-write (no reading another user\'s PII)', async () => {
     const alice = testEnv.authenticatedContext('alice').database()
-    await assertSucceeds(get(ref(alice, 'users/bob')))                    // public read
+    await assertSucceeds(get(ref(alice, 'users/alice')))                  // own profile
+    await assertFails(get(ref(alice, 'users/bob')))                       // someone else's email/stats
+    await assertFails(get(ref(alice, 'users')))                           // cannot enumerate the table
     await assertSucceeds(set(ref(alice, 'users/alice'), { username: 'a' }))
     await assertFails(set(ref(alice, 'users/bob'), { username: 'hijack' }))
+  })
+})
+
+describe('directory', () => {
+  it('is readable/searchable by any signed-in user, self-write only, denied to anon', async () => {
+    const alice = testEnv.authenticatedContext('alice').database()
+    await assertSucceeds(set(ref(alice, 'directory/alice'), { uid: 'alice', username: 'a', displayName: 'Alice' }))
+    await assertSucceeds(get(ref(alice, 'directory/bob')))                // read another entry (PII-free)
+    await assertSucceeds(get(ref(alice, 'directory')))                    // enumerate for roster search
+    await assertFails(set(ref(alice, 'directory/bob'), { username: 'hijack' })) // cannot write another's entry
+    const anon = testEnv.unauthenticatedContext().database()
+    await assertFails(get(ref(anon, 'directory')))                        // signed-out cannot probe
   })
 })
 

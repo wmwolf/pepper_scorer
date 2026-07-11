@@ -39,6 +39,16 @@ export interface PepperUser {
   };
 }
 
+// Public directory entry — the ONLY user data readable by other players (for the roster search).
+// Deliberately excludes email/stats: full profiles live at owner-only `/users/$uid`, so no PII ever
+// reaches another client. Search matches display name + username only (never email).
+export interface PublicProfile {
+  uid: string;
+  username: string;
+  displayName: string;
+  photoURL?: string;
+}
+
 // Initialize default user stats
 const createDefaultStats = () => ({
   wins: 0,
@@ -130,6 +140,21 @@ export const signOutUser = async (): Promise<void> => {
   }
 };
 
+// Write the PII-free public directory entry for a user. Called on sign-in and whenever the display
+// name changes, so the searchable directory never drifts from /users. Strips undefined (RTDB rejects
+// it) — e.g. a photo-less account's photoURL.
+const syncDirectoryEntry = async (user: PepperUser): Promise<void> => {
+  const database = getFirebaseDatabase();
+  if (!database) return;
+  const publicProfile: PublicProfile = {
+    uid: user.uid,
+    username: user.username,
+    displayName: user.displayName,
+    photoURL: user.photoURL,
+  };
+  await set(ref(database, `directory/${user.uid}`), JSON.parse(JSON.stringify(publicProfile)));
+};
+
 // Create or update user in database
 const createOrUpdateUser = async (firebaseUser: User): Promise<PepperUser> => {
   const database = getFirebaseDatabase();
@@ -194,6 +219,10 @@ const createOrUpdateUser = async (firebaseUser: User): Promise<PepperUser> => {
   // without a photo would otherwise fail to save its profile.
   await set(userRef, JSON.parse(JSON.stringify(pepperUser)));
 
+  // Mirror the searchable, PII-free subset into the public directory. This is what other players'
+  // roster search reads (see searchUsers) — email/stats stay behind the owner-only /users node.
+  await syncDirectoryEntry(pepperUser);
+
   currentUser = pepperUser;
   notifyAuthStateListeners(pepperUser);
 
@@ -217,19 +246,19 @@ const generateUniqueUsername = async (baseUsername: string): Promise<string> => 
   return username;
 };
 
-// Check if username exists
+// Check if username exists. Reads the public directory (not /users, which is now owner-only). The
+// caller is mid-sign-in and therefore authenticated, so the auth-gated directory read is permitted.
 const usernameExists = async (username: string): Promise<boolean> => {
   const database = getFirebaseDatabase();
   if (!database) return false;
 
-  // For now, do a simple check. In production, we'd want an index for this.
-  const usersRef = ref(database, 'users');
-  const snapshot = await get(usersRef);
+  const directoryRef = ref(database, 'directory');
+  const snapshot = await get(directoryRef);
 
   if (!snapshot.exists()) return false;
 
-  const users = snapshot.val() as Record<string, PepperUser>;
-  return Object.values(users).some((user) => user.username === username);
+  const profiles = snapshot.val() as Record<string, PublicProfile>;
+  return Object.values(profiles).some((profile) => profile.username === username);
 };
 
 // Auth state listener management
@@ -283,29 +312,6 @@ export const isAuthenticated = (): boolean => {
   return currentUser !== null;
 };
 
-// Lookup user by username (for game setup)
-export const getUserByUsername = async (username: string): Promise<PepperUser | null> => {
-  if (!isFirebaseConfigured()) return null;
-
-  const database = getFirebaseDatabase();
-  if (!database) return null;
-
-  try {
-    const usersRef = ref(database, 'users');
-    const snapshot = await get(usersRef);
-
-    if (!snapshot.exists()) return null;
-
-    const users = snapshot.val() as Record<string, PepperUser>;
-    const foundUser = Object.values(users).find((user) => user.username === username);
-
-    return foundUser as PepperUser || null;
-  } catch (error) {
-    console.error('Error looking up user by username:', error);
-    return null;
-  }
-};
-
 // Get display name for user (fallback to username)
 export const getDisplayName = (user: PepperUser): string => {
   return user.displayName || user.username;
@@ -331,7 +337,10 @@ export const updateDisplayName = async (newDisplayName: string): Promise<PepperU
       hasCustomDisplayName: true // Mark that user has set a custom display name
     };
 
-    await set(userRef, updatedUser);
+    await set(userRef, JSON.parse(JSON.stringify(updatedUser)));
+
+    // Keep the public directory in sync so search shows the new display name.
+    await syncDirectoryEntry(updatedUser);
 
     // Update local state
     currentUser = updatedUser;
@@ -371,7 +380,10 @@ export const resetDisplayNameToGoogle = async (): Promise<PepperUser | null> => 
       hasCustomDisplayName: false // Remove custom flag
     };
 
-    await set(userRef, updatedUser);
+    await set(userRef, JSON.parse(JSON.stringify(updatedUser)));
+
+    // Keep the public directory in sync so search shows the reset display name.
+    await syncDirectoryEntry(updatedUser);
 
     // Update local state
     currentUser = updatedUser;
@@ -384,32 +396,36 @@ export const resetDisplayNameToGoogle = async (): Promise<PepperUser | null> => 
   }
 };
 
-// Search for users by username, display name, or email
-export const searchUsers = async (query: string, limit: number = 5): Promise<PepperUser[]> => {
+// Search the public directory by username or display name. Returns PII-free PublicProfiles — never
+// email. Requires sign-in: the directory is auth-gated server-side, so we bail early when signed out
+// to avoid a guaranteed permission-denied round-trip (and to keep the directory un-probeable by
+// anonymous visitors). Email is intentionally NOT a search key — see PublicProfile.
+export const searchUsers = async (query: string, limit: number = 5): Promise<PublicProfile[]> => {
   if (!isFirebaseConfigured() || !query.trim()) return [];
+  if (!isAuthenticated()) return [];
 
   const database = getFirebaseDatabase();
   if (!database) return [];
 
   try {
-    const usersRef = ref(database, 'users');
-    const snapshot = await get(usersRef);
+    const directoryRef = ref(database, 'directory');
+    const snapshot = await get(directoryRef);
 
     if (!snapshot.exists()) return [];
 
-    const users = snapshot.val() as Record<string, PepperUser>;
+    const profiles = snapshot.val() as Record<string, PublicProfile>;
     const queryLower = query.toLowerCase().trim();
 
     // Search and rank results
-    const matches = Object.values(users)
-      .map(user => ({
-        user,
-        score: calculateSearchScore(user, queryLower)
+    const matches = Object.values(profiles)
+      .map(profile => ({
+        profile,
+        score: calculateSearchScore(profile, queryLower)
       }))
       .filter(({ score }) => score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
-      .map(({ user }) => user);
+      .map(({ profile }) => profile);
 
     return matches;
   } catch (error) {
@@ -418,42 +434,32 @@ export const searchUsers = async (query: string, limit: number = 5): Promise<Pep
   }
 };
 
-// Calculate search relevance score
-const calculateSearchScore = (user: PepperUser, query: string): number => {
+// Calculate search relevance score. Username and display name only — email is never in the directory.
+const calculateSearchScore = (profile: PublicProfile, query: string): number => {
   let score = 0;
 
   // Exact username match (highest priority)
-  if (user.username.toLowerCase() === query) {
+  if (profile.username.toLowerCase() === query) {
     score += 100;
   }
   // Username starts with query
-  else if (user.username.toLowerCase().startsWith(query)) {
+  else if (profile.username.toLowerCase().startsWith(query)) {
     score += 80;
   }
   // Username contains query
-  else if (user.username.toLowerCase().includes(query)) {
+  else if (profile.username.toLowerCase().includes(query)) {
     score += 40;
   }
 
   // Display name matches
-  if (user.displayName) {
-    const displayNameLower = user.displayName.toLowerCase();
+  if (profile.displayName) {
+    const displayNameLower = profile.displayName.toLowerCase();
     if (displayNameLower === query) {
       score += 90;
     } else if (displayNameLower.startsWith(query)) {
       score += 70;
     } else if (displayNameLower.includes(query)) {
       score += 30;
-    }
-  }
-
-  // Email matches (if available and not too revealing)
-  if (user.email && query.includes('@')) {
-    const emailLower = user.email.toLowerCase();
-    if (emailLower === query) {
-      score += 95;
-    } else if (emailLower.startsWith(query)) {
-      score += 75;
     }
   }
 
