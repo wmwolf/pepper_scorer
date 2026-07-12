@@ -228,7 +228,7 @@ function calculateAwardStats(awardId: string, winnerName: string, data: AwardTra
       }
     }
     
-    case 'gambling_problem': {
+    case 'punching_bag': {
       // Count team's sets when defending against 4/5 bids
       let defensiveSets = 0;
       const teamIndex = Object.values(data.teamStats).indexOf(teamStats!);
@@ -422,6 +422,15 @@ function calculateAwardStats(awardId: string, winnerName: string, data: AwardTra
 
     case 'brick_wall':
       return `${winnerName} took all six tricks on defense — a total shutout`;
+
+    case 'cut_to_the_quick':
+      return `${winnerName} swept the series 2-0`;
+
+    case 'moonshot':
+      return `${winnerName} landed multiple moons across the series`;
+
+    case 'big_talker':
+      return playerStats ? `${winnerName} came up short on ${playerStats.bidsFailed} bids` : `${winnerName} missed a lot of bids`;
 
     default:
       return `${winnerName} earned this award`;
@@ -694,21 +703,21 @@ export const seriesAwards: AwardDefinition[] = [
     id: 'moon_struck',
     name: 'Moon Struck',
     description: 'Reached for the moon but fell short... repeatedly',
-    technicalDefinition: 'Player with most failed moon/double moon attempts in the series, minimum of three failures required.',
+    technicalDefinition: 'Player with most failed moon/double moon attempts in the series, minimum of two failures required.',
     type: 'player',
     scope: 'series',
     important: true,
     icon: 'moon'
   },
   {
-    id: 'gambling_problem',
-    name: 'Gambling Problem',
-    description: 'Should have folded but couldn\'t resist playing',
-    technicalDefinition: 'Team that most frequently went set when defending against bids of 4 or 5 (which could have been negotiated).',
+    id: 'punching_bag',
+    name: 'Punching Bag',
+    description: 'Kept getting shut out instead of folding',
+    technicalDefinition: 'Team that most frequently got shut out (took zero tricks, losing the bid value) when defending played bids of 4 or 5, which could have been folded/negotiated instead.',
     type: 'team',
     scope: 'series',
     important: false,
-    icon: 'dice-5'
+    icon: 'thumbs-down'
   },
   {
     id: 'feast_or_famine',
@@ -719,6 +728,36 @@ export const seriesAwards: AwardDefinition[] = [
     scope: 'series',
     important: false,
     icon: 'scale'
+  },
+  {
+    id: 'cut_to_the_quick',
+    name: 'Cut to the Quick',
+    description: 'Swept the series without breaking a sweat',
+    technicalDefinition: 'The team that won the best-of-three series in a 2-0 sweep (the opponents never won a game).',
+    type: 'team',
+    scope: 'series',
+    important: true,
+    icon: 'zap'
+  },
+  {
+    id: 'moonshot',
+    name: 'Moonshot',
+    description: 'Reached for the moon — and grabbed it, repeatedly',
+    technicalDefinition: 'Player who made the most SUCCESSFUL Moon or Double Moon bids across the series, minimum 2.',
+    type: 'player',
+    scope: 'series',
+    important: true,
+    icon: 'moon'
+  },
+  {
+    id: 'big_talker',
+    name: 'Big Talker',
+    description: 'Plenty of bids, plenty of misses',
+    technicalDefinition: 'Player with the most failed bids across the series, minimum 3.',
+    type: 'player',
+    scope: 'series',
+    important: false,
+    icon: 'thumbs-down'
   }
 ];
 
@@ -1100,7 +1139,22 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
         };
       }
 
-      case 'gambling_problem': {
+      case 'cut_to_the_quick': {
+        // Won the best-of-three series in a 2-0 sweep: the winner has 2 wins and the opponent 0.
+        if (data.winningTeam === null || data.winningTeam === undefined) return null;
+        const score = data.seriesScore;
+        if (!score) return null;
+        if (score[1 - data.winningTeam] !== 0 || score[data.winningTeam] < 2) return null;
+        const name = data.winningTeamName || teamStats[data.winningTeam]?.name;
+        if (!name) return null;
+        return {
+          ...award,
+          winner: name,
+          statDetails: calculateAwardStats(award.id, name, data)
+        };
+      }
+
+      case 'punching_bag': {
         // Team that most frequently went set when defending against 4/5 bids
         // (series dubious award). NOTE: this is declared `type: 'team'`, so its case MUST live in
         // the team switch — it previously sat in the player switch and was therefore unreachable
@@ -1498,8 +1552,8 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
       case 'suit_specialist': {
         // Player with highest success rate in any one suit
         const qualifyingPlayers = playerStats.filter(player => {
-          // Check if any suit has at least 4 bids
-          return Object.values(player.trumpBids).some(data => data.attempts >= 4);
+          // Check if any suit has at least 5 bids (tightened from 4 — this award was ~97% eligible)
+          return Object.values(player.trumpBids).some(data => data.attempts >= 5);
         });
         
         if (qualifyingPlayers.length === 0) return null;
@@ -1510,7 +1564,7 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
           let bestSuccessRate = 0;
           
           Object.entries(player.trumpBids).forEach(([suit, data]) => {
-            if (data.attempts >= 4) {
+            if (data.attempts >= 5) {
               const successRate = data.successes / data.attempts;
               if (successRate > bestSuccessRate) {
                 bestSuccessRate = successRate;
@@ -1526,9 +1580,9 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
           current.bestSuccessRate > best.bestSuccessRate ? current : best
         );
 
-        // A specialist must actually be GOOD in their suit (>=60%), not merely the least-bad of the
-        // qualifiers. Without a real floor this fires almost every series.
-        if (winnerData.bestSuccessRate < 0.6) return null;
+        // A specialist must actually be GOOD in their suit (>=70%), not merely the least-bad of the
+        // qualifiers. Tightened from 60% (with the 5-bid minimum) because this fired ~97% of series.
+        if (winnerData.bestSuccessRate < 0.7) return null;
         
         return { 
           ...award, 
@@ -1564,8 +1618,9 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
           player.failedBidValues.filter(value => value === 7 || value === 14).length;
 
         const qualifyingPlayers = playerStats.filter(player => {
-          // Check for at least 3 failed moon/double moon bids
-          return countMoonFailures(player) >= 3;
+          // At least 2 failed moon/double moon bids (lowered from 3 — 3 almost never happens in real,
+          // conservative play, so the award could never fire off the aggressive random sim).
+          return countMoonFailures(player) >= 2;
         });
 
         if (qualifyingPlayers.length === 0) return null;
@@ -1611,6 +1666,50 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
           statDetails: calculateAwardStats(award.id, winnerData.player.name, data)
         };
       }
+
+      case 'moonshot': {
+        // Player with the most SUCCESSFUL moon/double-moon bids across the series (min 2). The
+        // positive counterpart to moon_struck.
+        const playerNames = Object.keys(data.playerStats);
+        const moonsByName: Record<string, number> = {};
+        data.hands.forEach(hand => {
+          if (!isHandComplete(hand)) return;
+          if (hand.length >= 2 && hand[1] === '0') return; // throw-in
+          try {
+            const { bidWinner, bid } = decodeHand(hand);
+            if (bid !== 'M' && bid !== 'D') return;
+            const bidderTeamIndex = (bidWinner - 1) % 2;
+            const [s1, s2] = calculateScore(hand);
+            const bidderScore = bidderTeamIndex === 0 ? s1 : s2;
+            if (bidderScore > 0) { // made the moon
+              const name = playerNames[bidWinner - 1];
+              moonsByName[name] = (moonsByName[name] ?? 0) + 1;
+            }
+          } catch { /* skip malformed hands */ }
+        });
+        const qualifying = playerStats.filter(p => (moonsByName[p.name] ?? 0) >= 2);
+        if (qualifying.length === 0) return null;
+        const winner = qualifying.reduce((most, cur) =>
+          (moonsByName[cur.name] ?? 0) > (moonsByName[most.name] ?? 0) ? cur : most
+        );
+        return {
+          ...award,
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
+      }
+
+      case 'big_talker': {
+        // Player with the most failed bids across the series (min 3). Reliable dubious coverage.
+        const qualifying = playerStats.filter(p => p.bidsFailed >= 3);
+        if (qualifying.length === 0) return null;
+        const winner = qualifying.reduce((most, cur) => cur.bidsFailed > most.bidsFailed ? cur : most);
+        return {
+          ...award,
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
+      }
     }
   }
 
@@ -1627,7 +1726,7 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
 const GAME_DUBIOUS_IDS = new Set([
   'overreaching', 'false_confidence', 'helping_hand', 'playing_it_safe', 'no_trump_no_problem',
 ]);
-const SERIES_DUBIOUS_IDS = new Set(['moon_struck', 'gambling_problem', 'feast_or_famine']);
+const SERIES_DUBIOUS_IDS = new Set(['moon_struck', 'punching_bag', 'feast_or_famine', 'big_talker']);
 
 type AwardCategory = 'team' | 'player' | 'dubious';
 
@@ -1643,13 +1742,14 @@ function awardCategory(award: AwardDefinition): AwardCategory {
 const AWARD_WEIGHTS: Record<string, number> = {
   // Rare + notable — showcase these.
   remember_the_time: 3, honeypot: 3, shoot_for_the_moons: 3, moon_struck: 3, pepper_perfect: 3,
-  brick_wall: 3, great_minds: 3, dynamic_duo: 3,
+  brick_wall: 3, great_minds: 3, dynamic_duo: 3, moonshot: 3,
   // Uncommon / characterful.
   footprints_in_the_sand: 2, playing_it_safe: 2, bid_specialists: 2, no_trump_no_problem: 2,
   false_confidence: 2, helping_hand: 2, clutch_player: 2, suit_specialist: 2, misery_loves_company: 2,
+  cut_to_the_quick: 2,
   // Everything else (bid_royalty, trump_master, overreaching, defensive_fortress,
   // defensive_specialists, bid_bullies, streak_masters, series_mvp, feast_or_famine,
-  // gambling_problem) defaults to weight 1.
+  // punching_bag) defaults to weight 1.
 };
 const awardWeight = (id: string): number => AWARD_WEIGHTS[id] ?? 1;
 

@@ -68,6 +68,7 @@ export interface AwardTrackingData {
   winningTeam: number | null;
   winningTeamName: string;
   gameCompleted: boolean;
+  seriesScore?: [number, number]; // Series wins per team, when this is aggregated series data
 }
 
 export function initializeAwardTracking(
@@ -516,9 +517,12 @@ export function trackAwardData(
               bidderTeamStat.highValueBids.successes++;
             }
 
-            // A fold is NOT a successful defense: the defenders conceded and merely
-            // negotiated free points rather than setting the bidder. Only count it as
-            // a hand they defended (unsuccessfully).
+            // A fold where the defenders NEGOTIATED tricks is a successful defense — the award
+            // defines a successful defense as "sets the bidders OR negotiates for tricks". A fold
+            // for zero tricks is a full concession (unsuccessful).
+            if (tricks > 0) {
+              defenderTeamStat.successfulDefenses++;
+            }
             defenderTeamStat.totalDefenses++;
           }
         }
@@ -665,7 +669,8 @@ export function aggregateSeriesAwardData(
   currentGameHands: string[],
   players: string[],
   teams: string[],
-  seriesWinner: number | null
+  seriesWinner: number | null,
+  seriesScore?: [number, number]
 ): AwardTrackingData {
   // Initialize aggregated award tracking data
   const aggregatedData = initializeAwardTracking(players, teams);
@@ -865,8 +870,12 @@ export function aggregateSeriesAwardData(
               bidderTeamStat.highValueBids.successes++;
             }
 
-            // A fold is NOT a successful defense (the defenders conceded rather than
-            // setting the bidder). Only count it as a hand they defended.
+            // A fold where the defenders NEGOTIATED tricks is a successful defense (the award
+            // counts "sets the bidders OR negotiates for tricks"); a zero-trick fold is a full
+            // concession (unsuccessful).
+            if (tricks > 0) {
+              defenderTeamStat.successfulDefenses++;
+            }
             defenderTeamStat.totalDefenses++;
           }
         }
@@ -934,6 +943,7 @@ export function aggregateSeriesAwardData(
   aggregatedData.winningTeam = seriesWinner;
   aggregatedData.winningTeamName = seriesWinner !== null ? teams[seriesWinner] : '';
   aggregatedData.gameCompleted = true;
+  if (seriesScore) aggregatedData.seriesScore = seriesScore;
 
   return aggregatedData;
 }

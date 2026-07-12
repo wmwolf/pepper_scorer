@@ -53,27 +53,31 @@ describe('Award Statistics Display', () => {
     });
   });
 
-  it('does not credit a fold as a successful defense (team stats)', () => {
+  it('counts a negotiated fold as a successful defense, a zero-trick fold as a concession', () => {
     const players = ['Alice', 'Bob', 'Charlie', 'Diana'];
-    // Bidder 3 (Charlie, team 0 -> "Team 1") bids 5 Hearts; the defenders FOLD,
-    // conceding and negotiating 3 free tricks. A fold makes the bid for the bidders
-    // and is NOT a defensive set.
-    const hands = ['135HF3'];
     const teams = ['Team 1', 'Team 2'];
-    const finalScores: [number, number] = [5, 0];
+    // The award defines a successful defense as "sets the bidders OR negotiates for tricks".
+    // Hand 1: Charlie (seat 3, Team 1) bids 5H; the defenders (Team 2) FOLD but negotiate 3 free
+    //   tricks -> a SUCCESSFUL (negotiated) defense.
+    // Hand 2: Diana (seat 4, Team 2) bids 5H; the defenders (Team 1) FOLD for ZERO tricks -> a full
+    //   concession -> UNSUCCESSFUL.
+    const hands = ['135HF3', '245HF0'];
+    const awardData = trackAwardData(hands, players, teams, [10, 0], null);
 
-    const awardData = trackAwardData(hands, players, teams, finalScores, null);
+    const team1 = awardData.teamStats['Team 1'];
+    const team2 = awardData.teamStats['Team 2'];
 
-    const biddingTeam = awardData.teamStats['Team 1'];
-    const defendingTeam = awardData.teamStats['Team 2'];
+    // A fold still makes the bid for the bidding team.
+    expect(team1.successfulBids).toBe(1); // Charlie's bid (hand 1)
+    expect(team2.successfulBids).toBe(1); // Diana's bid (hand 2)
 
-    // The fold makes the bid for the bidding team.
-    expect(biddingTeam.successfulBids).toBe(1);
-
-    // The defending team defended this hand, but did NOT succeed (they folded).
-    expect(defendingTeam.totalDefenses).toBe(1);
-    expect(defendingTeam.successfulDefenses).toBe(0);
-    expect(defendingTeam.defensiveSuccessRate).toBe(0);
+    // Team 2 defended hand 1 and negotiated 3 tricks -> successful defense.
+    expect(team2.totalDefenses).toBe(1);
+    expect(team2.successfulDefenses).toBe(1);
+    // Team 1 defended hand 2 and conceded for 0 tricks -> unsuccessful.
+    expect(team1.totalDefenses).toBe(1);
+    expect(team1.successfulDefenses).toBe(0);
+    expect(team1.defensiveSuccessRate).toBe(0);
   });
 
   it('keeps the running score history in sync when a hand has an unknown bidder', () => {

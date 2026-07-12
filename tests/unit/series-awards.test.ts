@@ -406,8 +406,8 @@ describe('Series Awards', () => {
       expect(feastOrFamine?.winner).toBe('Alice') // Highest variance in bid results
     })
 
-    it('evaluates Gambling Problem award correctly', () => {
-      // The real Gambling Problem award is a TEAM award: the team that most often
+    it('evaluates Punching Bag award correctly', () => {
+      // The real Punching Bag award is a TEAM award: the team that most often
       // went set defending a PLAYED 4/5 bid (which could have been negotiated). It
       // reads the actual hands, so craft hands where each defending set = a played
       // 4/5 bid the defenders got shut out on (tricks === 0 → defenders go negative).
@@ -424,10 +424,10 @@ describe('Series Awards', () => {
       seriesData.gameCompleted = true
 
       // Direct test of the real award evaluation logic.
-      const gamblingProblemAward = seriesAwards.find(a => a.id === 'gambling_problem')
+      const gamblingProblemAward = seriesAwards.find(a => a.id === 'punching_bag')
       expect(gamblingProblemAward).toBeTruthy()
 
-      // Regression guard: `gambling_problem` is declared `type: 'team'`, and its evaluation `case`
+      // Regression guard: `punching_bag` is declared `type: 'team'`, and its evaluation `case`
       // must live in evaluateAward's team switch. It previously sat in the player switch, so the
       // team-typed award was unreachable (dispatch keys off award.type) and could NEVER be given.
       // Now it evaluates correctly: Team 1 (2 defensive sets against played 4/5 bids, meeting the

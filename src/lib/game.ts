@@ -1495,7 +1495,8 @@ function createConfettiEffect() {
             gameManager.state.hands,
             gameManager.state.players,
             gameManager.state.teams,
-            gameManager.state.seriesWinner
+            gameManager.state.seriesWinner,
+            gameManager.state.seriesScores
           );
           
           // Seed from the aggregated series hands (identical across devices) for the same reason.
@@ -1841,13 +1842,13 @@ function createConfettiEffect() {
     winner: string;
     statDetails?: string;
   }) {
-    // Define styling based on award type
-    const isDubious = award.id.includes('overreaching') || 
-                    award.id.includes('false_confidence') || 
-                    award.id.includes('helping_hand') || 
-                    award.id.includes('moon_struck') || 
-                    award.id.includes('gambling_problem') || 
-                    award.id.includes('feast_or_famine');
+    // Define styling based on award type. Keep this list in sync with GAME_DUBIOUS_IDS /
+    // SERIES_DUBIOUS_IDS in pepper-awards.ts (the "dubious" tongue-in-cheek awards get amber cards).
+    const dubiousIds = [
+      'overreaching', 'false_confidence', 'helping_hand', 'playing_it_safe', 'no_trump_no_problem',
+      'moon_struck', 'punching_bag', 'feast_or_famine', 'big_talker',
+    ];
+    const isDubious = dubiousIds.includes(award.id);
     
     const cardStyle = isDubious ? {
       headerBg: 'bg-amber-600',

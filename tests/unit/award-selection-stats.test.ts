@@ -124,7 +124,7 @@ describe('Award selection — statistical regression', () => {
 describe('Series award selection — every series award is reachable', () => {
   // This sweep aggregates several games into a "series" and checks that every series award can be
   // both eligible and surfaced. It exists specifically to catch the class of bug where an award is
-  // permanently unreachable — e.g. `gambling_problem` was declared type:'team' but implemented in
+  // permanently unreachable — e.g. `punching_bag` was declared type:'team' but implemented in
   // evaluateAward's player switch, so it always returned null and could never be given.
   const SERIES = 900;
   const rand = seededRng(0x5E21E5);
@@ -142,7 +142,11 @@ describe('Series award selection — every series award is reachable', () => {
     }
     if (hands.length === 0) continue;
     seriesCount++;
-    const data = trackAwardData(hands, ['Alice', 'Bob', 'Charlie', 'Dave'], ['Team 1', 'Team 2'], [0, 0], 0);
+    const winner = i % 2;
+    const data = trackAwardData(hands, ['Alice', 'Bob', 'Charlie', 'Dave'], ['Team 1', 'Team 2'], [0, 0], winner);
+    // Simulate a mix of 2-0 sweeps and 2-1 series so cut_to_the_quick is exercised.
+    const swept = i % 3 === 0;
+    data.seriesScore = winner === 0 ? (swept ? [2, 0] : [2, 1]) : (swept ? [0, 2] : [1, 2]);
     for (const a of seriesAwards) if (evaluateAward(a, data)) eligible[a.id]++;
     for (const id of selectSeriesAwards(data, rand).map(a => a.id)) selected[id]++;
   }

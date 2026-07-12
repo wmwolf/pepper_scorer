@@ -3,7 +3,8 @@ import {
   selectGameAwards,
   selectSeriesAwards,
   evaluateAward,
-  gameAwards
+  gameAwards,
+  seriesAwards
 } from '../../src/lib/pepper-awards'
 import { 
   trackAwardData,
@@ -417,9 +418,10 @@ describe('Moon Struck Award - only counts failed Moon/Double Moon bids', () => {
     expect(awardData.playerStats.Alice.failedBidValues.filter(v => v === 6).length).toBe(3)
     expect(awardData.playerStats.Alice.failedBidValues.filter(v => v === 7 || v === 14).length).toBe(0)
 
-    const awards = selectSeriesAwards(awardData)
-    const moonStruck = awards.find(a => a.id === 'moon_struck')
-    expect(moonStruck).toBeUndefined()
+    // Deterministic: moon_struck counts failed MOONS, and Alice failed only 6-bids, so it is not
+    // earned. (Asserting via evaluateAward, not the random selection.)
+    const moonStruck = evaluateAward(seriesAwards.find(a => a.id === 'moon_struck')!, awardData)
+    expect(moonStruck).toBeNull()
   })
 
   it('qualifies the player who fails the requisite number of Moon/Double Moon bids', () => {
@@ -435,9 +437,8 @@ describe('Moon Struck Award - only counts failed Moon/Double Moon bids', () => {
     // Sanity: three failed moons.
     expect(awardData.playerStats.Alice.failedBidValues.filter(v => v === 7 || v === 14).length).toBe(3)
 
-    const awards = selectSeriesAwards(awardData)
-    const moonStruck = awards.find(a => a.id === 'moon_struck')
-    expect(moonStruck).toBeDefined()
+    const moonStruck = evaluateAward(seriesAwards.find(a => a.id === 'moon_struck')!, awardData)
+    expect(moonStruck).toBeTruthy()
     expect(moonStruck?.winner).toBe('Alice')
   })
 })
