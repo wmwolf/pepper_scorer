@@ -590,7 +590,7 @@ export const gameAwards: AwardDefinition[] = [
   {
     id: 'false_confidence',
     name: 'The Art of the Fail',
-    description: 'Kept confidently calling no-trump — and kept getting set',
+    description: 'Kept calling no-trump — and kept getting set',
     technicalDefinition: 'Player with the most failed no-trump bids in a single game. Minimum 2 failed no-trump bids required.',
     type: 'player',
     scope: 'game',
