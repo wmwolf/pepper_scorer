@@ -2,6 +2,7 @@
 import { ref, set, get, push, onValue, off, remove, onDisconnect, query, orderByChild, equalTo, runTransaction, type DatabaseReference } from 'firebase/database';
 import { getFirebaseDatabase, isFirebaseConfigured } from './firebase';
 import { getCurrentUser } from './auth';
+import { createGameInvitations } from './invitations';
 import { GameManager, getCurrentPhase, type GameState } from './gameState';
 import { getPath } from './path-utils';
 import { resolveSeat } from './multiplayer';
@@ -239,13 +240,30 @@ export class FirebaseGameManager extends GameManager {
       const userGameRef = ref(database, `userGames/${gameCreator}/${gameId}`);
       await set(userGameRef, true);
 
-      // Add authenticated players to their userGames
-      for (const authPlayer of authenticatedPlayers) {
-        if (authPlayer.userId && authPlayer.userId !== gameCreator) {
-          const playerGameRef = ref(database, `userGames/${authPlayer.userId}/${gameId}`);
-          await set(playerGameRef, true);
-        }
-      }
+      // Invite the other registered players (Phase 9). Rather than silently dropping the game into
+      // their active list, send a pending invitation they accept/decline — accepting is what adds it
+      // to their userGames. They are already seated in `players` above, so they can play on accept.
+      const creatorName =
+        authenticatedPlayers.find(p => p.userId === gameCreator)?.displayName ||
+        currentUser?.displayName ||
+        'A player';
+      await createGameInvitations(
+        gameId,
+        {
+          from: gameCreator,
+          fromName: creatorName,
+          teams: this.state.teams as [string, string],
+          roomCode
+        },
+        authenticatedPlayers
+          .filter(p => p.userId && p.userId !== gameCreator)
+          .map(p => ({
+            userId: p.userId,
+            seat: p.position,
+            // Partner is the other seat on the same team (seats 0&2 vs 1&3).
+            partnerName: this.state.players[(p.position + 2) % 4] || 'your partner'
+          }))
+      );
 
       // Setup Firebase listeners
       this.setupFirebaseListeners();
@@ -317,13 +335,24 @@ export class FirebaseGameManager extends GameManager {
       const userGameRef = ref(database, `userGames/${currentUser.uid}/${gameId}`);
       await set(userGameRef, true);
 
-      // Add authenticated players to their userGames
-      for (const authPlayer of authenticatedPlayers) {
-        if (authPlayer.userId !== currentUser.uid) {
-          const playerGameRef = ref(database, `userGames/${authPlayer.userId}/${gameId}`);
-          await set(playerGameRef, true);
-        }
-      }
+      // Invite the other registered players (Phase 9) rather than silently seeding their userGames;
+      // accepting is what adds the game to their list. See the instance createFirebaseGame + invitations.ts.
+      await createGameInvitations(
+        gameId,
+        {
+          from: currentUser.uid,
+          fromName: currentUser.displayName || 'A player',
+          teams,
+          roomCode: gameData.metadata.roomCode
+        },
+        authenticatedPlayers
+          .filter(p => p.userId && p.userId !== currentUser.uid)
+          .map(p => ({
+            userId: p.userId,
+            seat: p.position,
+            partnerName: players[(p.position + 2) % 4] || 'your partner'
+          }))
+      );
 
       console.log('Firebase game created with ID:', gameId);
       return new FirebaseGameManager(players, teams, gameId);

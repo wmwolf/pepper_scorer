@@ -81,6 +81,14 @@ import { getPath } from '../lib/path-utils';
         </div>
       </div>
 
+      <!-- Pending Invitations (Phase 9) -->
+      <div id="invitations-card" class="bg-white shadow-sm rounded-lg p-6 hidden">
+        <h2 class="text-2xl font-bold text-gray-900 mb-6">Game Invitations</h2>
+        <div id="invitations-list" class="space-y-4">
+          <!-- Pending invitations will be populated here -->
+        </div>
+      </div>
+
       <!-- Active Games Management -->
       <div class="bg-white shadow-sm rounded-lg p-6">
         <h2 class="text-2xl font-bold text-gray-900 mb-6">Active Games</h2>
@@ -210,6 +218,7 @@ import { getPath } from '../lib/path-utils';
 <script>
 import { onAuthStateChange, getCurrentUser, getDisplayName, updateDisplayName, resetDisplayNameToGoogle } from '../lib/auth';
 import { FirebaseGameManager } from '../lib/firebaseGameState';
+import { getPendingInvitations, acceptInvitation, declineInvitation } from '../lib/invitations';
 import { getPath } from '../lib/path-utils';
 
 let currentUser = null;
@@ -234,6 +243,7 @@ function updateAuthState(user) {
     authRequired?.classList.add('hidden');
     accountContent?.classList.remove('hidden');
     loadUserProfile(user);
+    loadInvitations(user);
     loadActiveGames(user);
   } else {
     // User is not authenticated - show auth required after a brief delay
@@ -276,6 +286,79 @@ function loadUserProfile(user) {
         saveBtn.disabled = displayNameInput.value === (user.displayName || '');
       }
     });
+  }
+}
+
+// Load pending game invitations for the user (Phase 9).
+async function loadInvitations(user) {
+  const card = document.getElementById('invitations-card');
+  const list = document.getElementById('invitations-list');
+  if (!card || !list) return;
+
+  try {
+    const invitations = await getPendingInvitations(user.uid);
+
+    if (!invitations.length) {
+      card.classList.add('hidden');
+      list.innerHTML = '';
+      return;
+    }
+
+    card.classList.remove('hidden');
+    list.innerHTML = '';
+
+    invitations.forEach(inv => {
+      const teamName = inv.teams?.[inv.teamIndex] || `Team ${inv.teamIndex + 1}`;
+      const vs = `${inv.teams?.[0] ?? 'Team 1'} vs ${inv.teams?.[1] ?? 'Team 2'}`;
+
+      const div = document.createElement('div');
+      div.className = 'border border-amber-200 bg-amber-50 rounded-lg p-4';
+      div.innerHTML = `
+        <div class="flex justify-between items-start gap-3">
+          <div class="min-w-0">
+            <h3 class="font-medium text-amber-900 truncate">${inv.fromName} invited you to a game</h3>
+            <p class="text-sm text-amber-700 truncate">${vs}</p>
+            <p class="text-xs text-amber-600 mt-1 truncate">You're on ${teamName} with ${inv.partnerName}</p>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <button class="decline-invite px-3 py-1 bg-white text-amber-800 border border-amber-300 rounded text-sm hover:bg-amber-100 transition-colors">Decline</button>
+            <button class="accept-invite px-3 py-1 bg-amber-600 text-white rounded text-sm hover:bg-amber-700 transition-colors">Accept</button>
+          </div>
+        </div>
+        <p class="invite-error text-red-600 text-xs mt-2 hidden"></p>
+      `;
+
+      const acceptBtn = div.querySelector('.accept-invite');
+      const declineBtn = div.querySelector('.decline-invite');
+      const errorEl = div.querySelector('.invite-error');
+
+      const runAction = async (action, label) => {
+        acceptBtn.disabled = true;
+        declineBtn.disabled = true;
+        errorEl.classList.add('hidden');
+        try {
+          const ok = await action(inv.gameId);
+          if (!ok) throw new Error('failed');
+          // Refresh: an accepted game now appears in Active Games below.
+          await loadInvitations(user);
+          await loadActiveGames(user);
+        } catch (e) {
+          console.error(`Error on invite ${label}:`, e);
+          acceptBtn.disabled = false;
+          declineBtn.disabled = false;
+          errorEl.textContent = 'Something went wrong. Please try again.';
+          errorEl.classList.remove('hidden');
+        }
+      };
+
+      acceptBtn.addEventListener('click', () => runAction(acceptInvitation, 'accept'));
+      declineBtn.addEventListener('click', () => runAction(declineInvitation, 'decline'));
+
+      list.appendChild(div);
+    });
+  } catch (error) {
+    console.error('Error loading invitations:', error);
+    card.classList.add('hidden');
   }
 }
 

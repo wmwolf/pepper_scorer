@@ -58,6 +58,15 @@
       }
     },
 
+    "invitations": {
+      "$uid": {
+        ".read": "auth != null && $uid === auth.uid",
+        "$gameId": {
+          ".write": "auth != null && ($uid === auth.uid || (newData.child('from').val() === auth.uid && root.child('games').child($gameId).child('metadata').child('createdBy').val() === auth.uid) || (data.exists() && data.child('from').val() === auth.uid))"
+        }
+      }
+    },
+
     "series": {
       "$seriesId": {
         ".read": "auth != null",

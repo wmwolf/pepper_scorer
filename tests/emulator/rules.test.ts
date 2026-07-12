@@ -123,6 +123,27 @@ describe('games write', () => {
   })
 })
 
+describe('invitations', () => {
+  it('lets the creator invite a player, keeps it invitee-private, and lets the invitee resolve it', async () => {
+    const creator = testEnv.authenticatedContext(CREATOR).database()
+    const invite = { gameId: GAME_ID, from: CREATOR, fromName: 'Creator', teams: ['A', 'B'], seat: 1, teamIndex: 1, partnerName: 'Guest4', createdAt: 1000 }
+
+    // Creator (from === auth.uid) can write an invitation into the invitee's node.
+    await assertSucceeds(set(ref(creator, `invitations/${SEATED}/${GAME_ID}`), invite))
+    // A stranger cannot forge an invitation from someone else.
+    const outsider = testEnv.authenticatedContext(OUTSIDER).database()
+    await assertFails(set(ref(outsider, `invitations/${SEATED}/${GAME_ID}`), { ...invite, from: OUTSIDER }))
+
+    // Invitations are invitee-private: only the invitee can read their own.
+    const seated = testEnv.authenticatedContext(SEATED).database()
+    await assertSucceeds(get(ref(seated, `invitations/${SEATED}`)))
+    await assertFails(get(ref(outsider, `invitations/${SEATED}`)))
+
+    // The invitee can resolve (accept/decline => delete) their own invitation.
+    await assertSucceeds(set(ref(seated, `invitations/${SEATED}/${GAME_ID}`), null))
+  })
+})
+
 describe('series', () => {
   it('is readable and writable by any signed-in user, denied to anon', async () => {
     const alice = testEnv.authenticatedContext('alice').database()

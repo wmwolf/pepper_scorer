@@ -38,6 +38,14 @@ import ResumeGameModal from '../components/resume-modal.astro';
           </button>
         </div>
 
+        <!-- Pending Invitations Section (Phase 9) -->
+        <div id="invitations-section" class="mt-4 hidden">
+          <h3 class="text-amber-800 font-medium mb-2">Game Invitations</h3>
+          <div id="invitations-list" class="space-y-2">
+            <!-- Pending invitations will be populated here -->
+          </div>
+        </div>
+
         <!-- Active Games Section -->
         <div id="active-games-section" class="mt-4 hidden">
           <h3 class="text-blue-800 font-medium mb-2">Your Active Games</h3>
@@ -197,6 +205,7 @@ import ResumeGameModal from '../components/resume-modal.astro';
   import { getPath } from '../lib/path-utils';
   import { signInWithGoogle, signInWithGoogleCredential, useGoogleIdentityServices, signOutUser, onAuthStateChange, getCurrentUser, searchUsers } from '../lib/auth';
   import { googleOAuthClientId } from '../lib/firebase';
+  import { getPendingInvitations, acceptInvitation, declineInvitation } from '../lib/invitations';
 
   // Check for unfinished game on load
   document.addEventListener('DOMContentLoaded', async () => {
@@ -454,7 +463,8 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
       if (userName) userName.textContent = user.displayName;
       if (userUsername) userUsername.textContent = user.username;
 
-      // Load active games
+      // Load pending invitations and active games
+      loadInvitations(user);
       loadActiveGames(user);
 
           } else {
@@ -475,9 +485,11 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
         fallbackAvatar.remove();
       }
 
-      // Hide active games section
+      // Hide active games + invitations sections
       const activeGamesSection = document.getElementById('active-games-section');
       if (activeGamesSection) activeGamesSection.classList.add('hidden');
+      const invitationsSection = document.getElementById('invitations-section');
+      if (invitationsSection) invitationsSection.classList.add('hidden');
 
           }
   }
@@ -778,6 +790,79 @@ function setupJoinByRoomCode() {
   btn.addEventListener('click', join);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); join(); } });
   input.addEventListener('input', clearError);
+}
+
+// Load pending game invitations for the signed-in user (Phase 9).
+async function loadInvitations(user) {
+  const section = document.getElementById('invitations-section');
+  const list = document.getElementById('invitations-list');
+  if (!section || !list) return;
+
+  try {
+    const invitations = await getPendingInvitations(user.uid);
+
+    if (!invitations.length) {
+      section.classList.add('hidden');
+      list.innerHTML = '';
+      return;
+    }
+
+    section.classList.remove('hidden');
+    list.innerHTML = '';
+
+    invitations.forEach(inv => {
+      const teamName = inv.teams?.[inv.teamIndex] || `Team ${inv.teamIndex + 1}`;
+      const vs = `${inv.teams?.[0] ?? 'Team 1'} vs ${inv.teams?.[1] ?? 'Team 2'}`;
+
+      const card = document.createElement('div');
+      card.className = 'p-3 bg-amber-50 border border-amber-200 rounded-md';
+      card.innerHTML = `
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <div class="font-medium text-amber-900 truncate">${inv.fromName} invited you to a game</div>
+            <div class="text-sm text-amber-700 truncate">${vs}</div>
+            <div class="text-xs text-amber-600 truncate">You're on ${teamName} with ${inv.partnerName}</div>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <button class="decline-invite px-3 py-1 bg-white text-amber-800 border border-amber-300 rounded text-sm hover:bg-amber-100 transition-colors">Decline</button>
+            <button class="accept-invite px-3 py-1 bg-amber-600 text-white rounded text-sm hover:bg-amber-700 transition-colors">Accept</button>
+          </div>
+        </div>
+        <p class="invite-error text-red-600 text-xs mt-1 hidden"></p>
+      `;
+
+      const acceptBtn = card.querySelector('.accept-invite');
+      const declineBtn = card.querySelector('.decline-invite');
+      const errorEl = card.querySelector('.invite-error');
+
+      const runAction = async (action, label) => {
+        acceptBtn.disabled = true;
+        declineBtn.disabled = true;
+        errorEl.classList.add('hidden');
+        try {
+          const ok = await action(inv.gameId);
+          if (!ok) throw new Error('failed');
+          // Refresh both lists: an accepted game now appears in Active Games.
+          await loadInvitations(user);
+          await loadActiveGames(user);
+        } catch (e) {
+          console.error(`Error on invite ${label}:`, e);
+          acceptBtn.disabled = false;
+          declineBtn.disabled = false;
+          errorEl.textContent = 'Something went wrong. Please try again.';
+          errorEl.classList.remove('hidden');
+        }
+      };
+
+      acceptBtn.addEventListener('click', () => runAction(acceptInvitation, 'accept'));
+      declineBtn.addEventListener('click', () => runAction(declineInvitation, 'decline'));
+
+      list.appendChild(card);
+    });
+  } catch (error) {
+    console.error('Error loading invitations:', error);
+    section.classList.add('hidden');
+  }
 }
 
 // Load active games for signed-in user
