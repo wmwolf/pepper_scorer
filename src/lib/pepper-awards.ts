@@ -523,7 +523,7 @@ export const gameAwards: AwardDefinition[] = [
     type: 'player',
     scope: 'game',
     important: false,
-    icon: 'crown'
+    icon: 'heart'
   },
   {
     id: 'bid_royalty',
@@ -533,7 +533,7 @@ export const gameAwards: AwardDefinition[] = [
     type: 'player',
     scope: 'game',
     important: false,
-    icon: 'sceptre'
+    icon: 'crown'
   },
   {
     id: 'clutch_player',
@@ -717,7 +717,7 @@ export const seriesAwards: AwardDefinition[] = [
     type: 'team',
     scope: 'series',
     important: false,
-    icon: 'thumbs-down'
+    icon: 'boxing-glove'
   },
   {
     id: 'feast_or_famine',
@@ -757,7 +757,7 @@ export const seriesAwards: AwardDefinition[] = [
     type: 'player',
     scope: 'series',
     important: false,
-    icon: 'thumbs-down'
+    icon: 'megaphone'
   }
 ];
 

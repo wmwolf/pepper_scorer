@@ -1901,7 +1901,9 @@ function createConfettiEffect() {
       'sun': '☀️',
       'scale': '⚖️',
       'clock-rewind': '⏪',
-      'honey-pot': '🍯'
+      'honey-pot': '🍯',
+      'boxing-glove': '🥊',
+      'megaphone': '📣'
     };
     
     const iconEmoji = iconMap[award.icon] || '🏆'; // Default to trophy if icon not found
