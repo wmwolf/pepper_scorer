@@ -14,13 +14,30 @@ branch is deleted). Live at https://billwolf.space/pepper_scorer/ via GitHub Pag
   4-device testing (sync coalescing, RTDB-`undefined` writes, empty-`entries` auction freeze).
 - **Phase 11 security: done.** Strict rules version-controlled in `database.rules.json` and
   **deployed**; emulator harness green in CI (rules + wiring, incl. a 4-client auction flow).
-- **Mobile auth:** iOS Safari broke `signInWithPopup`/`Redirect` (cross-origin authDomain + ITP);
-  fixed with **Google Identity Services** (`signInWithCredential`). Deployed; pending a final
-  stock-iPhone confirmation.
-- **Not started:** Phase 9 (user management & game discovery), Phase 10 (advanced stats/history),
-  and Phase 11's production polish (PWA/offline, monitoring, backup). See "Recommended sequencing"
-  below. Remaining Phase-8 follow-ups: real multi-device QA at scale and the deferred
-  mixed-phone/non-phone auction mode.
+- **Mobile auth: DONE.** iOS Safari broke `signInWithPopup`/`Redirect` (cross-origin authDomain +
+  ITP); fixed with **Google Identity Services** (`signInWithCredential`), **confirmed working on a
+  stock iPhone**. The old redirect/popup fallback was excised (popup kept only for `dev:emulator`).
+- **Privacy hardening (2026-07-11): DONE.** `/users` was world-readable and the roster search
+  downloaded the whole table → anyone could mine emails. Split into an owner-only `/users` (email,
+  stats) and a PII-free, auth-gated `/directory` (username/displayName/photo) that search reads;
+  usernames no longer derive from the email local part. Rules redeployed.
+- **Award system overhaul (2026-07-11): DONE.** Selection was starving most awards (first-eligible-
+  per-bucket); redesigned to pick one team/player/dubious award **at random, weighted toward rarer
+  ones, among the eligible**, seeded from the game's hands so every device shows the same awards.
+  Fixed a genuinely unreachable award (`gambling_problem`→`punching_bag`, wrong switch) and a
+  defensive-scoring bug (negotiated folds now count as successful defenses, per the award
+  definition). Added team awards (`dynamic_duo`, `great_minds`, `misery_loves_company`,
+  `brick_wall`) and series awards (`moonshot`, `big_talker`, `cut_to_the_quick`); tuned thresholds.
+  `evaluateAward` is exported; a seeded statistical + a realistic game-sim regression suite guards
+  distributions. **Award-PREVALENCE tuning is considered sufficient** (further tuning waits on real
+  data); the new award *cards* still want a quick live visual check.
+- **Not started:** Phase 9 (user management & game discovery — but note much scaffolding already
+  exists: auth/profiles, username autocomplete, active-games list, room codes; the real remaining
+  work is the **game invitation system** + discovery/dashboard polish). Phase 10 (advanced stats/
+  history) — **aggregating real player stats from cloud game data is still in scope** (gated on
+  having a corpus of played games; award-prevalence *sims* are done). Phase 11 production polish
+  (PWA/offline, monitoring, backup). Remaining Phase-8 follow-ups: real multi-device auction QA at
+  scale and the deferred mixed-phone/non-phone auction mode.
 
 The detailed per-phase notes below are the historical decision trail; the summary above is the
 current state of record.
