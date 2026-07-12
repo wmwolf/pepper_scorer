@@ -589,9 +589,9 @@ export const gameAwards: AwardDefinition[] = [
   },
   {
     id: 'false_confidence',
-    name: 'False Confidence',
-    description: 'No trump? No problem! (Or so they thought)',
-    technicalDefinition: 'Player with most failed no-trump bids in a single game.',
+    name: 'The Art of the Fail',
+    description: 'Kept confidently calling no-trump — and kept getting set',
+    technicalDefinition: 'Player with the most failed no-trump bids in a single game. Minimum 2 failed no-trump bids required.',
     type: 'player',
     scope: 'game',
     important: false,
@@ -1508,10 +1508,11 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
       }
       
       case 'false_confidence': {
-        // Player with most failed no-trump bids
+        // Player with the most failed no-trump bids — min 2, so it rewards a PATTERN of over-
+        // confident no-trump bidding, not a single unlucky one.
         const qualifyingPlayers = playerStats.filter(player => {
           const failedNoTrumps = player.trumpBids['N'] ? player.trumpBids['N'].attempts - player.trumpBids['N'].successes : 0;
-          return failedNoTrumps > 0;
+          return failedNoTrumps >= 2;
         });
         
         if (qualifyingPlayers.length === 0) return null;
