@@ -12,7 +12,7 @@ import { ref, get, set } from 'firebase/database'
 import { getFirebaseAuth, getFirebaseDatabase } from '../../src/lib/firebase'
 import { onAuthStateChange, getCurrentUser } from '../../src/lib/auth'
 import { FirebaseGameManager } from '../../src/lib/firebaseGameState'
-import { getPendingInvitations, acceptInvitation, declineInvitation } from '../../src/lib/invitations'
+import { getPendingInvitations, acceptInvitation, declineInvitation, subscribeToInvitations } from '../../src/lib/invitations'
 
 const PW = 'password123'
 
@@ -111,6 +111,35 @@ describe('game invitations — decline', () => {
     expect(await declineInvitation(gameId)).toBe(true)
     expect(await getPendingInvitations(carol)).toHaveLength(0)
     expect((await get(ref(db(), `userGames/${carol}/${gameId}`))).val()).toBeNull()
+  })
+})
+
+describe('game invitations — live subscription', () => {
+  it('pushes the current list on subscribe and on change, and stops after unsubscribe', async () => {
+    const bob = await signIn('live-bob@test.dev')
+    const alice = await signIn('alice@test.dev')
+    const gameId = await createGameInviting(alice, bob)
+
+    await signIn('live-bob@test.dev')
+    const lengths: number[] = []
+    const unsub = subscribeToInvitations(bob, (invs) => { lengths.push(invs.length) })
+
+    // Immediate emission includes the pending invite.
+    await waitUntil(() => lengths.includes(1))
+
+    // Accepting resolves it; the listener re-fires with an empty list — no manual reload.
+    await acceptInvitation(gameId)
+    await waitUntil(() => lengths[lengths.length - 1] === 0)
+
+    // After unsubscribing, a further change to the node emits nothing.
+    unsub()
+    const before = lengths.length
+    await set(ref(db(), `invitations/${bob}/dummy`), {
+      gameId: 'dummy', from: bob, fromName: 'x', teams: ['a', 'b'],
+      seat: 1, teamIndex: 1, partnerName: 'p', createdAt: 1,
+    })
+    await flush()
+    expect(lengths.length).toBe(before)
   })
 })
 

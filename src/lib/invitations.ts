@@ -9,7 +9,7 @@
 //
 // Data lives at `invitations/$inviteeUid/$gameId` (invitee-private; see database.rules.json). No PII
 // beyond display names already visible in `games/$gameId/players`.
-import { ref, set, get, remove } from 'firebase/database';
+import { ref, set, get, remove, onValue } from 'firebase/database';
 import { getFirebaseDatabase, isFirebaseConfigured } from './firebase';
 import { getCurrentUser } from './auth';
 
@@ -102,6 +102,24 @@ export async function getPendingInvitations(uid: string): Promise<GameInvitation
     console.error('Error loading invitations:', error);
     return [];
   }
+}
+
+// Live-subscribe to a user's pending invitations so the UI updates as invites arrive/resolve without
+// a refresh. Fires `onChange` with the current list on every change to `invitations/$uid` (and once
+// immediately). Re-derives through getPendingInvitations so status-filtering + stale-pruning stay in
+// one place; a prune (remove) just re-fires the listener once and then converges (nothing left to
+// remove). Returns an unsubscribe; a no-op when Firebase is unavailable.
+export function subscribeToInvitations(
+  uid: string,
+  onChange: (_invitations: GameInvitation[]) => void
+): () => void {
+  if (!isFirebaseConfigured() || !uid) return () => {};
+  const database = getFirebaseDatabase();
+  if (!database) return () => {};
+
+  return onValue(ref(database, `invitations/${uid}`), () => {
+    getPendingInvitations(uid).then(onChange);
+  });
 }
 
 // Accept an invitation: add the game to the invitee's active games (so it surfaces in the

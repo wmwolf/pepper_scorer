@@ -205,7 +205,7 @@ import ResumeGameModal from '../components/resume-modal.astro';
   import { getPath } from '../lib/path-utils';
   import { signInWithGoogle, signInWithGoogleCredential, useGoogleIdentityServices, signOutUser, onAuthStateChange, getCurrentUser, searchUsers } from '../lib/auth';
   import { googleOAuthClientId } from '../lib/firebase';
-  import { getPendingInvitations, acceptInvitation, declineInvitation } from '../lib/invitations';
+  import { subscribeToInvitations, acceptInvitation, declineInvitation } from '../lib/invitations';
 
   // Check for unfinished game on load
   document.addEventListener('DOMContentLoaded', async () => {
@@ -463,8 +463,8 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
       if (userName) userName.textContent = user.displayName;
       if (userUsername) userUsername.textContent = user.username;
 
-      // Load pending invitations and active games
-      loadInvitations(user);
+      // Live-watch pending invitations; load active games
+      watchInvitations(user);
       loadActiveGames(user);
 
           } else {
@@ -485,11 +485,10 @@ function setupAuthHandlers(signInBtn, signOutBtn, loggedOutSection, loggedInSect
         fallbackAvatar.remove();
       }
 
-      // Hide active games + invitations sections
+      // Hide active games; stop watching + hide invitations
       const activeGamesSection = document.getElementById('active-games-section');
       if (activeGamesSection) activeGamesSection.classList.add('hidden');
-      const invitationsSection = document.getElementById('invitations-section');
-      if (invitationsSection) invitationsSection.classList.add('hidden');
+      stopWatchingInvitations();
 
           }
   }
@@ -792,14 +791,25 @@ function setupJoinByRoomCode() {
   input.addEventListener('input', clearError);
 }
 
-// Load pending game invitations for the signed-in user (Phase 9).
-async function loadInvitations(user) {
+// Live-subscribe to the signed-in user's pending invitations (Phase 9) so they appear/clear without
+// a refresh. Idempotent: re-subscribing tears down any prior listener first.
+let invitationsUnsub = null;
+function watchInvitations(user) {
+  if (invitationsUnsub) { invitationsUnsub(); invitationsUnsub = null; }
+  invitationsUnsub = subscribeToInvitations(user.uid, (invitations) => renderInvitations(user, invitations));
+}
+
+function stopWatchingInvitations() {
+  if (invitationsUnsub) { invitationsUnsub(); invitationsUnsub = null; }
+  const section = document.getElementById('invitations-section');
+  if (section) section.classList.add('hidden');
+}
+
+// Render the current pending-invitations list (called by the live listener on every change).
+function renderInvitations(user, invitations) {
   const section = document.getElementById('invitations-section');
   const list = document.getElementById('invitations-list');
   if (!section || !list) return;
-
-  try {
-    const invitations = await getPendingInvitations(user.uid);
 
     if (!invitations.length) {
       section.classList.add('hidden');
@@ -842,8 +852,8 @@ async function loadInvitations(user) {
         try {
           const ok = await action(inv.gameId);
           if (!ok) throw new Error('failed');
-          // Refresh both lists: an accepted game now appears in Active Games.
-          await loadInvitations(user);
+          // The invitations listener re-renders this list automatically once the node changes;
+          // refresh active games so an accepted game shows up immediately.
           await loadActiveGames(user);
         } catch (e) {
           console.error(`Error on invite ${label}:`, e);
@@ -859,10 +869,6 @@ async function loadInvitations(user) {
 
       list.appendChild(card);
     });
-  } catch (error) {
-    console.error('Error loading invitations:', error);
-    section.classList.add('hidden');
-  }
 }
 
 // Load active games for signed-in user

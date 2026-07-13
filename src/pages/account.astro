@@ -218,7 +218,7 @@ import { getPath } from '../lib/path-utils';
 <script>
 import { onAuthStateChange, getCurrentUser, getDisplayName, updateDisplayName, resetDisplayNameToGoogle } from '../lib/auth';
 import { FirebaseGameManager } from '../lib/firebaseGameState';
-import { getPendingInvitations, acceptInvitation, declineInvitation } from '../lib/invitations';
+import { subscribeToInvitations, acceptInvitation, declineInvitation } from '../lib/invitations';
 import { getPath } from '../lib/path-utils';
 
 let currentUser = null;
@@ -243,10 +243,11 @@ function updateAuthState(user) {
     authRequired?.classList.add('hidden');
     accountContent?.classList.remove('hidden');
     loadUserProfile(user);
-    loadInvitations(user);
+    watchInvitations(user);
     loadActiveGames(user);
   } else {
     // User is not authenticated - show auth required after a brief delay
+    stopWatchingInvitations();
     authLoading?.classList.add('hidden');
     accountContent?.classList.add('hidden');
 
@@ -289,14 +290,24 @@ function loadUserProfile(user) {
   }
 }
 
-// Load pending game invitations for the user (Phase 9).
-async function loadInvitations(user) {
+// Live-subscribe to the user's pending invitations (Phase 9) so they appear/clear without a refresh.
+let invitationsUnsub = null;
+function watchInvitations(user) {
+  if (invitationsUnsub) { invitationsUnsub(); invitationsUnsub = null; }
+  invitationsUnsub = subscribeToInvitations(user.uid, (invitations) => renderInvitations(user, invitations));
+}
+
+function stopWatchingInvitations() {
+  if (invitationsUnsub) { invitationsUnsub(); invitationsUnsub = null; }
+  const card = document.getElementById('invitations-card');
+  if (card) card.classList.add('hidden');
+}
+
+// Render the current pending-invitations list (called by the live listener on every change).
+function renderInvitations(user, invitations) {
   const card = document.getElementById('invitations-card');
   const list = document.getElementById('invitations-list');
   if (!card || !list) return;
-
-  try {
-    const invitations = await getPendingInvitations(user.uid);
 
     if (!invitations.length) {
       card.classList.add('hidden');
@@ -339,8 +350,8 @@ async function loadInvitations(user) {
         try {
           const ok = await action(inv.gameId);
           if (!ok) throw new Error('failed');
-          // Refresh: an accepted game now appears in Active Games below.
-          await loadInvitations(user);
+          // The invitations listener re-renders this list automatically once the node changes;
+          // refresh active games so an accepted game shows up immediately.
           await loadActiveGames(user);
         } catch (e) {
           console.error(`Error on invite ${label}:`, e);
@@ -356,10 +367,6 @@ async function loadInvitations(user) {
 
       list.appendChild(div);
     });
-  } catch (error) {
-    console.error('Error loading invitations:', error);
-    card.classList.add('hidden');
-  }
 }
 
 // Load active games for the user
