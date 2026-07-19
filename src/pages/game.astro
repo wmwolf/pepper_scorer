@@ -28,6 +28,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <!-- Player Identity Badge (Phase 8 multiplayer) -->
   <div id="player-identity" class="hidden mb-4 px-3 py-2 rounded-lg border text-sm flex items-center gap-2"></div>
 
+  <!-- Sync failure banner. A rejected write used to be logged to the console and forgotten, so a
+       device could accept input for a whole game while nothing reached the server. -->
+  <div id="sync-error-banner" class="hidden mb-4 px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-red-800 text-sm flex items-start gap-2">
+    <span aria-hidden="true">⚠️</span>
+    <span id="sync-error-text" class="flex-1"></span>
+  </div>
+
   <!-- Room Code (Phase 8): shareable code so others can join this game -->
   <div id="room-code-chip" class="hidden mb-4 px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-gray-700 text-sm flex items-center gap-2">
     <span>🔑</span>
@@ -581,6 +588,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         if (typeof window.updateUI === 'function') window.updateUI();
       });
 
+      // Surface sync failures. Without this a rejected write is invisible: the tap flow keeps
+      // accepting input and the scoreboard looks right, while the server never receives a thing.
+      if (firebaseGame.setSyncErrorCallback) {
+        firebaseGame.setSyncErrorCallback((message) => {
+          const banner = document.getElementById('sync-error-banner');
+          const text = document.getElementById('sync-error-text');
+          if (!banner || !text) return;
+          banner.classList.toggle('hidden', !message);
+          if (message) text.textContent = message;
+        });
+      }
+
       // Show manual sync button. Now safe: forceSyncToFirebase runs the same
       // version-guarded transaction as automatic syncs and can never revert newer state.
       const manualSyncBtn = document.getElementById('manual-sync-btn');
@@ -593,7 +612,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
             if (window.firebaseGame && window.firebaseGame.forceSyncToFirebase) {
               await window.firebaseGame.forceSyncToFirebase();
-              updateSyncInfo('Manual sync completed');
+              // forceSyncToFirebase swallows write failures internally, so "it returned" is not
+              // "it saved" — ask the manager what actually happened before claiming success.
+              const syncError = window.firebaseGame.getLastSyncError?.() ?? null;
+              updateSyncInfo(syncError ? 'Sync failed — not saved' : 'Manual sync completed');
             } else {
               updateSyncInfo('No cloud connection');
             }

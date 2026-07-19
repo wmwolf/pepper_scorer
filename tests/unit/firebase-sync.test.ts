@@ -85,4 +85,45 @@ describe('FirebaseGameManager sync conflict resolution', () => {
       }
     })
   })
+
+  // Regression suite for the live-game corruption of 2026-07-19. The version is bumped ONLY by a
+  // successful commit, so a device whose write failed (rejected by the security rules because it
+  // is not seated, or a dropped connection) ends up holding divergent content at an EQUAL
+  // version. The old "defer only if remote is strictly newer" guard read equal as "no conflict".
+  describe('resolveSyncWrite — diverged at an equal version', () => {
+    it('DEFERS rather than overwriting a server that has moved past our baseline', () => {
+      // A device whose writes were rejected keeps accepting input while its version stays at the
+      // baseline it last agreed on. Meanwhile the server climbs, because every accepted write
+      // bumps the version. Pressing "Sync Now" here must not push the stale branch.
+      const server = stateAt(9, { hands: ['12P', '23P', '34P', '41P', '12N'] })
+      const divergedLocal = stateAt(5, { hands: ['12P', '99X'] })
+      expect(FirebaseGameManager.resolveSyncWrite(server, divergedLocal)).toEqual({ defer: true })
+    })
+
+    it('DEFERS when the remote is behind our version (we never legitimately get ahead)', () => {
+      // Our version only ever comes from a commit or an adopt, so a lower remote means the node
+      // is not what we last agreed with. Writing forward from an unknown baseline is unsafe.
+      const decision = FirebaseGameManager.resolveSyncWrite(stateAt(2), stateAt(5))
+      expect(decision).toEqual({ defer: true })
+    })
+
+    it('still commits the normal forward edit: local content changed, versions agree', () => {
+      // The happy path must keep working — this is every ordinary hand entry. The server sits at
+      // the version we last committed, and our content has advanced since.
+      const server = stateAt(6, { hands: ['12P'] })
+      const local = stateAt(6, { hands: ['12P', '23P'] })
+      const decision = FirebaseGameManager.resolveSyncWrite(server, local)
+      expect('commit' in decision).toBe(true)
+      if ('commit' in decision) {
+        expect(decision.commit.hands).toEqual(['12P', '23P'])
+        expect(decision.commit.version).toBe(7)
+      }
+    })
+
+    it('commits into an empty node regardless of our version (nothing to lose)', () => {
+      const decision = FirebaseGameManager.resolveSyncWrite(null, stateAt(5, { hands: ['12P'] }))
+      expect('commit' in decision).toBe(true)
+      if ('commit' in decision) expect(decision.commit.version).toBe(6)
+    })
+  })
 })
