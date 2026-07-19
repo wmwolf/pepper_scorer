@@ -37,6 +37,7 @@ interface MultiplayerManager {
   isHost?(): boolean;
   getHostName?(): string;
   getHostSeat?(): number | null;
+  getCurrentHostUid?(): string | null;
   isHostPresent?(): boolean;
   // Auction (8b concurrent-entry redesign)
   getAuction(): AuctionState | null;
@@ -86,9 +87,14 @@ function hostVerbForPhase(phase: string): string {
 // hand) — every other decision (bidder/bid/decision/tricks) is the host's. Other signed-in
 // players wait with a manual-override escape hatch. The concurrent auction (all four signed in)
 // is handled earlier by auctionEligible()/renderAuction, so this only governs the tap flow.
-// Returns null when no gating applies (local game, host, the bid winner picking trump, override,
-// or a game whose creator isn't seated). Seat is checked BEFORE host: only the four seated uids
-// can write under the security rules, so a non-seated creator is a spectator, not a host.
+// Returns null when no gating applies (local game, the current host, the bid winner picking
+// trump, override, or a game with no host claimed at all).
+//
+// The HOST check comes before the seat check, and that ordering is load-bearing in both
+// directions. The host is metadata/currentHost, which need not be seated — an unseated host is
+// a supported configuration since Phase 12C, and the rules grant it write access. But a signed-in
+// device that is NEITHER seated NOR the host cannot write, so it must be read-only: letting such
+// a device into the tap flow is what cost a live game ten minutes of scoring on 2026-07-19.
 export function evaluateGating(gm: GameManager, currentHand: string, phase: string): GatingBlock | null {
   const mp = asMultiplayer(gm);
   if (!mp) return null;                 // local game — full control
@@ -102,28 +108,22 @@ export function evaluateGating(gm: GameManager, currentHand: string, phase: stri
     return { spectator: true, responsibleName: 'the host', verb, arrow: '', directionText: '' };
   }
 
-  // Signed-in but NOT seated: read-only, and this MUST be decided before the host and
-  // manual-override checks below. The security rules grant gameState/bidding writes only to the
-  // four seated uids (database.rules.json), so a non-seated viewer's writes are rejected no
-  // matter what role it thinks it has. A game's creator is NOT necessarily seated — a fifth
-  // account can create a game and hand out the room code — and letting that non-seated host into
-  // the tap flow produced silently-failing writes and a permanently diverged local state.
+  // The current host administers everything, seated or not.
+  if (typeof mp.isHost === 'function' && mp.isHost()) return null;
+
+  // Signed-in, not the host, and not seated: read-only. Such a device has no write access under
+  // the rules, so offering it controls would only produce rejected writes and a diverged view.
   if (seat === null) {
     return { spectator: true, responsibleName: 'the players', verb, arrow: '', directionText: '' };
   }
 
   if (mp.isManualOverride()) return null;
 
-  // An UNSEATED host can't record anything (see above), so host-based gating would leave every
-  // seated player waiting forever on someone whose writes the rules reject — and the presence
-  // fallback won't save them, because that host is online, just powerless. When the creator
-  // isn't seated there is no meaningful host, so drop gating and let any seated player record.
-  // Absent the accessor we can't tell, so assume seated and keep the existing behavior.
-  const hostIsSeated = typeof mp.getHostSeat !== 'function' || mp.getHostSeat() !== null;
-  if (!hostIsSeated) return null;
-
-  // The (seated) host can enter everything.
-  if (typeof mp.isHost === 'function' && mp.isHost()) return null;
+  // No host claimed at all: there is nobody to wait on, so let any seated player record rather
+  // than blocking the table. (The presence fallback can't help here — it waits on a host that
+  // does not exist.) Absent the accessor, assume a host exists and keep the older behavior.
+  const hostClaimed = typeof mp.getCurrentHostUid !== 'function' || mp.getCurrentHostUid() !== null;
+  if (!hostClaimed) return null;
 
   // The bid winner picks their OWN trump (bidWinner is currentHand[1], 1-based; 0 = throw-in).
   const bidWinner = parseInt(currentHand[1] || '0');
