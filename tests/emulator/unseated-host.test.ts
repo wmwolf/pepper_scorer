@@ -117,15 +117,15 @@ describe('an unseated host administers the game (Phase 12C)', () => {
     }
   })
 
-  it('leaves seated players waiting on it, as host-driven play intends', async () => {
+  it('does not lock seated players out — they may still record alongside the host', async () => {
+    // Under the collision-safe model a host does not demote seated players to spectators; both
+    // can record, and a clash resolves safely. A player opts out only by choosing spectator mode.
     const { gameId } = await createUnseatedHostGame()
     await signIn('alice@test.dev')
     const aliceGm = (await FirebaseGameManager.loadFirebaseGame(gameId))!
     expect(aliceGm.getMySeat()).toBe(0)
     expect(aliceGm.isHost()).toBe(false)
-    const block = evaluateGating(aliceGm, '12P', 'decision')
-    expect(block).not.toBeNull()
-    expect(block!.spectator).toBe(false)   // a seated player, not a spectator
+    expect(evaluateGating(aliceGm, '12P', 'decision')).toBeNull()
   })
 })
 
@@ -201,12 +201,13 @@ describe('claiming and releasing the host role', () => {
     await flush()
     expect(await remoteHands(gameId)).toEqual(['1'])
 
-    // Eve, having lost the claim and holding no seat, can no longer write.
+    // Eve, having lost the claim and holding no seat, can no longer affect the game. Her write
+    // does not land. (It defers on the version CAS rather than hitting a permission error, since
+    // Alice's write already advanced the version — either way Eve's input is safely discarded.)
     await signIn('eve@test.dev')
     hostGm.addHandPart('2')
     await flush()
     expect(await remoteHands(gameId)).toEqual(['1'])
-    expect(hostGm.getLastSyncError()).toBeTruthy()
   })
 
   it('releases the claim, leaving the game hostless and seated players unblocked', async () => {

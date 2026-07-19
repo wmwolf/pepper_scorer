@@ -38,6 +38,7 @@ interface MultiplayerManager {
   getHostName?(): string;
   getHostSeat?(): number | null;
   getCurrentHostUid?(): string | null;
+  getDeviceRole?(): 'player' | 'spectator' | 'host';
   isHostPresent?(): boolean;
   // Auction (8b concurrent-entry redesign)
   getAuction(): AuctionState | null;
@@ -90,62 +91,48 @@ function hostVerbForPhase(phase: string): string {
 // Returns null when no gating applies (local game, the current host, the bid winner picking
 // trump, override, or a game with no host claimed at all).
 //
-// The HOST check comes before the seat check, and that ordering is load-bearing in both
-// directions. The host is metadata/currentHost, which need not be seated — an unseated host is
-// a supported configuration since Phase 12C, and the rules grant it write access. But a signed-in
-// device that is NEITHER seated NOR the host cannot write, so it must be read-only: letting such
-// a device into the tap flow is what cost a live game ten minutes of scoring on 2026-07-19.
+// Collision-safe model (2026-07-19): the tap-flow steps (bidder/bid/trump/decision/tricks) are
+// common knowledge at the table, so ANY device that can write — a seated player, or the host —
+// may record any of them. There is no hard "wait your turn" block anymore: two people recording
+// the same step at once is safe, because syncToFirebase resolves it by compare-and-set (exactly
+// one write lands; the loser re-syncs and gets a benign "someone recorded that first" flash).
+// Removing per-step ownership is deliberate — it dissolves the trump-vs-host and defender-vs-host
+// ownership questions that never had a clean answer. The ONE phase that stays per-seat is the
+// concurrent auction, and that is handled by auctionEligible()/renderAuction before this runs.
+//
+// So the only thing gating still decides is read-only vs. can-write:
+//   - not signed in, or a device in spectator mode, or signed-in-but-not-seated-and-not-host
+//     => read-only (the security rules would reject its writes anyway).
+//   - a seated player in player mode, or the host (seated or not) => may act.
 export function evaluateGating(gm: GameManager, currentHand: string, phase: string): GatingBlock | null {
   const mp = asMultiplayer(gm);
   if (!mp) return null;                 // local game — full control
 
   const { signedIn, seat } = mp.getViewerSeatInfo();
   const verb = hostVerbForPhase(phase);
+  const isHost = typeof mp.isHost === 'function' && mp.isHost();
 
-  // Not signed in on a Firebase game: the security rules forbid reading/writing it, so this
-  // device can't participate — read-only, no override (an override write would be rejected).
+  // Not signed in on a Firebase game: the security rules forbid writing it — read-only.
   if (!signedIn) {
     return { spectator: true, responsibleName: 'the host', verb, arrow: '', directionText: '' };
   }
 
-  // The current host administers everything, seated or not.
-  if (typeof mp.isHost === 'function' && mp.isHost()) return null;
-
-  // Signed-in, not the host, and not seated: read-only. Such a device has no write access under
-  // the rules, so offering it controls would only produce rejected writes and a diverged view.
-  if (seat === null) {
+  // This device deliberately opted out of recording (Phase 12B role toggle). Read-only, even if
+  // seated — that is the whole point of "spectate on this device". The host is exempt: holding
+  // the host role IS a recording role.
+  if (!isHost && typeof mp.getDeviceRole === 'function' && mp.getDeviceRole() === 'spectator') {
     return { spectator: true, responsibleName: 'the players', verb, arrow: '', directionText: '' };
   }
 
-  if (mp.isManualOverride()) return null;
+  // The host administers everything, seated or not.
+  if (isHost) return null;
 
-  // No host claimed at all: there is nobody to wait on, so let any seated player record rather
-  // than blocking the table. (The presence fallback can't help here — it waits on a host that
-  // does not exist.) Absent the accessor, assume a host exists and keep the older behavior.
-  const hostClaimed = typeof mp.getCurrentHostUid !== 'function' || mp.getCurrentHostUid() !== null;
-  if (!hostClaimed) return null;
+  // A seated player may record any common-knowledge step. Collisions with another player or the
+  // host are resolved safely downstream, so there is nothing to gate on.
+  if (seat !== null) return null;
 
-  // The bid winner picks their OWN trump (bidWinner is currentHand[1], 1-based; 0 = throw-in).
-  const bidWinner = parseInt(currentHand[1] || '0');
-  const trumpSeat = phase === 'trump' && bidWinner ? bidWinner - 1 : null;
-  if (trumpSeat !== null && seat === trumpSeat) return null;
-
-  // Presence fallback: once presence is known, if the responsible party is offline, drop gating
-  // so play isn't stuck. Responsible = the bid winner for trump, else the host. Guarded by
-  // hasPresenceData() so the first paint (before presence loads) keeps gating intact.
-  const presenceKnown = typeof mp.hasPresenceData === 'function' && mp.hasPresenceData();
-  if (presenceKnown) {
-    const responsiblePresent = trumpSeat !== null
-      ? (typeof mp.isSeatPresent === 'function' ? mp.isSeatPresent(trumpSeat) : true)
-      : (typeof mp.isHostPresent === 'function' ? mp.isHostPresent() : true);
-    if (!responsiblePresent) return null;
-  }
-
-  // Blocked: wait on the responsible party (the bid winner for trump, else the host).
-  const responsibleName = trumpSeat !== null
-    ? (mp.getFirebasePlayers()[trumpSeat]?.displayName || gm.state.players[trumpSeat] || `Seat ${trumpSeat + 1}`)
-    : (typeof mp.getHostName === 'function' ? mp.getHostName() : 'the host');
-  return { spectator: false, responsibleName, verb, arrow: '', directionText: '' };
+  // Signed in, not seated, not host: no write access under the rules — read-only.
+  return { spectator: true, responsibleName: 'the players', verb, arrow: '', directionText: '' };
 }
 
 // Extend window interface for global properties

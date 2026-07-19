@@ -8,135 +8,82 @@ function fakeGm(opts: {
   firebase?: boolean
   signedIn?: boolean
   seat?: number | null
-  override?: boolean
   host?: boolean
-  hostSeat?: number | null
-  hostUid?: string | null
-  presenceKnown?: boolean
-  hostPresent?: boolean
-  hostName?: string
+  deviceRole?: 'player' | 'spectator' | 'host'
 }): GameManager {
   return {
     isFirebaseGame: () => opts.firebase ?? true,
     getViewerSeatInfo: () => ({ signedIn: opts.signedIn ?? true, seat: opts.seat ?? null }),
-    isManualOverride: () => opts.override ?? false,
+    isManualOverride: () => false,
     isHost: () => opts.host ?? false,
-    // Default to a seated host (seat 0) so these cases exercise host-based gating; pass
-    // hostSeat: null explicitly for the unseated-host case.
-    getHostSeat: () => (opts.hostSeat === undefined ? 0 : opts.hostSeat),
-    // Default to a claimed host; pass hostUid: null for the no-host-at-all case.
-    getCurrentHostUid: () => (opts.hostUid === undefined ? 'host-uid' : opts.hostUid),
-    hasPresenceData: () => opts.presenceKnown ?? false,
-    isHostPresent: () => opts.hostPresent ?? true,
-    getHostName: () => opts.hostName ?? 'Alice',
+    getDeviceRole: () => opts.deviceRole ?? (opts.host ? 'host' : (opts.seat != null ? 'player' : 'spectator')),
+    getCurrentHostUid: () => (opts.host ? 'host-uid' : null),
     getFirebasePlayers: () => [],
     state: { teams: ['We', 'They'], players: ['A', 'B', 'C', 'D'] },
   } as unknown as GameManager
 }
 
 const PHASE = 'decision'
-const HAND = '12P C' // arbitrary; evaluateGating keys off phase + host, not the hand string
+const HAND = '12P C'
+const TAP_PHASES = ['bidder', 'bid', 'trump', 'decision', 'tricks']
 
-describe('evaluateGating — host-based model', () => {
+// The collision-safe model: the only thing gating decides is read-only vs. can-write. Any device
+// that can write (a seated player in player mode, or the host) may record ANY tap-flow step —
+// per-step ownership is gone, because concurrent writes resolve safely (see firebase-sync tests).
+describe('evaluateGating — collision-safe model', () => {
   it('applies no gating to a local (non-Firebase) game', () => {
     expect(evaluateGating(fakeGm({ firebase: false }), HAND, PHASE)).toBeNull()
   })
 
+  it('lets a seated player record every tap-flow step (no per-step ownership)', () => {
+    for (const phase of TAP_PHASES) {
+      expect(evaluateGating(fakeGm({ seat: 1 }), HAND, phase), `phase ${phase}`).toBeNull()
+    }
+  })
+
+  it('lets ANY seat pick trump, not only the bid winner', () => {
+    // hand[1]='2' -> bid winner is seat 1. Seat 0 may still record the trump; a collision with
+    // the bid winner is resolved safely, so there is no reason to block it.
+    expect(evaluateGating(fakeGm({ seat: 0 }), '12P', 'trump')).toBeNull()
+    expect(evaluateGating(fakeGm({ seat: 1 }), '12P', 'trump')).toBeNull()
+  })
+
   it('lets a SEATED host act in every phase', () => {
-    for (const phase of ['bidder', 'bid', 'trump', 'decision', 'tricks']) {
-      expect(evaluateGating(fakeGm({ host: true, seat: 0, hostSeat: 0 }), HAND, phase)).toBeNull()
+    for (const phase of TAP_PHASES) {
+      expect(evaluateGating(fakeGm({ host: true, seat: 0 }), HAND, phase), `phase ${phase}`).toBeNull()
     }
   })
 
-  // Phase 12C: metadata/currentHost may be held by someone with no seat — a laptop scoring for
-  // four phones — and the rules grant it write access. This is the configuration the whole phase
-  // exists to support, and it is the exact inverse of the Phase A behavior it replaces.
-  it('lets an UNSEATED current host administer every phase', () => {
-    for (const phase of ['bidder', 'bid', 'trump', 'decision', 'tricks']) {
-      expect(evaluateGating(fakeGm({ host: true, seat: null, hostSeat: null }), HAND, phase)).toBeNull()
+  it('lets an UNSEATED host administer every phase', () => {
+    for (const phase of TAP_PHASES) {
+      expect(evaluateGating(fakeGm({ host: true, seat: null }), HAND, phase), `phase ${phase}`).toBeNull()
     }
   })
 
-  // The 2026-07-19 incident: signed in, holding no seat, and NOT the host. No write access, so
-  // the tap flow must stay closed however the device got here.
-  it('treats a signed-in device that is neither seated nor host as a spectator', () => {
-    for (const phase of ['bidder', 'bid', 'trump', 'decision', 'tricks']) {
-      const block = evaluateGating(fakeGm({ host: false, seat: null, hostSeat: null }), HAND, phase)
-      expect(block).not.toBeNull()
-      expect(block!.spectator).toBe(true)
+  // The 2026-07-19 incident case: signed in, no seat, not host. No write access under the rules.
+  it('treats a signed-in device that is neither seated nor host as a read-only spectator', () => {
+    for (const phase of TAP_PHASES) {
+      const block = evaluateGating(fakeGm({ host: false, seat: null }), HAND, phase)
+      expect(block, `phase ${phase}`).not.toBeNull()
+      expect(block!.spectator, `phase ${phase}`).toBe(true)
     }
   })
 
-  it('ignores a stale manual override on a non-seated device (its writes are rejected)', () => {
-    const block = evaluateGating(fakeGm({ seat: null, override: true }), HAND, PHASE)
-    expect(block).not.toBeNull()
-    expect(block!.spectator).toBe(true)
-  })
-
-  // With no host claimed there is nobody to wait on, so seated players must not be blocked.
-  // The presence fallback cannot cover this — it would be waiting on a host that doesn't exist.
-  it('drops gating for seated players when NO host is claimed', () => {
-    const block = evaluateGating(
-      fakeGm({ host: false, seat: 1, hostUid: null, hostSeat: null, presenceKnown: true, hostPresent: true }),
-      HAND, PHASE)
-    expect(block).toBeNull()
-  })
-
-  it('lets any player act while manual override is on', () => {
-    expect(evaluateGating(fakeGm({ host: false, seat: 1, override: true }), HAND, PHASE)).toBeNull()
-  })
-
-  it('lets the bid winner pick their OWN trump (pepper auto-win), not just the host', () => {
-    // hand[1]='2' -> bid winner is seat index 1; that seat may pick trump without override.
-    expect(evaluateGating(fakeGm({ host: false, seat: 1 }), '12P', 'trump')).toBeNull()
-  })
-
-  it('blocks a non-bid-winner non-host from picking trump, naming the bid winner', () => {
-    const block = evaluateGating(fakeGm({ host: false, seat: 0 }), '12P', 'trump')
-    expect(block).not.toBeNull()
-    expect(block!.spectator).toBe(false)
-    expect(block!.responsibleName).toBe('B') // gm.state.players[1]
-    expect(block!.verb).toBe('pick trump')
-  })
-
-  it('still gates non-trump phases (decision) to the host even for the bid winner', () => {
-    // The bid winner is not special for decision/tricks — those stay the host's job.
-    const block = evaluateGating(fakeGm({ host: false, seat: 1, hostName: 'Bob' }), '12P', 'decision')
-    expect(block).not.toBeNull()
-    expect(block!.responsibleName).toBe('Bob')
-  })
-
-  it('blocks a signed-in non-host seated player, waiting on the host', () => {
-    const block = evaluateGating(fakeGm({ host: false, seat: 1, hostName: 'Bob' }), HAND, PHASE)
-    expect(block).not.toBeNull()
-    expect(block!.spectator).toBe(false)
-    expect(block!.responsibleName).toBe('Bob')
-    expect(block!.verb).toBe('record the play/fold decision')
-  })
-
-  it('drops gating when presence is known and the host is offline', () => {
-    const block = evaluateGating(
-      fakeGm({ host: false, seat: 1, presenceKnown: true, hostPresent: false }), HAND, PHASE)
-    expect(block).toBeNull()
-  })
-
-  it('keeps blocking when the host is present', () => {
-    const block = evaluateGating(
-      fakeGm({ host: false, seat: 1, presenceKnown: true, hostPresent: true }), HAND, PHASE)
-    expect(block).not.toBeNull()
-    expect(block!.spectator).toBe(false)
-  })
-
-  it('treats a signed-in non-seated viewer as a read-only spectator', () => {
-    const block = evaluateGating(fakeGm({ host: false, signedIn: true, seat: null }), HAND, PHASE)
-    expect(block).not.toBeNull()
-    expect(block!.spectator).toBe(true)
-  })
-
-  it('treats a signed-out device as read-only (rules forbid it writing anyway)', () => {
+  it('treats a signed-out device as read-only', () => {
     const block = evaluateGating(fakeGm({ signedIn: false }), HAND, PHASE)
     expect(block).not.toBeNull()
     expect(block!.spectator).toBe(true)
-    expect(block!.responsibleName).toBe('the host')
+  })
+
+  // Phase 12B role toggle: a seated player can opt this device out of recording.
+  it('makes a seated device in spectator mode read-only', () => {
+    const block = evaluateGating(fakeGm({ seat: 1, deviceRole: 'spectator' }), HAND, PHASE)
+    expect(block).not.toBeNull()
+    expect(block!.spectator).toBe(true)
+  })
+
+  // ...but the host role always outranks a stale spectator flag — holding host IS a recording role.
+  it('still lets the host act even if the device role reads spectator', () => {
+    expect(evaluateGating(fakeGm({ host: true, seat: 0, deviceRole: 'spectator' }), HAND, PHASE)).toBeNull()
   })
 })

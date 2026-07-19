@@ -594,15 +594,16 @@ export class FirebaseGameManager extends GameManager {
         // leave it unable to ever write again. Taking the server's value is both correct
         // (every other device sees it) and self-healing (the next write commits from it).
         this.applyRemoteState(result.snapshot.val() as GameState, true);
-        // Adopting the remote DISCARDS whatever local edit triggered this sync. That edit was
-        // built on a baseline the game has already moved past, so replaying it blindly would
-        // corrupt the hand — but losing it silently is how entries "just didn't show up" on the
-        // other devices. Say so; the player can re-enter against the current state.
-        this.setSyncError(
-          hadPendingEdit
-            ? 'Another device updated the game first — your last entry was not saved. Please re-enter it.'
-            : null
-        );
+        // A deferral means the remote already moved past the step we were entering — someone
+        // else (a player or the host) recorded it first. This is the EXPECTED outcome of two
+        // people acting at once, not a failure: the step is already filled, so there is nothing
+        // to re-enter. Surface it as a transient notice, not a persistent error, and make sure
+        // any stale error banner is cleared now that we are back in sync. This benign resolution
+        // is what lets gating relax to "anyone may record" — a lost race costs nothing.
+        this.setSyncError(null);
+        if (hadPendingEdit) {
+          this.emitSyncNotice('Someone else recorded that first — showing the latest.');
+        }
       }
     } catch (error) {
       // A rejected write used to be logged and forgotten, which is how a device could keep
@@ -637,6 +638,19 @@ export class FirebaseGameManager extends GameManager {
     if (this.lastSyncError === message) return;
     this.lastSyncError = message;
     if (this.syncErrorCallback) this.syncErrorCallback(message);
+  }
+
+  // Transient, benign notices (distinct from the persistent error channel above): "someone else
+  // recorded that first". These are expected in normal multi-writer play and should flash and
+  // fade, never latch. Not stored — there is no state to read back, only an event to show.
+  private syncNoticeCallback: ((_message: string) => void) | null = null;
+
+  public setSyncNoticeCallback(callback: (_message: string) => void): void {
+    this.syncNoticeCallback = callback;
+  }
+
+  private emitSyncNotice(message: string): void {
+    if (this.syncNoticeCallback) this.syncNoticeCallback(message);
   }
 
   // Best-effort bump of the game's lastUpdated timestamp (used by active-game listing
