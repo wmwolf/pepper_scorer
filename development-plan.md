@@ -700,15 +700,58 @@ implement, nothing to drift:
   Needs an explicit auction abort (clear `bidding`, mark the hand host-entered), with emulator
   coverage for the preempt-vs-reveal race.
 
+### NEXT BUILD — role-aware auction + host takeover (agreed 2026-07-19)
+
+This is the designated next work item. It has two tightly-related halves.
+
+**Motivation — a real information leak (confirmed in code 2026-07-19).** The auction is rendered
+off the viewer's *seat* (account), NOT their per-device role, so ANY device logged into a seated
+account shows that seat's *participant* view — including the trump selector, which opens the
+instant you bid (optimistic pre-commit, `renderAuction` "Bid logged ✓ — now choose your trump").
+On a SHARED display that is a leak: the selector appears for a bid and never for a pass, so its
+mere presence broadcasts "that player did not pass." Showing that a bid was *recorded* (masked
+"bid logged ✓", identical for bid and pass) is fine and public; the trump selector appearing is
+not. Today's only leak-free shared-display option is a non-seated account (must be the game
+CREATOR to also host, since only creator/seated may claim host).
+
+**Half 1 — role-aware auction rendering.** Make `auctionEligible()` / `renderAuction()` key on the
+device's role, not just its seat:
+- A device in **spectator or host** role renders the read-only spectator auction view (masked
+  reveal strip only — no bid pad, no trump selector) EVEN when its account holds a seat. Fixes the
+  leak: a seated player can host/spectate on a second device with no participant UI, and bid only
+  on their player-role device.
+- `auctionEligible()` requires every seat to have a present *player-role* device
+  (`allSeatsHavePlayerDevice()` exists). When a seat has none, DON'T run the concurrent auction —
+  fall back to host tap-flow bid entry (Half 2), so nothing stalls.
+- Note this fixes the leak WITHOUT needing per-device host tracking: keying auction *rendering* on
+  device role means the laptop (host role) is read-only while the phone (player role) plays, even
+  though `isHost()` stays account-level true on both. Per-device host is a separate UI cleanup.
+
+**Half 2 — host takeover of an ACTIVE auction (the clarified request, 2026-07-19).** Even while a
+concurrent auction is live, the host must be able to enter the outcome directly, exactly like the
+non-Firebase tap flow:
+- Host can select **bid winner**, then **winning bid** (if not a throw-in), then **trump** (if
+  there was a winning bid) — the same bidder/bid/trump tap-flow, available to the host on top of
+  the live auction.
+- The host's auction view shows the **auction progress** (the masked reveal strip) PLUS a note:
+  the host may declare the winner, which **ends the auction**. Choosing a winner (or "no one" =
+  throw-in) writes the hand directly and aborts the auction.
+- Implementation: on host takeover, clear/abort the `bidding` node and write the bidder+bid(+trump)
+  parts into the hand (reuse `applyAuctionToHand`'s path). This is the **explicit auction abort**
+  that Phase E needs anyway — it removes the 2.8s-reveal-delay race, because the host's decision is
+  authoritative and immediate rather than competing with a pending reveal.
+
+**Testing:** this touches the most concurrency-sensitive code, so it needs emulator coverage —
+role-aware rendering (a seated spectator/host device shows no participant UI), the player-mode
+eligibility fallback, and the host-takeover-aborts-auction path (host declares a winner mid-auction
+→ bidding cleared, hand written, no leaked reveal).
+
 ### Still open
 
 - **Auto host-promotion on disconnect** (Phase D remainder): on host presence-loss, promote in
   dealer order — `nextHostSeatInDealerOrder()` exists but nothing calls it. With no players signed
   in, pause.
-- **Auction eligibility from player-mode presence** (Phase D remainder): `auctionEligible()` should
-  require all four seats to have a present *player-mode* device (`allSeatsHavePlayerDevice()`
-  exists), so a table where some players spectate falls back to host/tap-flow entry cleanly.
-- **Hybrid preemption + auction abort** (Phase E, above).
+- **Auction eligibility + hybrid preemption** — folded into the NEXT BUILD above (Halves 1 and 2).
 - **Undo lockout** (agreed design): host-only when a host is present; else any player, gated by a
   DB lockout + confirmation modal. Build after auto-promotion so it can key off "is there a host".
 - **Series advance gating** (agreed design, not built): host-only when a host is present; else a
