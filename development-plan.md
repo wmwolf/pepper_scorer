@@ -494,7 +494,13 @@ the player left of the dealer). On top of that sits an **optimistic pre-commit l
   protecting `metadata`). Reconcile this when writing `database.rules.json`.
 
 #### Production Features:
-- **Progressive Web App + offline: DONE (2026-07-12, implemented & browser-verified; not yet
+
+**Status (2026-07-19):** Error monitoring is **deployed to `main` and live**. PWA/offline and
+data export are **built and parked on branch `phase-11-pwa-and-export`** (off `main`, not deployed)
+until the Phase 12 multiplayer work settles — a service worker caching `_astro/*` during active
+multiplayer iteration would muddy debugging with stale bundles. Resume by merging that branch.
+
+- **Progressive Web App + offline: BUILT, PARKED on branch `phase-11-pwa-and-export` (not
   deployed).** Static `public/manifest.webmanifest` using **relative** URLs so `scope`/`start_url`/
   icons resolve correctly under both dev (`/`) and the Pages sub-path (`/pepper_scorer/`) with no
   build-time templating. Icons in `public/icons/` (192/512 `any maskable` + apple-touch + svg),
@@ -510,17 +516,20 @@ the player left of the dealer). On top of that sits an **optimistic pre-commit l
   **PROD-gated** (never registers under `astro dev` — test via `astro build` + `astro preview`).
   Verified: SW scope correct, manifest loads, precache+warm populate, and with the server killed the
   app reloads fully styled offline. **Treat the first prod deploy as a watched rollout.**
-- **Error monitoring: DONE (scaffolded, no-op until configured).** `src/lib/monitoring.ts` gates
+- **Error monitoring: DEPLOYED to `main` and LIVE (2026-07-19).** `src/lib/monitoring.ts` gates
   entirely on `PUBLIC_SENTRY_DSN` — when unset the Sentry SDK is never imported (Vite dead-code-
   eliminates the branch, so ZERO bytes ship); when set it dynamic-imports `@sentry/browser`, inits
   error-only capture (+ `captureConsoleIntegration` for `console.error`, no tracing/replay).
-  `PUBLIC_SENTRY_DSN`/`PUBLIC_SENTRY_RELEASE` added to `.env.example` and the Pages workflow (release
-  = `github.sha`). **TODO (user): create a Sentry project, add `PUBLIC_SENTRY_DSN` as a repo secret.**
-- **Data backup/export: DONE (2026-07-12).** Account page "Backup & Export" card:
-  `exportUserData` (read-only over `userGames`/`games`/`users` — no rules change) downloads a JSON
-  backup of all games + profile; import parses/validates a backup, previews the games, and can
-  restore one to THIS device (localStorage, local-only — never writes to the cloud). Logic in
-  `src/lib/data-export.ts`; unit-tested (`tests/unit/data-export.test.ts`, 8 tests).
+  `PUBLIC_SENTRY_DSN`/`PUBLIC_SENTRY_RELEASE` in `.env.example` and the Pages workflow (release =
+  `github.sha`). The user created the Sentry project and added `PUBLIC_SENTRY_DSN` as a repo secret,
+  so it is active in production. Uses `@sentry/browser` directly, NOT the `@sentry/astro` SSR
+  integration (which does not fit a static Pages deploy). Optional later: source-map upload (the
+  `SENTRY_AUTH_TOKEN` secret already exists) for readable minified stack traces.
+- **Data backup/export: BUILT, PARKED on branch `phase-11-pwa-and-export`.** Account page "Backup &
+  Export" card: `exportUserData` (read-only over `userGames`/`games`/`users` — no rules change)
+  downloads a JSON backup of all games + profile; import parses/validates a backup, previews the
+  games, and can restore one to THIS device (localStorage, local-only — never writes to the cloud).
+  Logic in `src/lib/data-export.ts`; unit-tested (`tests/unit/data-export.test.ts`, 8 tests).
 - Performance optimization — DEFERRED (no evidence of a problem yet).
 
 #### Firebase Emulator Test Harness (do alongside the security rules)
@@ -573,23 +582,27 @@ any automated path.
 
 ## Recommended sequencing (updated 2026-07-19)
 
-Status: Phases 1–9 done; **Phase 11 security deployed**; Phase 11 production polish (PWA, Sentry,
-export) **built but not yet deployed** (uncommitted on this machine as of 2026-07-19 — see the
-Production Features section). Phase 12 (multiplayer role model) **A–D done and merged**; D-remainder
-and E open (see Phase 12 "Still open"). Remaining major work: Phase 10, Phase 11 rollout, Phase 12 D/E.
+Status: Phases 1–9 done; **Phase 11 security deployed**; **Phase 11 error monitoring (Sentry)
+deployed to `main` and live** (2026-07-19); Phase 11 **PWA/offline + data export parked on branch
+`phase-11-pwa-and-export`** (not deployed). Phase 12 (multiplayer role model) **A–D done and
+merged**; the five-user topology (four players + one unseated host) is emulator-verified
+(`tests/emulator/five-user-game.test.ts`). Remaining major work: Phase 12 "NEXT BUILD"
+(role-aware auction + host takeover), Phase 12 D/E remainder, Phase 11 PWA rollout, Phase 10.
 
 Recommended order from here:
 
-1. **Real-device QA.** The concurrent auction and now the whole role model (host claim, per-device
-   spectate, collision-safe entry) are proven headlessly (emulator) but under-exercised on real
-   signed-in devices. One real multi-device pass against the live DB is the cheapest way to surface
-   what the emulator can't (Google auth, presence/onDisconnect timing, multi-device latency).
-2. **Phase 11 production rollout.** The PWA/SW, Sentry scaffold, and export are built and
-   browser-verified; commit, deploy, and watch the first PWA rollout (GH-Pages HTML-staleness note
-   in the Production Features section).
-3. **Phase 12 D-remainder + E** — auto host-promotion, auction eligibility from player-mode
-   presence, hybrid preemption abort, undo lockout (see Phase 12 "Still open").
-4. **Phase 10 — Advanced Statistics & Historical Analysis.** Largest and most independent; benefits
+1. **Real-device QA** (in progress). The whole role model (host claim, per-device spectate,
+   collision-safe entry) is proven headlessly but under-exercised on real signed-in devices; the
+   fifth-account-hosts-on-the-laptop setup is the current test vehicle. Surface what the emulator
+   can't (Google auth, presence/onDisconnect timing, multi-device latency).
+2. **Phase 12 "NEXT BUILD"** — role-aware auction (closes the trump-selector leak so a seated
+   player can host/spectate on a second device) + host takeover of an active auction. Highest
+   user-facing value; unblocks the single-account two-device flow. See the section above.
+3. **Phase 12 D/E remainder** — auto host-promotion, undo lockout, series-advance gating.
+4. **Phase 11 PWA rollout** — merge `phase-11-pwa-and-export`, deploy, watch the first PWA rollout
+   (GH-Pages HTML-staleness note in the Production Features section). Do after the multiplayer work
+   settles, so a caching layer doesn't complicate multiplayer debugging.
+5. **Phase 10 — Advanced Statistics & Historical Analysis.** Largest and most independent; benefits
    from more real games existing first.
 
 Cross-cutting follow-ups to schedule opportunistically: the deferred **mixed phone/non-phone**
