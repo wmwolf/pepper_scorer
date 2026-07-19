@@ -82,6 +82,10 @@ jobs:
           # OAuth Web client ID for Google Identity Services sign-in (iOS Safari fix). When unset,
           # the app falls back to the popup/redirect flow.
           PUBLIC_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.PUBLIC_GOOGLE_OAUTH_CLIENT_ID }}
+          # Sentry DSN for optional client error monitoring. When unset, the Sentry SDK is never
+          # loaded and monitoring is a no-op (see src/lib/monitoring.ts).
+          PUBLIC_SENTRY_DSN: ${{ secrets.PUBLIC_SENTRY_DSN }}
+          PUBLIC_SENTRY_RELEASE: ${{ github.sha }}
         run: |
           ${{ steps.detect-package-manager.outputs.runner }} astro build \
             --site "${{ steps.pages.outputs.origin }}" \
