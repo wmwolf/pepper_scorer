@@ -116,6 +116,46 @@ import { getPath } from '../lib/path-utils';
         </div>
       </div>
 
+      <!-- Backup & Export (Phase 11) -->
+      <div class="bg-white shadow-sm rounded-lg p-6">
+        <h2 class="text-2xl font-bold text-gray-900 mb-6">Backup &amp; Export</h2>
+
+        <div class="space-y-6">
+          <!-- Export -->
+          <div>
+            <h3 class="text-lg font-medium text-gray-900 mb-2">Download your games</h3>
+            <p class="text-gray-600 text-sm mb-4">
+              Save a JSON backup of all your games (active and completed) and profile to this device.
+            </p>
+            <button
+              id="export-games-btn"
+              class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+            >
+              Download my games (JSON)
+            </button>
+            <p id="export-status" class="text-sm mt-2 hidden"></p>
+          </div>
+
+          <!-- Import -->
+          <div class="border-t border-gray-200 pt-6">
+            <h3 class="text-lg font-medium text-gray-900 mb-2">Restore from a backup</h3>
+            <p class="text-gray-600 text-sm mb-4">
+              Load a backup file to review a game on this device. This opens the game locally and
+              does not change your cloud games.
+            </p>
+            <label
+              for="import-file-input"
+              class="inline-flex items-center px-4 py-2 bg-gray-100 text-gray-800 border border-gray-300 rounded-md hover:bg-gray-200 cursor-pointer transition-colors"
+            >
+              Choose backup file…
+            </label>
+            <input id="import-file-input" type="file" accept="application/json,.json" class="hidden" />
+            <p id="import-status" class="text-sm mt-2 hidden"></p>
+            <div id="import-games-list" class="mt-4 space-y-3"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Game Cleanup Section -->
       <div class="bg-white shadow-sm rounded-lg p-6">
         <h2 class="text-2xl font-bold text-gray-900 mb-6">Cleanup</h2>
@@ -219,6 +259,7 @@ import { getPath } from '../lib/path-utils';
 import { onAuthStateChange, getCurrentUser, getDisplayName, updateDisplayName, resetDisplayNameToGoogle } from '../lib/auth';
 import { FirebaseGameManager } from '../lib/firebaseGameState';
 import { subscribeToInvitations, acceptInvitation, declineInvitation } from '../lib/invitations';
+import { exportUserData, downloadBackup, parseBackup, describeBackupGame, restoreGameLocally } from '../lib/data-export';
 import { getPath } from '../lib/path-utils';
 
 let currentUser = null;
@@ -552,6 +593,88 @@ document.addEventListener('DOMContentLoaded', async () => {
       alert('Error resetting display name. Please try again.');
       resetDisplayNameBtn.disabled = false;
       resetDisplayNameBtn.textContent = 'Reset to Google account name';
+    }
+  });
+
+  // --- Backup & Export (Phase 11) ---
+  const exportBtn = document.getElementById('export-games-btn');
+  const exportStatus = document.getElementById('export-status');
+  const showExportStatus = (msg, ok) => {
+    if (!exportStatus) return;
+    exportStatus.textContent = msg;
+    exportStatus.className = `text-sm mt-2 ${ok ? 'text-green-600' : 'text-red-600'}`;
+    exportStatus.classList.remove('hidden');
+  };
+
+  exportBtn?.addEventListener('click', async () => {
+    if (!currentUser) return;
+    try {
+      exportBtn.disabled = true;
+      exportBtn.textContent = 'Preparing…';
+      const backup = await exportUserData(currentUser.uid);
+      if (!backup) {
+        showExportStatus('Cloud backup is unavailable right now. Please try again later.', false);
+      } else {
+        downloadBackup(backup);
+        showExportStatus(`Downloaded ${backup.games.length} game(s).`, true);
+      }
+    } catch (error) {
+      console.error('Error exporting games:', error);
+      showExportStatus('Something went wrong exporting your games. Please try again.', false);
+    } finally {
+      exportBtn.disabled = false;
+      exportBtn.textContent = 'Download my games (JSON)';
+    }
+  });
+
+  // Import: parse a backup file and let the user open a game locally.
+  const importInput = document.getElementById('import-file-input');
+  const importStatus = document.getElementById('import-status');
+  const importList = document.getElementById('import-games-list');
+  const showImportStatus = (msg, ok) => {
+    if (!importStatus) return;
+    importStatus.textContent = msg;
+    importStatus.className = `text-sm mt-2 ${ok ? 'text-green-600' : 'text-red-600'}`;
+    importStatus.classList.remove('hidden');
+  };
+
+  importInput?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (importList) importList.innerHTML = '';
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const backup = parseBackup(text);
+      if (!backup.games.length) {
+        showImportStatus('That backup has no games in it.', false);
+        return;
+      }
+      showImportStatus(`Found ${backup.games.length} game(s) in this backup.`, true);
+      backup.games.forEach((game) => {
+        const info = describeBackupGame(game);
+        const row = document.createElement('div');
+        row.className = 'flex justify-between items-center gap-3 border border-gray-200 rounded-lg p-3';
+        row.innerHTML = `
+          <div class="min-w-0">
+            <p class="font-medium text-gray-900 truncate">${info.teams}</p>
+            <p class="text-sm text-gray-600">Score: ${info.score} · ${info.hands} hand(s) · ${info.status}${info.date ? ' · ' + info.date : ''}</p>
+          </div>
+          <button class="open-local-btn px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 shrink-0">Open on this device</button>
+        `;
+        row.querySelector('.open-local-btn')?.addEventListener('click', () => {
+          const proceed = confirm('Open this game on this device? It will replace any game currently in progress on this device (your cloud games are unaffected).');
+          if (!proceed) return;
+          restoreGameLocally(game);
+          window.location.href = getPath('/game');
+        });
+        importList?.appendChild(row);
+      });
+    } catch (error) {
+      console.error('Error importing backup:', error);
+      showImportStatus(error instanceof Error ? error.message : 'Could not read that file.', false);
+    } finally {
+      // Reset the input so re-selecting the same file fires `change` again.
+      if (importInput) importInput.value = '';
     }
   });
 

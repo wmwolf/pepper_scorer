@@ -21,6 +21,13 @@ const {
     <meta name="description" content={description} />
     <title>{title} | Pepper Scorer</title>
     <link rel="icon" type="image/svg+xml" href={getPath('favicon.svg')} />
+    <!-- PWA: installability + app-shell offline support -->
+    <link rel="manifest" href={getPath('manifest.webmanifest')} />
+    <meta name="theme-color" content="#2563eb" />
+    <link rel="apple-touch-icon" href={getPath('icons/apple-touch-icon.png')} />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Pepper" />
   </head>
   <body class="min-h-screen bg-gray-50 flex flex-col">
     <NavbarWithPattern />
@@ -234,10 +241,14 @@ const {
     <script>
       // Initialize Firebase when DOM is loaded
       import { initializeFirebase } from '../lib/firebase';
+      import { registerServiceWorker } from '../lib/register-sw';
       import { initMonitoring } from '../lib/monitoring';
 
       // Start error monitoring as early as possible (no-op unless PUBLIC_SENTRY_DSN is set).
       initMonitoring();
+
+      // Register the app-shell service worker (no-op in dev; PROD build only).
+      registerServiceWorker();
 
       document.addEventListener('DOMContentLoaded', () => {
         // Initialize Firebase
