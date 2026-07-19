@@ -21,14 +21,8 @@ Pepper Scorer is an Astro-based web application for scoring the card game Pepper
 - **Turn gating (multiplayer):** `game.ts` `evaluateGating()` is **collision-safe / permissive** (rewritten 2026-07-19, Phase 12D). It decides ONLY read-only vs. can-write; it does NOT assign steps to seats. Any **seated player in player mode** OR the **host** may record ANY tap-flow step (bidder/bid/trump/decision/tricks) — there is no per-step ownership and no "trump exception" anymore. A device is read-only when signed-out, in **spectator mode** (the Phase 12B per-device role, even if seated), or signed-in-but-neither-seated-nor-host. The **host** is `metadata/currentHost` (claimable, need NOT be seated — see below), NOT `createdBy`. Concurrent writes are SAFE: `syncToFirebase`'s version compare-and-set lets exactly one win; the loser re-syncs and gets a benign TRANSIENT notice (`setSyncNoticeCallback`, "someone recorded that first"), distinct from the persistent error banner (permission/network). This safety is what lets gating be permissive — do NOT reintroduce hard per-seat/per-step blocks. The concurrent auction (all four signed in) is still per-seat, handled before gating by `auctionEligible()`/`renderAuction`. Manual-override survives only to force tap-flow entry instead of the auction (`auctionEligible` returns false when it's on).
 - **Host role (Phase 12C):** `metadata/currentHost` names the one account administering the game — seeded to the creator at creation, claimable by any seated player or the creator via `claimHost()` (a transaction; takeover allowed, one at a time), released via `releaseHost()`. It may be **unseated** (a laptop scoring for four phones — the case the whole phase exists for), and the rules grant it write access accordingly. `isHost()` reads `currentHost`; `getCreatorUid()`/`createdBy` is the immutable "who may claim". A live listener on `currentHost` re-renders so a device that loses the role stops offering controls. **Presence is per-device (Phase 12B):** `presence/$uid/$deviceId → {mode,ts}`; `parsePresence` reads both this and the legacy `presence/$uid → true` shape. `seatHasPlayerDevice()`/`allSeatsHavePlayerDevice()`/`nextHostSeatInDealerOrder()` exist for the not-yet-wired Phase D auto-promotion + auction-eligibility work.
 - **RTDB `undefined` footgun (bit us more than once):** RTDB `set()` REJECTS objects containing `undefined` and fails the WHOLE write, and it DROPS empty objects/arrays (so they read back `undefined`). Always strip `undefined` before writing (e.g. `JSON.parse(JSON.stringify(x))` — done in profile save + game creation) and default empties on read (e.g. `normalizeAuction` restores `entries`/`order`, without which the auction UI froze).
-- **Roadmap**: `development-plan.md` is the source of truth for phase status and remaining work. Firebase security rules are version-controlled in `database.rules.json` and **deployed** to project `pepper-scorer` (last redeploy 2026-07-19 for the host claim) — game creation gated to `createdBy`; `gameState`/`bidding` writable by seated players **OR the current host** (`metadata/currentHost`); `metadata` immutable except `status`/`lastUpdated`/`seriesId`/`currentHost` (the last claimable by seated players or the creator); `presence/$uid` self-write only (per-device children); `series`/`userGames` auth-gated. **User data is split to prevent email mining (2026-07-11):** `/users/$uid` is self-read+self-write only (email/stats private); a PII-free `/directory/$uid` (`{uid, username, displayName, photoURL}`) is auth-gated readable + self-write, and is what the roster search (`searchUsers`) reads. `createOrUpdateUser`/display-name edits mirror the public subset via `syncDirectoryEntry`; search matches username+display-name only (never email). Do NOT reintroduce a broad `/users` read or put email in `/directory`. Edit `database.rules.json` and re-run `firebase deploy --only database` to change them. (The real project id is `pepper-scorer`; an early typo wrote `pepper-score` in `.env`/`.firebaserc` — both fixed.)
-- **Firebase emulator tests**: `npm run test:emulator` (needs a real Java runtime; wraps `emulators:exec --only auth,database`) runs `tests/emulator/` — rules coverage via `@firebase/rules-unit-testing` plus an end-to-end concurrent-auction flow across 4 anonymously-authenticated clients (real per-seat transactions under the real rules). Kept OUT of the fast `npm run test:run`; runs in the CI `emulator` job. `src/pages/dev-auction.astro` is a dev-only visual harness for driving the auction against the local emulators. Emulator gotchas: the RTDB namespace is `<project>-default-rtdb` (a `?ns=` override splits namespaces), and `runTransaction` needs an active `onValue` listener or its optimistic first pass sees `null` and aborts.
-
-### State Management
-- Game state is managed through the `GameManager` class with immutable operations
-- Persistent storage via `localStorage` with JSON serialization
-- Support for both single games and multi-game series
-- Complex undo system that handles different game phases appropriately
+- **Security rules & emulator tests**: rules are version-controlled in `database.rules.json`, **deployed** to project `pepper-scorer`, and writable by seated players or the current host (see host-role note above). Emulator tests run via `npm run test:emulator` (needs Java; kept out of the fast `test:run`, runs in the CI `emulator` job). **Full detail — rules layout, the PII-safe user/directory split, deploy command, and emulator gotchas — is in `FIREBASE_NOTES.md`. Read it before touching rules or emulator setup.**
+- **Roadmap**: `development-plan.md` is the source of truth for phase status and remaining work.
 
 ### Game Phases
 The game follows a structured progression through phases:
@@ -58,39 +52,22 @@ by **weighted-random among the ELIGIBLE** ones (`AWARD_WEIGHTS` favors rarer/not
 and every refresh — shows the SAME awards while different games vary. Do NOT reintroduce the old
 "first-eligible-per-bucket, then break" walk — it structurally starved most awards.
 
-## Build Commands
-- `npm install` - Install dependencies
-- `npm run dev` - Start dev server at localhost:4321 (DO NOT run this as dev server is always running)
-- `npm run build` - Build production site to ./dist/
-- `npm run preview` - Preview production build locally
-
-## Code Quality Checks
-- `npm run typecheck` (`tsc --noEmit`) - Check TypeScript types
-- `npm run lint` (`eslint src/**/*.ts`) - Run ESLint checks on TypeScript files
-- `npm run test:run` (`vitest run`) - Run the full unit + integration test suite once
+## Commands
+- `npm install` — install dependencies
+- `npm run dev` — dev server at localhost:4321 (DO NOT run — the dev server is always running)
+- `npm run build` / `npm run preview` — production build to ./dist/ and preview
+- **Before committing, run all three:** `npm run typecheck && npm run lint && npm run test:run`
+  (types via `tsc --noEmit`, ESLint on `src/**/*.ts`, full unit+integration suite via `vitest run`).
+  Watch for: unused vars, possibly-undefined property/array access, missing type annotations.
+- `npm run test:emulator` — Firebase rules/wiring tests (needs Java; see `FIREBASE_NOTES.md`).
 
 ## Testing
 - **Framework**: Vitest (`vitest.config.ts`, node environment, `tests/setup.ts` mocks `window`/`getPath`).
 - **Layout**: `tests/unit/` (GameManager, awards, statistics) and `tests/integration/` (full game/series/undo/persistence/awards flows).
 - **`tests/helpers/gameActions.ts`**: a semantic layer (`setBidder`/`setBid`/`setTrump`/`setDecision`/`setTricks` + phase/accessor helpers) over the raw `addHandPart` encoding. Prefer these when writing integration tests.
 - **CI**: `.github/workflows/test.yml` runs typecheck + lint + build + tests on every PR and on pushes to `main`. Keep it green.
-- Tests drive `GameManager`/awards/stats directly; `game.ts` (DOM) and the Firebase layer are NOT covered by the suite.
-
-## Pre-Commit Quality Assurance
-Run these before committing to catch type errors, lint issues, and regressions:
-```bash
-npm run typecheck && npm run lint && npm run test:run
-```
-
-Common issues to watch for:
-- Unused variables (disable ESLint warnings only when variable will be used later)
-- Possible undefined values when accessing object properties or array indices  
-- Missing type annotations for function parameters and return values
-
-## LaTeX Commands (in rules directory)
-- `pdflatex rules.tex` - Generate PDF from LaTeX
-- `latexmk -pdf rules.tex` - Compile LaTeX with dependencies
-- `pandoc -o rules.md rules.tex` - Convert LaTeX to Markdown
+- Tests drive `GameManager`/awards/stats directly; `game.ts` (DOM) and most of the Firebase layer are covered only by the emulator suite (`tests/emulator/`), not the fast unit suite.
+- Game rules (LaTeX) build commands: see `rules/README.md`.
 
 ## Important Development Patterns
 
@@ -132,21 +109,6 @@ Common issues to watch for:
 - Use `isPepperRound(handIndex)` to check if special rules apply
 - Pepper rounds have automatic bidding progression and forced play/fold decisions
 
-## Code Style Guidelines
-- **TypeScript**: Use strict typing with interfaces/types for all data structures
-- **Imports**: Group external libraries first, then local modules with blank line separator  
-- **Path Aliases**: Use `@/` for imports from src directory (configured in astro.config.mjs)
-- **Naming**: camelCase for variables/functions, PascalCase for classes/interfaces/types
-- **Error Handling**: Use null checks before accessing properties, especially for DOM elements
-- **State Management**: Persist critical data in localStorage, pass transient state via props
-- **Comments**: Add comments for complex game logic or non-obvious implementations
-
-## Project Organization
-- `/src/lib/` - Core application logic and utility functions
-- `/src/components/` - Reusable Astro UI components  
-- `/src/layouts/` - Page layout templates
-- `/src/pages/` - Page routes (index.astro for setup, game.astro for gameplay)
-- `/rules/` - Game rules documentation in LaTeX and generated Markdown
-
-## Development Best Practices
-- Remember to run tests often when making changes to the codebase.
+## Code Style
+- Match the surrounding code. Path alias `@/` maps to `src/` (astro.config.mjs). camelCase for
+  values, PascalCase for types/classes. Null-check DOM lookups. Run tests often.
