@@ -35,6 +35,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <span id="host-chip-text" class="flex-1"></span>
     <button id="host-claim-btn" class="hidden px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">Take over as host</button>
     <button id="host-release-btn" class="hidden px-2 py-1 text-xs bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition-colors">Stop hosting</button>
+    <!-- Per-device role toggle (Phase 12B): opt this device out of recording without leaving. -->
+    <button id="role-spectate-btn" class="hidden px-2 py-1 text-xs bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition-colors">👀 Spectate on this device</button>
+    <button id="role-play-btn" class="hidden px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">🎴 Record on this device</button>
   </div>
 
   <!-- Sync failure banner. A rejected write used to be logged to the console and forgotten, so a
@@ -42,6 +45,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <div id="sync-error-banner" class="hidden mb-4 px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-red-800 text-sm flex items-start gap-2">
     <span aria-hidden="true">⚠️</span>
     <span id="sync-error-text" class="flex-1"></span>
+  </div>
+
+  <!-- Transient sync notice (Phase 12): benign multi-writer events like "someone recorded that
+       first". Flashes and fades — distinct from the persistent error banner above. -->
+  <div id="sync-notice" class="hidden mb-4 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-sm flex items-center gap-2 transition-opacity duration-500">
+    <span aria-hidden="true">ℹ️</span>
+    <span id="sync-notice-text" class="flex-1"></span>
   </div>
 
   <!-- Room Code (Phase 8): shareable code so others can join this game -->
@@ -567,8 +577,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         const name = players[seat]?.displayName || firebaseGame.state.players[seat] || 'You';
         const teamIndex = teamOfSeat(seat);
         const teamName = firebaseGame.state.teams[teamIndex] || `Team ${teamIndex + 1}`;
+        // A seated player who set this device to spectate is watching, not recording — say so.
+        const role = firebaseGame.getDeviceRole ? firebaseGame.getDeviceRole() : 'player';
+        const watching = role === 'spectator' && !firebaseGame.isHost();
         badge.className = 'mb-4 px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-sm flex items-center gap-2';
-        badge.innerHTML = `<span>🎴</span><span>You are <strong>${name}</strong> · Seat ${seat + 1} · ${teamName}</span>`;
+        badge.innerHTML = `<span>${watching ? '👀' : '🎴'}</span><span>You are <strong>${name}</strong> · Seat ${seat + 1} · ${teamName}${watching ? ' · watching on this device' : ''}</span>`;
       };
 
       // Who is administering the game, and the control to take it over / give it up.
@@ -585,7 +598,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         const text = document.getElementById('host-chip-text');
         const claimBtn = document.getElementById('host-claim-btn');
         const releaseBtn = document.getElementById('host-release-btn');
-        if (!chip || !text || !claimBtn || !releaseBtn) return;
+        const spectateBtn = document.getElementById('role-spectate-btn');
+        const playBtn = document.getElementById('role-play-btn');
+        if (!chip || !text || !claimBtn || !releaseBtn || !spectateBtn || !playBtn) return;
 
         const user = getCurrentUser();
         if (!user) { chip.classList.add('hidden'); return; }
@@ -593,20 +608,30 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
         const hostUid = firebaseGame.getCurrentHostUid();
         const iAmHost = firebaseGame.isHost();
+        const seated = firebaseGame.getMySeat() !== null;
+        const role = firebaseGame.getDeviceRole ? firebaseGame.getDeviceRole() : 'player';
 
         if (!hostUid) {
           text.textContent = 'No host — any seated player can record.';
         } else if (iAmHost) {
-          text.textContent = 'You are hosting — you record every decision.';
+          text.textContent = 'You are hosting — you record for the table.';
         } else {
           const who = displayNameForUid(hostUid) || 'someone else';
-          text.textContent = `${who} is hosting.`;
+          text.textContent = role === 'spectator'
+            ? `${who} is hosting. This device is watching only.`
+            : `${who} is hosting — you can still record.`;
         }
 
         // Takeover is allowed by design (one host at a time), so the claim button stays
         // available to anyone eligible even while someone else holds it.
         claimBtn.classList.toggle('hidden', iAmHost || !firebaseGame.canClaimHost());
         releaseBtn.classList.toggle('hidden', !iAmHost);
+
+        // The spectate/record toggle applies to any signed-in device that could otherwise record
+        // (a seated player, or a host). A pure onlooker with no seat has nothing to toggle.
+        const canRecord = seated || iAmHost;
+        spectateBtn.classList.toggle('hidden', !canRecord || iAmHost || role === 'spectator');
+        playBtn.classList.toggle('hidden', !canRecord || role !== 'spectator');
       };
 
       document.getElementById('host-claim-btn')?.addEventListener('click', async () => {
@@ -617,6 +642,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       document.getElementById('host-release-btn')?.addEventListener('click', async () => {
         await firebaseGame.releaseHost();
         renderHostChip();
+        if (typeof window.updateUI === 'function') window.updateUI();
+      });
+      document.getElementById('role-spectate-btn')?.addEventListener('click', () => {
+        firebaseGame.setDeviceRole?.('spectator');
+        renderHostChip();
+        renderPlayerIdentity();
+        if (typeof window.updateUI === 'function') window.updateUI();
+      });
+      document.getElementById('role-play-btn')?.addEventListener('click', () => {
+        firebaseGame.setDeviceRole?.('player');
+        renderHostChip();
+        renderPlayerIdentity();
         if (typeof window.updateUI === 'function') window.updateUI();
       });
 
@@ -672,6 +709,25 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           if (!banner || !text) return;
           banner.classList.toggle('hidden', !message);
           if (message) text.textContent = message;
+        });
+      }
+
+      // Transient notices ("someone recorded that first"): flash for a few seconds, then fade.
+      // These are the expected shape of two people scoring at once, so they must not alarm.
+      if (firebaseGame.setSyncNoticeCallback) {
+        let noticeTimer = null;
+        firebaseGame.setSyncNoticeCallback((message) => {
+          const el = document.getElementById('sync-notice');
+          const text = document.getElementById('sync-notice-text');
+          if (!el || !text) return;
+          text.textContent = message;
+          el.classList.remove('hidden');
+          el.style.opacity = '1';
+          if (noticeTimer) clearTimeout(noticeTimer);
+          noticeTimer = setTimeout(() => {
+            el.style.opacity = '0';
+            setTimeout(() => el.classList.add('hidden'), 500);
+          }, 3500);
         });
       }
 

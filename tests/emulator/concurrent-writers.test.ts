@@ -118,17 +118,20 @@ describe('two seated devices writing the same hand', () => {
     await flush()
     expect(await remoteHands(gameId)).toEqual(['12P'])
 
-    // Now Bob enters his trump from the stale baseline.
+    // Now Bob enters his trump from the stale baseline. His step ('C' onto '1') is no longer the
+    // current one — the hand is already at '12P' awaiting a decision. The write must not be lost
+    // in silence: Bob's device re-syncs to the real state and flashes a benign notice. (In the
+    // collision-safe model this is the norm, not a failure — the notice channel, not the error.)
+    let notices = 0
+    bobGm.setSyncNoticeCallback(() => { notices++ })
     await signIn('bob@test.dev')
     bobGm.addHandPart('C')
     await flush()
 
-    // Either the trump landed, or the device knows it failed. Silently losing it is the bug.
-    const hands = await remoteHands(gameId)
-    const landed = hands[0] === '12PC'
-    expect(
-      landed || bobGm.getLastSyncError() !== null,
-      `trump silently lost: remote=${JSON.stringify(hands)}, error=${bobGm.getLastSyncError()}`,
-    ).toBe(true)
+    // Bob's stale write did not corrupt the hand, and he was told.
+    expect(await remoteHands(gameId)).toEqual(['12P'])
+    expect(bobGm.getCurrentHand()).toBe('12P')       // re-synced to the truth
+    expect(notices).toBeGreaterThan(0)
+    expect(bobGm.getLastSyncError()).toBeNull()      // benign, not a persistent error
   })
 })
