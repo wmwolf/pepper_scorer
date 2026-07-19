@@ -36,6 +36,7 @@ interface MultiplayerManager {
   // Host-based gating: the creator may enter every decision; others wait + override.
   isHost?(): boolean;
   getHostName?(): string;
+  getHostSeat?(): number | null;
   isHostPresent?(): boolean;
   // Auction (8b concurrent-entry redesign)
   getAuction(): AuctionState | null;
@@ -85,7 +86,9 @@ function hostVerbForPhase(phase: string): string {
 // hand) — every other decision (bidder/bid/decision/tricks) is the host's. Other signed-in
 // players wait with a manual-override escape hatch. The concurrent auction (all four signed in)
 // is handled earlier by auctionEligible()/renderAuction, so this only governs the tap flow.
-// Returns null when no gating applies (local game, host, the bid winner picking trump, override).
+// Returns null when no gating applies (local game, host, the bid winner picking trump, override,
+// or a game whose creator isn't seated). Seat is checked BEFORE host: only the four seated uids
+// can write under the security rules, so a non-seated creator is a spectator, not a host.
 export function evaluateGating(gm: GameManager, currentHand: string, phase: string): GatingBlock | null {
   const mp = asMultiplayer(gm);
   if (!mp) return null;                 // local game — full control
@@ -99,20 +102,33 @@ export function evaluateGating(gm: GameManager, currentHand: string, phase: stri
     return { spectator: true, responsibleName: 'the host', verb, arrow: '', directionText: '' };
   }
 
+  // Signed-in but NOT seated: read-only, and this MUST be decided before the host and
+  // manual-override checks below. The security rules grant gameState/bidding writes only to the
+  // four seated uids (database.rules.json), so a non-seated viewer's writes are rejected no
+  // matter what role it thinks it has. A game's creator is NOT necessarily seated — a fifth
+  // account can create a game and hand out the room code — and letting that non-seated host into
+  // the tap flow produced silently-failing writes and a permanently diverged local state.
+  if (seat === null) {
+    return { spectator: true, responsibleName: 'the players', verb, arrow: '', directionText: '' };
+  }
+
   if (mp.isManualOverride()) return null;
 
-  // The host can enter everything.
+  // An UNSEATED host can't record anything (see above), so host-based gating would leave every
+  // seated player waiting forever on someone whose writes the rules reject — and the presence
+  // fallback won't save them, because that host is online, just powerless. When the creator
+  // isn't seated there is no meaningful host, so drop gating and let any seated player record.
+  // Absent the accessor we can't tell, so assume seated and keep the existing behavior.
+  const hostIsSeated = typeof mp.getHostSeat !== 'function' || mp.getHostSeat() !== null;
+  if (!hostIsSeated) return null;
+
+  // The (seated) host can enter everything.
   if (typeof mp.isHost === 'function' && mp.isHost()) return null;
 
   // The bid winner picks their OWN trump (bidWinner is currentHand[1], 1-based; 0 = throw-in).
   const bidWinner = parseInt(currentHand[1] || '0');
   const trumpSeat = phase === 'trump' && bidWinner ? bidWinner - 1 : null;
   if (trumpSeat !== null && seat === trumpSeat) return null;
-
-  // Signed-in spectator (not seated): read-only.
-  if (seat === null) {
-    return { spectator: true, responsibleName: 'the players', verb, arrow: '', directionText: '' };
-  }
 
   // Presence fallback: once presence is known, if the responsible party is offline, drop gating
   // so play isn't stuck. Responsible = the bid winner for trump, else the host. Guarded by
@@ -393,11 +409,14 @@ export function renderAuction(gm: GameManager, mp: MultiplayerManager) {
 
     // Kick off the auction for this hand once if it isn't present/current yet, and clear any
     // stale per-hand UI editing state when the hand changes.
+    // Only a SEATED device may initialize it: the rules grant `bidding` writes to seated uids
+    // only, so a spectator's transaction here is rejected once per hand (confirmed in a
+    // production console log, 2026-07-19). A seated device does the initializing.
     if ((!auction || auction.handIndex !== handIndex) && auctionEnsuredHand !== handIndex) {
         auctionEnsuredHand = handIndex;
         auctionEditingBid = false;
         auctionEditingTrump = false;
-        mp.ensureAuctionForCurrentHand();
+        if (mp.getMySeat() !== null) mp.ensureAuctionForCurrentHand();
     }
 
     container.classList.remove('hidden');

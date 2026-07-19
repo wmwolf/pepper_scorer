@@ -118,13 +118,28 @@ export class FirebaseGameManager extends GameManager {
   }
 
   // Pure conflict-resolution decision for a sync write. Given the current remote state
-  // and our local state, either defer to a strictly-newer remote, or commit our state
-  // stamped with a bumped, monotonically-increasing version. Exposed static for testing.
+  // and our local state, either defer to the remote, or commit our state stamped with a
+  // bumped, monotonically-increasing version. Exposed static for testing.
+  //
+  // This is a compare-and-set on the version, NOT a "defer only if remote is strictly
+  // newer" check. `local.version` is only ever assigned from a value we successfully
+  // committed or adopted (see syncToFirebase / applyRemoteState), so it doubles as the
+  // baseline version we last agreed with the server on. Committing only when the remote
+  // still sits at that baseline is what makes a write safe.
+  //
+  // The strictly-newer form had a hole that cost us a live game: content can advance
+  // locally WITHOUT the version advancing, because the version is only bumped by a
+  // successful commit. A device whose write failed (rejected by the security rules, or a
+  // dropped connection) therefore holds divergent content at an EQUAL version. The old
+  // guard read equal as "no conflict" and committed, overwriting good server state with a
+  // stale branch — and, because the commit bumped the version, every other device then
+  // adopted the damage. Requiring equality means a device can only write forward from the
+  // state it last saw; anything else defers and pulls the server's version in.
   static resolveSyncWrite(
     remote: GameState | null,
     local: GameState
   ): { defer: true } | { commit: GameState } {
-    if (remote && FirebaseGameManager.isRemoteNewer(remote, local)) {
+    if (remote && FirebaseGameManager.versionOf(remote) !== FirebaseGameManager.versionOf(local)) {
       return { defer: true };
     }
     const nextVersion = Math.max(
@@ -141,10 +156,14 @@ export class FirebaseGameManager extends GameManager {
   // The version guard replaces the old wall-clock "skip our own update within 1s"
   // heuristic: our own committed writes echo back with a version equal to ours and are
   // ignored, while genuinely newer remote state is always accepted.
-  private applyRemoteState(newState: GameState | null): boolean {
+  //
+  // `force` bypasses the version guard and is used ONLY when a sync transaction deferred: the
+  // server rejected our write, so its value is authoritative by definition and we must take it
+  // even if the versions compare equal (exactly the diverged-at-equal-version case).
+  private applyRemoteState(newState: GameState | null, force = false): boolean {
     if (!newState) return false;
 
-    if (!FirebaseGameManager.isRemoteNewer(newState, this.state)) return false;
+    if (!force && !FirebaseGameManager.isRemoteNewer(newState, this.state)) return false;
 
     const remoteVersion = FirebaseGameManager.versionOf(newState);
 
@@ -510,6 +529,11 @@ export class FirebaseGameManager extends GameManager {
 
     const gameStateRef = ref(database, `games/${this.gameId}/gameState`);
 
+    // Whether this sync is carrying a local edit (a hand part, an undo) rather than being a
+    // no-op refresh. Only in the former case does losing the transaction cost the user anything.
+    const hadPendingEdit = this.pendingLocalEdit;
+    this.pendingLocalEdit = false;
+
     try {
       const result = await runTransaction(
         gameStateRef,
@@ -525,16 +549,62 @@ export class FirebaseGameManager extends GameManager {
       );
 
       if (result.committed && result.snapshot.exists()) {
-        // Track the version we just committed so our echo is recognized as our own.
+        // Track the version we just committed so our echo is recognized as our own, and so it
+        // becomes the baseline the next compare-and-set writes forward from.
         this.state.version = FirebaseGameManager.versionOf(result.snapshot.val());
+        this.setSyncError(null);
         this.touchLastUpdated();
       } else if (!result.committed && result.snapshot.exists()) {
-        // A newer remote state won the transaction; pull it in rather than reverting it.
-        this.applyRemoteState(result.snapshot.val() as GameState);
+        // The remote won the transaction, so its value IS the game — adopt it unconditionally,
+        // including when it carries a LOWER version than ours. That looks like walking
+        // backwards, but the alternative wedges the device: under the compare-and-set above, a
+        // local version sitting above the node's defers forever, so refusing to adopt would
+        // leave it unable to ever write again. Taking the server's value is both correct
+        // (every other device sees it) and self-healing (the next write commits from it).
+        this.applyRemoteState(result.snapshot.val() as GameState, true);
+        // Adopting the remote DISCARDS whatever local edit triggered this sync. That edit was
+        // built on a baseline the game has already moved past, so replaying it blindly would
+        // corrupt the hand — but losing it silently is how entries "just didn't show up" on the
+        // other devices. Say so; the player can re-enter against the current state.
+        this.setSyncError(
+          hadPendingEdit
+            ? 'Another device updated the game first — your last entry was not saved. Please re-enter it.'
+            : null
+        );
       }
     } catch (error) {
+      // A rejected write used to be logged and forgotten, which is how a device could keep
+      // accepting input for a whole game while nothing reached the server. Record it so the UI
+      // can say so. Permission denied here almost always means "not one of the four seated
+      // players" — the security rules only grant gameState writes to seated uids.
+      const denied = String((error as { code?: string })?.code || error).includes('permission');
+      this.setSyncError(
+        denied
+          ? 'This device is not allowed to record for this game — its changes are not being saved.'
+          : 'Could not save to the server — your last change may only exist on this device.'
+      );
       console.error('Error syncing to Firebase:', error);
     }
+  }
+
+  // Last sync failure, or null when the most recent sync round-tripped cleanly.
+  private lastSyncError: string | null = null;
+  private syncErrorCallback: ((_message: string | null) => void) | null = null;
+
+  public getLastSyncError(): string | null {
+    return this.lastSyncError;
+  }
+
+  // Notified whenever the sync-failure state changes, so the page can show/clear a banner.
+  public setSyncErrorCallback(callback: (_message: string | null) => void): void {
+    this.syncErrorCallback = callback;
+    callback(this.lastSyncError);
+  }
+
+  private setSyncError(message: string | null): void {
+    if (this.lastSyncError === message) return;
+    this.lastSyncError = message;
+    if (this.syncErrorCallback) this.syncErrorCallback(message);
   }
 
   // Best-effort bump of the game's lastUpdated timestamp (used by active-game listing
@@ -560,7 +630,10 @@ export class FirebaseGameManager extends GameManager {
   // second deferred, and applyRemoteState pulled the first write's PARTIAL state back in —
   // silently dropping the later part (e.g. the auto-bid or the negotiated trick count).
   private syncScheduled = false;
+  // Set when a local mutation is waiting to reach the server, cleared when a sync picks it up.
+  private pendingLocalEdit = false;
   private scheduleSync(): void {
+    this.pendingLocalEdit = true;
     if (this.syncScheduled) return;
     this.syncScheduled = true;
     queueMicrotask(() => {
