@@ -28,6 +28,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <!-- Player Identity Badge (Phase 8 multiplayer) -->
   <div id="player-identity" class="hidden mb-4 px-3 py-2 rounded-lg border text-sm flex items-center gap-2"></div>
 
+  <!-- Host chip (Phase 12C): who is administering, and the claim/release control. The host may
+       be unseated — a laptop scoring for four phones is the case this exists for. -->
+  <div id="host-chip" class="hidden mb-4 px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-gray-700 text-sm flex items-center gap-2 flex-wrap">
+    <span aria-hidden="true">🎛️</span>
+    <span id="host-chip-text" class="flex-1"></span>
+    <button id="host-claim-btn" class="hidden px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">Take over as host</button>
+    <button id="host-release-btn" class="hidden px-2 py-1 text-xs bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition-colors">Stop hosting</button>
+  </div>
+
   <!-- Sync failure banner. A rejected write used to be logged to the console and forgotten, so a
        device could accept input for a whole game while nothing reached the server. -->
   <div id="sync-error-banner" class="hidden mb-4 px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-red-800 text-sm flex items-start gap-2">
@@ -541,6 +550,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         badge.classList.remove('hidden');
 
         if (seat === null) {
+          // An unseated device is not necessarily a spectator: since Phase 12C the host may hold
+          // no seat, which is exactly the laptop-as-scoreboard case. Calling that "spectating"
+          // would contradict the controls it is being given.
+          if (firebaseGame.isHost()) {
+            badge.className = 'mb-4 px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-sm flex items-center gap-2';
+            badge.innerHTML = '<span>🎛️</span><span>Hosting — you are not seated, but you record for the table.</span>';
+            return;
+          }
           badge.className = 'mb-4 px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-gray-600 text-sm flex items-center gap-2';
           badge.innerHTML = '<span>👀</span><span>Spectating — you are not seated in this game.</span>';
           return;
@@ -553,6 +570,63 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         badge.className = 'mb-4 px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 text-sm flex items-center gap-2';
         badge.innerHTML = `<span>🎴</span><span>You are <strong>${name}</strong> · Seat ${seat + 1} · ${teamName}</span>`;
       };
+
+      // Who is administering the game, and the control to take it over / give it up.
+      const displayNameForUid = (uid) => {
+        if (!uid) return null;
+        const players = firebaseGame.getFirebasePlayers();
+        const seated = players.find(p => p.userId === uid);
+        if (seated?.displayName) return seated.displayName;
+        return getCurrentUser()?.uid === uid ? 'you' : 'another device';
+      };
+
+      const renderHostChip = () => {
+        const chip = document.getElementById('host-chip');
+        const text = document.getElementById('host-chip-text');
+        const claimBtn = document.getElementById('host-claim-btn');
+        const releaseBtn = document.getElementById('host-release-btn');
+        if (!chip || !text || !claimBtn || !releaseBtn) return;
+
+        const user = getCurrentUser();
+        if (!user) { chip.classList.add('hidden'); return; }
+        chip.classList.remove('hidden');
+
+        const hostUid = firebaseGame.getCurrentHostUid();
+        const iAmHost = firebaseGame.isHost();
+
+        if (!hostUid) {
+          text.textContent = 'No host — any seated player can record.';
+        } else if (iAmHost) {
+          text.textContent = 'You are hosting — you record every decision.';
+        } else {
+          const who = displayNameForUid(hostUid) || 'someone else';
+          text.textContent = `${who} is hosting.`;
+        }
+
+        // Takeover is allowed by design (one host at a time), so the claim button stays
+        // available to anyone eligible even while someone else holds it.
+        claimBtn.classList.toggle('hidden', iAmHost || !firebaseGame.canClaimHost());
+        releaseBtn.classList.toggle('hidden', !iAmHost);
+      };
+
+      document.getElementById('host-claim-btn')?.addEventListener('click', async () => {
+        await firebaseGame.claimHost();
+        renderHostChip();
+        if (typeof window.updateUI === 'function') window.updateUI();
+      });
+      document.getElementById('host-release-btn')?.addEventListener('click', async () => {
+        await firebaseGame.releaseHost();
+        renderHostChip();
+        if (typeof window.updateUI === 'function') window.updateUI();
+      });
+
+      // A takeover has to be visible on the device that just lost the role, or it keeps
+      // offering controls whose writes are now rejected.
+      firebaseGame.setHostChangeCallback?.(() => {
+        renderHostChip();
+        if (typeof window.updateUI === 'function') window.updateUI();
+      });
+      renderHostChip();
 
       // Surface the shareable room code (static for the life of the game).
       const roomCode = firebaseGame.getRoomCode();
@@ -582,6 +656,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       renderPlayerIdentity();
       onAuthStateChange(() => {
         renderPlayerIdentity();
+        renderHostChip();
         // Announce presence for the now-known user and re-run the UI so turn-gating
         // re-evaluates (getMySeat() and presence depend on the resolved auth state).
         firebaseGame.announcePresence();

@@ -11,6 +11,7 @@ function fakeGm(opts: {
   override?: boolean
   host?: boolean
   hostSeat?: number | null
+  hostUid?: string | null
   presenceKnown?: boolean
   hostPresent?: boolean
   hostName?: string
@@ -21,8 +22,10 @@ function fakeGm(opts: {
     isManualOverride: () => opts.override ?? false,
     isHost: () => opts.host ?? false,
     // Default to a seated host (seat 0) so these cases exercise host-based gating; pass
-    // hostSeat: null explicitly for the unseated-creator case.
+    // hostSeat: null explicitly for the unseated-host case.
     getHostSeat: () => (opts.hostSeat === undefined ? 0 : opts.hostSeat),
+    // Default to a claimed host; pass hostUid: null for the no-host-at-all case.
+    getCurrentHostUid: () => (opts.hostUid === undefined ? 'host-uid' : opts.hostUid),
     hasPresenceData: () => opts.presenceKnown ?? false,
     isHostPresent: () => opts.hostPresent ?? true,
     getHostName: () => opts.hostName ?? 'Alice',
@@ -45,13 +48,20 @@ describe('evaluateGating — host-based model', () => {
     }
   })
 
-  // Regression: a fifth account can create a game and hand out the room code, so the creator is
-  // not necessarily seated. The rules grant gameState writes only to the four seated uids, so an
-  // unseated host that was let into the tap flow wrote nothing while its local state advanced —
-  // which is how a live game diverged and then got overwritten by the stale branch.
-  it('treats an UNSEATED host as a spectator, not a host', () => {
+  // Phase 12C: metadata/currentHost may be held by someone with no seat — a laptop scoring for
+  // four phones — and the rules grant it write access. This is the configuration the whole phase
+  // exists to support, and it is the exact inverse of the Phase A behavior it replaces.
+  it('lets an UNSEATED current host administer every phase', () => {
     for (const phase of ['bidder', 'bid', 'trump', 'decision', 'tricks']) {
-      const block = evaluateGating(fakeGm({ host: true, seat: null, hostSeat: null }), HAND, phase)
+      expect(evaluateGating(fakeGm({ host: true, seat: null, hostSeat: null }), HAND, phase)).toBeNull()
+    }
+  })
+
+  // The 2026-07-19 incident: signed in, holding no seat, and NOT the host. No write access, so
+  // the tap flow must stay closed however the device got here.
+  it('treats a signed-in device that is neither seated nor host as a spectator', () => {
+    for (const phase of ['bidder', 'bid', 'trump', 'decision', 'tricks']) {
+      const block = evaluateGating(fakeGm({ host: false, seat: null, hostSeat: null }), HAND, phase)
       expect(block).not.toBeNull()
       expect(block!.spectator).toBe(true)
     }
@@ -63,11 +73,11 @@ describe('evaluateGating — host-based model', () => {
     expect(block!.spectator).toBe(true)
   })
 
-  // Without this, every seated player waits forever on a host who cannot record, and the
-  // presence fallback does not help: that host is online, just powerless.
-  it('drops gating entirely for seated players when the creator is not seated', () => {
+  // With no host claimed there is nobody to wait on, so seated players must not be blocked.
+  // The presence fallback cannot cover this — it would be waiting on a host that doesn't exist.
+  it('drops gating for seated players when NO host is claimed', () => {
     const block = evaluateGating(
-      fakeGm({ host: false, seat: 1, hostSeat: null, presenceKnown: true, hostPresent: true }),
+      fakeGm({ host: false, seat: 1, hostUid: null, hostSeat: null, presenceKnown: true, hostPresent: true }),
       HAND, PHASE)
     expect(block).toBeNull()
   })

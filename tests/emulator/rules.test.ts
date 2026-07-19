@@ -176,3 +176,61 @@ describe('userGames', () => {
     await assertFails(get(ref(outsider, `userGames/${SEATED}`)))
   })
 })
+
+// Phase 12C: the host claim. metadata/currentHost names one device-owner who may administer the
+// game — crucially INCLUDING someone who holds no seat, which is the whole point (a laptop acting
+// as scoreboard and scorer). Before this, an unseated creator was let into the UI by the client
+// while every write it produced was rejected here, which cost a live game ten minutes of scoring.
+describe('host claim (metadata/currentHost)', () => {
+  const HOST_PATH = `games/${GAME_ID}/metadata/currentHost`
+
+  async function setHost(uid: string) {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await set(ref(ctx.database(), HOST_PATH), uid)
+    })
+  }
+
+  it('lets a seated player or the creator claim it, but not an outsider', async () => {
+    await assertSucceeds(set(ref(testEnv.authenticatedContext(SEATED).database(), HOST_PATH), SEATED))
+    await assertSucceeds(set(ref(testEnv.authenticatedContext(CREATOR).database(), HOST_PATH), CREATOR))
+    await assertFails(set(ref(testEnv.authenticatedContext(OUTSIDER).database(), HOST_PATH), OUTSIDER))
+  })
+
+  it('allows takeover — one host at a time, not first-come-forever', async () => {
+    await setHost(CREATOR)
+    await assertSucceeds(set(ref(testEnv.authenticatedContext(SEATED).database(), HOST_PATH), SEATED))
+  })
+
+  it('lets an UNSEATED host write gameState — the case this whole phase exists for', async () => {
+    const unseatedHost = 'laptop-uid'
+    await setHost(unseatedHost)
+    const db = testEnv.authenticatedContext(unseatedHost).database()
+    await assertSucceeds(set(ref(db, `games/${GAME_ID}/gameState`), { hands: ['12P'], scores: [0, 0], version: 1 }))
+    await assertSucceeds(set(ref(db, `games/${GAME_ID}/bidding`), { handIndex: 0, entries: {}, order: [] }))
+  })
+
+  it('lets the host drive series advance and status (host-only per the agreed spec)', async () => {
+    const unseatedHost = 'laptop-uid'
+    await setHost(unseatedHost)
+    const db = testEnv.authenticatedContext(unseatedHost).database()
+    await assertSucceeds(set(ref(db, `games/${GAME_ID}/metadata/status`), 'completed'))
+    await assertSucceeds(set(ref(db, `games/${GAME_ID}/metadata/seriesId`), 'series1'))
+    await assertSucceeds(set(ref(db, `games/${GAME_ID}/metadata/lastUpdated`), 123))
+  })
+
+  it('still refuses a non-host outsider, and still protects immutable metadata', async () => {
+    await setHost(CREATOR)
+    const db = testEnv.authenticatedContext(OUTSIDER).database()
+    await assertFails(set(ref(db, `games/${GAME_ID}/gameState`), { hands: [], scores: [0, 0] }))
+    await assertFails(set(ref(db, `games/${GAME_ID}/bidding`), { handIndex: 0 }))
+    // Being host must not unlock the roster or the creator field.
+    const hostDb = testEnv.authenticatedContext(CREATOR).database()
+    await assertFails(set(ref(hostDb, `games/${GAME_ID}/players`), []))
+    await assertFails(set(ref(hostDb, `games/${GAME_ID}/metadata/createdBy`), CREATOR))
+  })
+
+  it('keeps seated players able to write when no host is claimed', async () => {
+    const db = testEnv.authenticatedContext(SEATED).database()
+    await assertSucceeds(set(ref(db, `games/${GAME_ID}/gameState`), { hands: ['12'], scores: [0, 0], version: 2 }))
+  })
+})

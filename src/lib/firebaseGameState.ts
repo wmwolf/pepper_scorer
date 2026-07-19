@@ -19,6 +19,7 @@ import {
 
 export interface FirebaseGameMetadata {
   createdBy: string;
+  currentHost?: string | null;
   createdAt: number;
   lastUpdated?: number;
   status: 'setup' | 'active' | 'completed';
@@ -46,6 +47,7 @@ export interface FirebaseGameData {
 export interface FirebaseSeriesData {
   metadata: {
     createdBy: string;
+    currentHost?: string | null;
     createdAt: number;
     lastUpdated?: number;
     status: 'active' | 'completed';
@@ -79,7 +81,8 @@ export class FirebaseGameManager extends GameManager {
   private firebasePlayers: FirebaseGamePlayer[] = [];
   private roomCode: string | null = null;
   // The uid of the game creator (metadata.createdBy) — the "host" who may enter every decision.
-  private hostUid: string | null = null;
+  private hostUid: string | null = null;          // metadata/createdBy (immutable)
+  private currentHostUid: string | null = null;   // metadata/currentHost (claimable)
 
   // Phase 8 presence: uids currently connected to this game (via onDisconnect-backed
   // writes under games/{id}/presence). Drives the "fall back to manual when the seat
@@ -226,6 +229,10 @@ export class FirebaseGameManager extends GameManager {
       const gameData: FirebaseGameData = {
         metadata: {
           createdBy: gameCreator,
+          // Seed the host claim so the creator can administer from the start — including when
+          // they hold no seat (a laptop scoring for four phones). The rules key write access
+          // off this field, so an unset one would leave an unseated creator unable to write.
+          currentHost: gameCreator,
           createdAt: Date.now(),
           status: 'setup',
           roomCode
@@ -258,6 +265,7 @@ export class FirebaseGameManager extends GameManager {
       this.firebasePlayers = gameData.players;
       this.roomCode = roomCode;
       this.hostUid = gameCreator;
+      this.currentHostUid = gameCreator;
 
       // Add to creator's active games
       const userGameRef = ref(database, `userGames/${gameCreator}/${gameId}`);
@@ -466,6 +474,7 @@ export class FirebaseGameManager extends GameManager {
       manager.firebasePlayers = gameData.players || [];
       manager.roomCode = gameData.metadata?.roomCode || null;
       manager.hostUid = gameData.metadata?.createdBy || null;
+      manager.currentHostUid = gameData.metadata?.currentHost || null;
 
       // Check if this game is part of a series
       if (gameData.metadata.seriesId) {
@@ -512,6 +521,25 @@ export class FirebaseGameManager extends GameManager {
       if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
     });
     this.listeners.push(() => off(biddingRef, 'value', unsubscribeBidding));
+
+    // Phase 12C: track the host claim live. A takeover has to reach every device promptly —
+    // the device that just LOST host must stop offering controls it can no longer write with,
+    // and the rest must re-evaluate who they are waiting on.
+    const hostRef = ref(database, `games/${this.gameId}/metadata/currentHost`);
+    const unsubscribeHost = onValue(hostRef, (snapshot) => {
+      const next = (snapshot.val() as string | null) || null;
+      if (next === this.currentHostUid) return;
+      this.currentHostUid = next;
+      if (this.hostChangeCallback) this.hostChangeCallback(next);
+      if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
+    });
+    this.listeners.push(() => off(hostRef, 'value', unsubscribeHost));
+  }
+
+  // Notified when the host claim moves, so the UI can say "Dave took over as host".
+  private hostChangeCallback: ((_hostUid: string | null) => void) | null = null;
+  public setHostChangeCallback(callback: (_hostUid: string | null) => void): void {
+    this.hostChangeCallback = callback;
   }
 
   // Sync state to Firebase using an atomic, version-guarded transaction.
@@ -739,28 +767,109 @@ export class FirebaseGameManager extends GameManager {
     return { signedIn: uid !== null, seat: resolveSeat(this.firebasePlayers, uid) };
   }
 
-  // Host = the game creator (metadata.createdBy). The host may enter every decision; other
-  // signed-in players are gated to a waiting panel with a manual-override escape hatch.
+  // The EFFECTIVE host is metadata/currentHost — the one device-owner who may administer the
+  // game right now. It is seeded to the creator at game creation and can be claimed by any
+  // seated player (or the creator) thereafter, one at a time. Crucially it need NOT be seated:
+  // that is the whole point of Phase 12C, and the security rules grant it write access to
+  // gameState/bidding/status/seriesId regardless of seat.
+  //
+  // `hostUid` (metadata/createdBy) is a separate, immutable fact — it decides who may CLAIM
+  // host, not who currently is one. Do not conflate them.
   public isHost(): boolean {
     const uid = getCurrentUser()?.uid ?? null;
-    return uid !== null && this.hostUid !== null && uid === this.hostUid;
+    return uid !== null && this.currentHostUid !== null && uid === this.currentHostUid;
   }
 
-  // The host's 0-based seat, or null if the host isn't among the seated players.
+  // The uid administering the game, or null when nobody holds the claim.
+  public getCurrentHostUid(): string | null {
+    return this.currentHostUid;
+  }
+
+  // The creator, who may always claim host back. Not necessarily the current host.
+  public getCreatorUid(): string | null {
+    return this.hostUid;
+  }
+
+  // May the signed-in user claim host? Seated players and the creator, matching the rules.
+  public canClaimHost(): boolean {
+    const uid = getCurrentUser()?.uid ?? null;
+    if (!uid) return false;
+    return uid === this.hostUid || resolveSeat(this.firebasePlayers, uid) !== null;
+  }
+
+  // Take over as host. A transaction so two simultaneous claims can't both believe they won —
+  // takeover of an existing host IS allowed (one host at a time, not first-come-forever), so
+  // the UI must surface the change to whoever just lost it.
+  public async claimHost(): Promise<boolean> {
+    if (!this.gameId || !isFirebaseConfigured()) return false;
+    const database = getFirebaseDatabase();
+    const uid = getCurrentUser()?.uid ?? null;
+    if (!database || !uid || !this.canClaimHost()) return false;
+
+    try {
+      const hostRef = ref(database, `games/${this.gameId}/metadata/currentHost`);
+      const result = await runTransaction(hostRef, () => uid);
+      if (result.committed) {
+        this.currentHostUid = uid;
+        this.setDeviceRole('host');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error claiming host:', error);
+      return false;
+    }
+  }
+
+  // Give up the host claim, leaving the game with no host until someone claims it.
+  public async releaseHost(): Promise<boolean> {
+    if (!this.gameId || !isFirebaseConfigured() || !this.isHost()) return false;
+    const database = getFirebaseDatabase();
+    if (!database) return false;
+
+    try {
+      await set(ref(database, `games/${this.gameId}/metadata/currentHost`), null);
+      this.currentHostUid = null;
+      if (this.getDeviceRole() === 'host') {
+        this.setDeviceRole(this.getMySeat() !== null ? 'player' : 'spectator');
+      }
+      return true;
+    } catch (error) {
+      console.error('Error releasing host:', error);
+      return false;
+    }
+  }
+
+  // The current host's 0-based seat, or null if the host isn't among the seated players
+  // (entirely legitimate now — an unseated host is a supported configuration).
   public getHostSeat(): number | null {
-    return this.hostUid ? resolveSeat(this.firebasePlayers, this.hostUid) : null;
+    return this.currentHostUid ? resolveSeat(this.firebasePlayers, this.currentHostUid) : null;
   }
 
   // Display name for the host, for the "waiting for {host}" message.
   public getHostName(): string {
     const seat = this.getHostSeat();
-    return (seat !== null && this.firebasePlayers[seat]?.displayName) || 'the host';
+    if (seat !== null && this.firebasePlayers[seat]?.displayName) {
+      return this.firebasePlayers[seat]!.displayName!;
+    }
+    return 'the host';
   }
 
   // Is the host currently connected? Drives the presence fallback: if the host is offline,
   // gating drops so the remaining players aren't stuck waiting on an absent host.
   public isHostPresent(): boolean {
-    return this.hostUid ? this.presentUids.has(this.hostUid) : false;
+    return this.currentHostUid ? this.presentUids.has(this.currentHostUid) : false;
+  }
+
+  // Seat order to promote through when the host vanishes: dealer order from the first dealer,
+  // first signed-in seat wins (agreed 2026-07-19). Returns null when no seat is eligible, in
+  // which case the game has nobody who can administer it and should pause.
+  public nextHostSeatInDealerOrder(): number | null {
+    for (let seat = 0; seat < 4; seat++) {
+      const uid = this.firebasePlayers[seat]?.userId;
+      if (uid && this.presentUids.has(uid)) return seat;
+    }
+    return null;
   }
 
   // Manual-override ("score on one device") flag. This is a per-device preference, NOT
