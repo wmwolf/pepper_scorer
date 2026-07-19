@@ -5,7 +5,7 @@ import { getCurrentUser } from './auth';
 import { createGameInvitations } from './invitations';
 import { GameManager, getCurrentPhase, type GameState } from './gameState';
 import { getPath } from './path-utils';
-import { resolveSeat } from './multiplayer';
+import { resolveSeat, parsePresence, type DeviceRole } from './multiplayer';
 import {
   createAuction,
   enterBid,
@@ -85,6 +85,10 @@ export class FirebaseGameManager extends GameManager {
   // writes under games/{id}/presence). Drives the "fall back to manual when the seat
   // whose turn it is has no one online" behaviour. Empty until the presence node loads.
   private presentUids: Set<string> = new Set();
+  // Phase 12: the same presence, but per DEVICE — uid -> the roles of that user's connected
+  // devices. One account on two devices is two entries, so "this player's only client is
+  // spectating" becomes answerable. presentUids stays as the uid-level view over this.
+  private presentDevices: Map<string, DeviceRole[]> = new Map();
   private presenceInitialized = false;
 
   // Phase 8b auction: the live bidding state for the current hand (mirrored from
@@ -794,7 +798,8 @@ export class FirebaseGameManager extends GameManager {
     const presenceRef = ref(database, `games/${this.gameId}/presence`);
     const unsubscribePresence = onValue(presenceRef, (snapshot) => {
       const val = (snapshot.val() as Record<string, unknown> | null) || {};
-      this.presentUids = new Set(Object.keys(val));
+      this.presentDevices = parsePresence(val);
+      this.presentUids = new Set(this.presentDevices.keys());
       // Presence affects who may act, so refresh the UI (re-evaluates gating).
       if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
     });
@@ -808,17 +813,57 @@ export class FirebaseGameManager extends GameManager {
     this.listeners.push(() => off(connectedRef, 'value', unsubscribeConnected));
   }
 
-  // Write this client's presence for the signed-in user (no-op if signed out). The
-  // onDisconnect handler removes it server-side when the connection drops.
+  // Write this client's presence for the signed-in user (no-op if signed out). Presence is keyed
+  // by uid AND deviceId, so one account signed in on two devices is two entries: the phone can be
+  // playing while the laptop spectates. Keying by uid alone made those indistinguishable, which
+  // is why "is this player's only client in spectator mode" was previously unanswerable.
+  // The onDisconnect handler removes just THIS device when its connection drops.
   public announcePresence(): void {
     if (!this.gameId || !isFirebaseConfigured()) return;
     const database = getFirebaseDatabase();
     const uid = getCurrentUser()?.uid;
     if (!database || !uid) return;
 
-    const presenceRef = ref(database, `games/${this.gameId}/presence/${uid}`);
+    const presenceRef = ref(database, `games/${this.gameId}/presence/${uid}/${this.getDeviceId()}`);
     onDisconnect(presenceRef).remove();
-    set(presenceRef, true).catch(() => { /* queued while offline; non-fatal */ });
+    set(presenceRef, { mode: this.getDeviceRole(), ts: Date.now() })
+      .catch(() => { /* queued while offline; non-fatal */ });
+  }
+
+  // Stable per-browser id, so two devices on one account are distinguishable. Persisted, because
+  // a fresh id per page load would leak stale presence entries until their onDisconnect fired.
+  private deviceId: string | null = null;
+  private getDeviceId(): string {
+    if (this.deviceId) return this.deviceId;
+    let id: string | null = null;
+    try {
+      id = localStorage.getItem('pepperDeviceId');
+      if (!id) {
+        id = `d${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+        localStorage.setItem('pepperDeviceId', id);
+      }
+    } catch {
+      // localStorage unavailable (private mode): fall back to a per-session id.
+      id = `d${Math.random().toString(36).slice(2, 10)}`;
+    }
+    this.deviceId = id;
+    return id;
+  }
+
+  // This device's role for this game. Defaults to `player` when seated and `spectator` when not,
+  // which matches what the rules will actually let the device do. `host` is set only alongside a
+  // successful claim of metadata/currentHost (Phase C).
+  private deviceRole: DeviceRole | null = null;
+
+  public getDeviceRole(): DeviceRole {
+    return this.deviceRole ?? (this.getMySeat() !== null ? 'player' : 'spectator');
+  }
+
+  // Set this device's role and re-announce so other clients see the change immediately.
+  public setDeviceRole(role: DeviceRole): void {
+    if (this.deviceRole === role) return;
+    this.deviceRole = role;
+    this.announcePresence();
   }
 
   // Has the presence node reported at least once? Until it has, callers should not treat
@@ -832,6 +877,27 @@ export class FirebaseGameManager extends GameManager {
   public isSeatPresent(seat: number): boolean {
     const uid = this.firebasePlayers[seat]?.userId;
     return uid ? this.presentUids.has(uid) : false;
+  }
+
+  // The roles of every connected device for `uid` (empty when that user has none online).
+  public getPresentRoles(uid: string): DeviceRole[] {
+    return this.presentDevices.get(uid) ?? [];
+  }
+
+  // Does the player at `seat` have at least one connected device in `player` mode? This is the
+  // question the auction actually needs: a seat whose only device is spectating cannot bid, so
+  // the concurrent auction must not wait on it. Keying presence by uid alone could not answer
+  // this — the phone playing and the laptop spectating were the same entry.
+  public seatHasPlayerDevice(seat: number): boolean {
+    const uid = this.firebasePlayers[seat]?.userId;
+    if (!uid) return false;
+    return this.getPresentRoles(uid).includes('player');
+  }
+
+  // Are all four seats represented by a connected device in `player` mode? Phase D uses this to
+  // derive player-driven vs host-driven rather than storing a global mode.
+  public allSeatsHavePlayerDevice(): boolean {
+    return [0, 1, 2, 3].every(seat => this.seatHasPlayerDevice(seat));
   }
 
   // Bidding auction (Phase 8b)
