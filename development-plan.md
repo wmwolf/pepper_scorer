@@ -392,15 +392,15 @@ the player left of the dealer). On top of that sits an **optimistic pre-commit l
 - Real-time connection status
 - Game viewer mode for non-participants
 
-### Phase 9: User Management & Game Discovery
+### Phase 9: User Management & Game Discovery ✅ (done)
 **Goal**: User accounts, game ownership, active game management
 
 #### Features:
-- User registration and profile management
-- Active games dashboard
-- Username autocomplete in game setup
-- Room code generation for spectators
-- Game invitation system
+- User registration and profile management ✅
+- Active games dashboard ✅
+- Username autocomplete in game setup ✅
+- Room code generation for spectators ✅
+- Game invitation system ✅ (consent-layer model; `src/lib/invitations.ts`, emulator-tested)
 
 ### Phase 10: Advanced Statistics & Historical Analysis
 **Goal**: Comprehensive long-term stat tracking
@@ -494,11 +494,34 @@ the player left of the dealer). On top of that sits an **optimistic pre-commit l
   protecting `metadata`). Reconcile this when writing `database.rules.json`.
 
 #### Production Features:
-- Error monitoring and logging
-- Performance optimization
-- Progressive Web App features
-- Offline functionality
-- Data backup and recovery
+- **Progressive Web App + offline: DONE (2026-07-12, implemented & browser-verified; not yet
+  deployed).** Static `public/manifest.webmanifest` using **relative** URLs so `scope`/`start_url`/
+  icons resolve correctly under both dev (`/`) and the Pages sub-path (`/pepper_scorer/`) with no
+  build-time templating. Icons in `public/icons/` (192/512 `any maskable` + apple-touch + svg),
+  generated from `public/icons/icon.svg` (four-suit design). Service worker `public/sw.js`
+  **self-derives BASE** from `self.location.pathname` (so scope is correct on both), uses a
+  **versioned cache** (`pepper-v1`), and is deliberately **network-first for navigations** (does
+  NOT worsen the known GH-Pages index.html CDN staleness — online always gets fresh HTML),
+  **cache-first only for immutable `_astro/*`**, SWR for other static, and **passthrough for
+  cross-origin** (Firebase/GIS never intercepted). Precache + an `activate`-time `warmCache()`
+  (fetches the app pages and precaches their hashed CSS/JS) so the FIRST offline load renders fully
+  styled. **Kill-switch documented in `sw.js`** (self-unregister + cache purge) and reachable
+  because registration uses `updateViaCache: 'none'`. Registration (`src/lib/register-sw.ts`) is
+  **PROD-gated** (never registers under `astro dev` — test via `astro build` + `astro preview`).
+  Verified: SW scope correct, manifest loads, precache+warm populate, and with the server killed the
+  app reloads fully styled offline. **Treat the first prod deploy as a watched rollout.**
+- **Error monitoring: DONE (scaffolded, no-op until configured).** `src/lib/monitoring.ts` gates
+  entirely on `PUBLIC_SENTRY_DSN` — when unset the Sentry SDK is never imported (Vite dead-code-
+  eliminates the branch, so ZERO bytes ship); when set it dynamic-imports `@sentry/browser`, inits
+  error-only capture (+ `captureConsoleIntegration` for `console.error`, no tracing/replay).
+  `PUBLIC_SENTRY_DSN`/`PUBLIC_SENTRY_RELEASE` added to `.env.example` and the Pages workflow (release
+  = `github.sha`). **TODO (user): create a Sentry project, add `PUBLIC_SENTRY_DSN` as a repo secret.**
+- **Data backup/export: DONE (2026-07-12).** Account page "Backup & Export" card:
+  `exportUserData` (read-only over `userGames`/`games`/`users` — no rules change) downloads a JSON
+  backup of all games + profile; import parses/validates a backup, previews the games, and can
+  restore one to THIS device (localStorage, local-only — never writes to the cloud). Logic in
+  `src/lib/data-export.ts`; unit-tested (`tests/unit/data-export.test.ts`, 8 tests).
+- Performance optimization — DEFERRED (no evidence of a problem yet).
 
 #### Firebase Emulator Test Harness (do alongside the security rules)
 **Goal**: repeatable, hermetic, CI-friendly coverage of the Firebase integration layer —
@@ -548,33 +571,155 @@ any automated path.
 - Rules tests (`@firebase/rules-unit-testing`): unauth denied; a player can read/write their
   own game; a non-participant cannot; users can only edit their own profile.
 
-## Recommended sequencing (next steps, decided 2026-07-10)
+## Recommended sequencing (updated 2026-07-19)
 
-Phases 1–8 are done; **Phase 11 security is deployed**. Remaining: 9, 10, and Phase 11's
-production polish. Recommended order:
+Status: Phases 1–9 done; **Phase 11 security deployed**; Phase 11 production polish (PWA, Sentry,
+export) **built but not yet deployed** (uncommitted on this machine as of 2026-07-19 — see the
+Production Features section). Phase 12 (multiplayer role model) **A–D done and merged**; D-remainder
+and E open (see Phase 12 "Still open"). Remaining major work: Phase 10, Phase 11 rollout, Phase 12 D/E.
 
-0. **Merge `firebase-integration` → `main` (do first).** main is a strict ancestor, so this is a
-   clean fast-forward. It settles the `fromJSON` divergence (main adopts the permissive+guard
-   version) and makes `main` the single line of development. Keep CI green.
-1. **Real-device QA of Phase 8 (right after the merge).** The concurrent auction is proven
-   headlessly (emulator, 4 anon clients) but never run on 4 physically signed-in devices. Do one
-   real 4-phone pass against the live DB now that rules are enforced — this is the cheapest way to
-   surface anything the emulator can't (real Google popup auth, presence/onDisconnect timing,
-   multi-device reveal latency). Fold fixes back before building more on top.
-2. **Phase 9 — User Management & Game Discovery.** Highest user-facing value and it unblocks
-   "invite a friend to a game" end to end. Active-games dashboard, invitations, and the
-   room-code/spectator join flow. Mostly new queries over existing data; low risk to the sync core.
-3. **Phase 11 production polish (interleave with / after 9).** PWA + offline (the app already
-   persists to localStorage and Firebase queues writes offline, so this is mostly a manifest +
-   service worker + install UX), error monitoring/logging, and a data backup/export path. Ship the
-   PWA bits alongside 9 since mobile players benefit immediately.
-4. **Phase 10 — Advanced Statistics & Historical Analysis.** Largest and most independent; slot it
-   whenever a stats-focused block fits. Extends `statistics-util.ts`/`pepper-awards.ts` plus
-   per-user history persistence; benefits from more real games existing first (so do it after 9).
+Recommended order from here:
+
+1. **Real-device QA.** The concurrent auction and now the whole role model (host claim, per-device
+   spectate, collision-safe entry) are proven headlessly (emulator) but under-exercised on real
+   signed-in devices. One real multi-device pass against the live DB is the cheapest way to surface
+   what the emulator can't (Google auth, presence/onDisconnect timing, multi-device latency).
+2. **Phase 11 production rollout.** The PWA/SW, Sentry scaffold, and export are built and
+   browser-verified; commit, deploy, and watch the first PWA rollout (GH-Pages HTML-staleness note
+   in the Production Features section).
+3. **Phase 12 D-remainder + E** — auto host-promotion, auction eligibility from player-mode
+   presence, hybrid preemption abort, undo lockout (see Phase 12 "Still open").
+4. **Phase 10 — Advanced Statistics & Historical Analysis.** Largest and most independent; benefits
+   from more real games existing first.
 
 Cross-cutting follow-ups to schedule opportunistically: the deferred **mixed phone/non-phone**
-auction mode (per-seat presence eligibility), **auto-abort-to-manual** on mid-auction disconnect,
-and optional `FirebaseGameManager` **class-method** emulator tests.
+auction mode, and optional `FirebaseGameManager` **class-method** emulator tests (partially covered
+now by `tests/emulator/`).
+
+## Spectator / big-display mode — audit 2026-07-19 (SUPERSEDED by Phase 12)
+
+This section originally logged the ad-hoc spectator behavior and six follow-ups. Most were built
+in the Phase 12 work below; the detailed line-number references it carried are stale after the
+gating rewrite, so they've been removed rather than left to rot. What shipped vs. what remains:
+
+- **Non-seated ⇒ read-only, and the spectator auction-init transaction guarded** — DONE (PR #6).
+- **Presence separation (per-device presence)** — DONE (PR #7); a spectating device no longer
+  masquerades as a seated player in presence.
+- **Deliberate "spectate on this device" control** — DONE (PR #9), for signed-in devices.
+
+Still genuinely open, carried into Phase 12 "Still open" below:
+
+- **Spectated game pollutes `localStorage.currentGame`** (`game.astro` writes it on load), so the
+  device's home page later offers to "resume" someone else's game.
+- **No `onAuthStateChanged` await before `loadFirebaseGame`** — a cold load can briefly misreport a
+  seated player as having no access (latent race).
+- **Signed-out / TV mode** (the big one) — a device that isn't signed in still can't watch:
+  `games/.read` requires auth, and `loadFirebaseGame` can't distinguish "not found" from "not
+  permitted". Needs anonymous auth, a public-read projection, or a share-token scheme.
+
+## Phase 12: three-role model (player / spectator / host) — spec agreed 2026-07-19
+
+Supersedes the per-device spectator-toggle sketch above, which becomes one case of the role model.
+
+### Why
+
+The 2026-07-19 production incident (see the spectator section above and PR #6): a fifth account
+created a game, was therefore the "host", was NOT seated, and was let into the tap flow while the
+rules rejected every write. The fix on `main` makes an unseated device read-only — which is safe
+but blocks the thing actually wanted: **a laptop that both displays the game and records it**.
+Phase 12 makes that a supported role instead of an accident.
+
+### Primitives (global state is EMERGENT, not stored)
+
+Two primitives only:
+
+- **Per-device role**: `player` | `spectator` | `host`. Device-local (localStorage), like the
+  existing manual-override flag — EXCEPT that claiming `host` also writes the shared claim below.
+- **One global host claim**: `metadata/currentHost` in RTDB, exclusive, claimed by transaction.
+
+The three "global modes" are then derived, never stored — no enum to replicate, no transitions to
+implement, nothing to drift:
+
+| | no host claimed | host claimed |
+|---|---|---|
+| all 4 seats have a present player-mode device | player-driven | hybrid |
+| otherwise | *(promote a host — see below)* | host-driven |
+
+### Agreed rules (decisions, 2026-07-19)
+
+1. **Undo.** If a host is present, ONLY the host may undo. With no host, any player may undo, but
+   the flow first checks for a lockout in the DB, creates one if absent, and shows a modal
+   confirmation — giving state time to settle and preventing two simultaneous undos. Acknowledged
+   as heavy-handed; expect to iterate after using it.
+2. **Host takeover of bidding.** During the auction the host sees results like anyone else, plus
+   an "End auction and select bid winner" control: a button per player and "no one". Choosing one
+   ENDS the auction, and the host then also picks trump/no-trump **regardless of whether the bid
+   winner already chose a suit**. Once the host takes over, the host owns bidding for the rest of
+   that hand. The defending-team decision may then come from the host or the defending team;
+   the hand outcome from the host if present, otherwise (open) possibly restricted to the
+   defending team when the hand was played.
+3. **Host vanishes.** Promote in dealer order: first dealer if signed in, else second, etc. With
+   no players signed in either, the game pauses.
+4. **Collisions.** ~~Give the defender decision to ONE seat (left of the winning bidder).~~
+   SUPERSEDED by the collision-safe resolution below (PR #9): rather than assign steps to seats,
+   any writer may enter any step and a losing write is resolved safely (first write wins, the loser
+   re-syncs and gets a benign notice). The single-seat assignment survives only as an optional
+   collision-*reducer* if simultaneous entry proves annoying — not built.
+5. **Series advance.** Host-only if a host is present, so everyone can read the stats. With no
+   host, the first player to advance starts a ~5s timer that any player may cancel.
+
+### Sequencing
+
+- **A. DONE (PR #6).** Non-seated ⇒ spectator, surfaced write failures, auction-init guard, sync
+  conflict hardening. Safe, but deliberately blocks unseated-host scoring.
+- **B. DONE (PR #7).** Per-device presence. `presence/$uid/$deviceId → { mode, ts }`. Today presence is keyed by
+  uid ALONE, so two devices on one account are indistinguishable and the app literally cannot
+  evaluate "is this player's only client in spectator mode". Load-bearing for the auction rule,
+  the promotion rule, and hybrid — do it first.
+- **C. DONE (PR #8, rules deployed 2026-07-19).** Host claim. `metadata/currentHost`, claimed by transaction (seated players
+  and the creator may claim; taking it over is allowed and must be surfaced — "Dave took over as
+  host"). `database.rules.json` gains `|| …/metadata/currentHost === auth.uid` on the `gameState`
+  and `bidding` write rules, and `currentHost` joins the writable metadata subset. **This is the
+  phase that delivers the laptop-as-scoreboard-and-scorer case**, and it also lets one person be a
+  player on their phone and the host on a second device.
+- **D. DONE (PR #9), collision-safe route.** Instead of deriving global modes and hard-gating by
+  them, collisions were made safe so gating could go permissive. A losing `syncToFirebase` now
+  distinguishes a benign deferral (remote already moved past our step — someone recorded it first)
+  from a real failure: the benign case fires a TRANSIENT notice (`setSyncNoticeCallback`) and
+  clears any error; only genuine failures (permission/network) latch the persistent banner.
+  `evaluateGating` collapsed to read-only vs. can-write — any seated player in player mode, or the
+  host, may record ANY tap-flow step (per-step ownership gone; the trump exception with it). The
+  auction stays per-seat (handled before gating); a spectator-mode device is read-only even if
+  seated. Proven in `tests/emulator/collision-safety.test.ts`. The mode-DERIVATION accessors
+  (`nextHostSeatInDealerOrder()`, `allSeatsHavePlayerDevice()`) exist but are not yet wired to
+  auto-promotion or `auctionEligible()` — see below.
+- **E. Hybrid preemption + auction abort — NOT built.** Highest risk. `maybeApplyAuction` holds a
+  2.8s reveal delay before `applyAuctionToHand`; a host preempting inside that window can have the
+  auction result land AFTER their entry. The `phase === 'bidder'` guard only helps if the host's
+  write has committed and propagated within 2.8s — exactly what fails on a backgrounded phone.
+  Needs an explicit auction abort (clear `bidding`, mark the hand host-entered), with emulator
+  coverage for the preempt-vs-reveal race.
+
+### Still open
+
+- **Auto host-promotion on disconnect** (Phase D remainder): on host presence-loss, promote in
+  dealer order — `nextHostSeatInDealerOrder()` exists but nothing calls it. With no players signed
+  in, pause.
+- **Auction eligibility from player-mode presence** (Phase D remainder): `auctionEligible()` should
+  require all four seats to have a present *player-mode* device (`allSeatsHavePlayerDevice()`
+  exists), so a table where some players spectate falls back to host/tap-flow entry cleanly.
+- **Hybrid preemption + auction abort** (Phase E, above).
+- **Undo lockout** (agreed design): host-only when a host is present; else any player, gated by a
+  DB lockout + confirmation modal. Build after auto-promotion so it can key off "is there a host".
+- **Series advance gating** (agreed design, not built): host-only when a host is present; else a
+  ~5s timer any player can cancel.
+- **Optional collision-reducer**: soft-assign the outcome to the defender left of the bidder with a
+  non-blocking "waiting for X" hint. Only worth it if simultaneous entry annoys real players.
+- **Carried from the spectator audit:** spectated game pollutes `localStorage.currentGame`; no
+  `onAuthStateChanged` await before `loadFirebaseGame` (cold-load race); signed-out / TV watch mode.
+- **No migration needed for the host claim.** The pre-existing games have no `currentHost`, so they
+  read as "no host claimed": seated players can record and the creator can claim with one click.
+  New games seed the claim at creation. A backfill is optional.
 
 ## Technical Details
 
