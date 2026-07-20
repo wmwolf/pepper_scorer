@@ -2,6 +2,7 @@
 import {
   signInWithPopup,
   signInWithCredential,
+  signInAnonymously,
   GoogleAuthProvider,
   signOut,
   onAuthStateChanged,
@@ -14,6 +15,9 @@ export interface PepperUser {
   uid: string;
   username: string;
   displayName: string;
+  // A throwaway anonymous session (watch/TV mode): read-only, never persisted to /users or the
+  // public directory. Carries default (empty) stats so the type stays uniform.
+  isAnonymous?: boolean;
   email?: string;
   photoURL?: string;
   createdAt: number;
@@ -300,7 +304,21 @@ export const onAuthStateChange = (callback: (_user: PepperUser | null) => void) 
     const auth = getFirebaseAuth();
     if (auth) {
       onAuthStateChanged(auth, async (firebaseUser) => {
-        if (firebaseUser) {
+        if (firebaseUser && firebaseUser.isAnonymous) {
+          // Watch/TV mode: an anonymous session is a read-only onlooker. Do NOT create a profile
+          // or a directory entry (that would pollute the public roster with throwaway accounts) —
+          // build a minimal in-memory identity only.
+          currentUser = {
+            uid: firebaseUser.uid,
+            username: '',
+            displayName: 'Guest',
+            isAnonymous: true,
+            createdAt: Date.now(),
+            lastLogin: Date.now(),
+            stats: createDefaultStats(),
+          };
+          notifyAuthStateListeners(currentUser);
+        } else if (firebaseUser) {
           try {
             const pepperUser = await createOrUpdateUser(firebaseUser);
             currentUser = pepperUser;
@@ -327,9 +345,51 @@ export const onAuthStateChange = (callback: (_user: PepperUser | null) => void) 
   };
 };
 
+// Whether Firebase has reported its initial auth state at least once. Until then, getCurrentUser()
+// can be transiently null for a genuinely signed-in user (the cold-load race) — awaitAuthReady()
+// lets callers wait for the real answer.
+let authSettled = false;
+
 // Notify all auth state listeners
 const notifyAuthStateListeners = (user: PepperUser | null) => {
+  authSettled = true;
   authStateListeners.forEach(callback => callback(user));
+};
+
+// Resolve once Firebase has determined the initial auth state (with the user, or null). Resolves
+// immediately if that already happened, or if Firebase isn't configured (local-only mode). Use this
+// before reading getMySeat()/isHost() on a cold load so a seated player isn't misjudged a spectator.
+export const awaitAuthReady = (): Promise<PepperUser | null> => {
+  if (!isFirebaseConfigured()) return Promise.resolve(null);
+  if (authSettled) return Promise.resolve(currentUser);
+  return new Promise(resolve => {
+    const unsubscribe = onAuthStateChange(user => {
+      unsubscribe();
+      resolve(user);
+    });
+  });
+};
+
+// Ensure this device has SOME authenticated session so it can read a shared game (the `games`
+// read rule requires auth != null). If already signed in, returns that user; otherwise signs in
+// ANONYMOUSLY — the watch/TV-mode path for a signed-out onlooker. Returns null if anonymous auth
+// is unavailable (e.g. the provider isn't enabled in the Firebase console), in which case the read
+// will fail and the caller falls back to "no access".
+export const ensureAnonymousAuth = async (): Promise<PepperUser | null> => {
+  if (!isFirebaseConfigured()) return null;
+  if (currentUser) return currentUser;
+  const auth = getFirebaseAuth();
+  if (!auth) return null;
+  return new Promise(resolve => {
+    const unsubscribe = onAuthStateChange(user => {
+      if (user) { unsubscribe(); resolve(user); }
+    });
+    signInAnonymously(auth).catch(error => {
+      console.error('Anonymous sign-in failed (watch mode unavailable):', error);
+      unsubscribe();
+      resolve(null);
+    });
+  });
 };
 
 // Get current user

@@ -198,6 +198,18 @@ export function evaluateSeriesAdvancePolicy(gm: GameManager): SeriesAdvanceDecis
   return seat !== null && role !== 'spectator' ? 'timer' : 'blocked';
 }
 
+// Should this device persist a local `currentGame` copy? Local games always. Firebase games only
+// when the viewer is a PARTICIPANT (seated) or the host — never for a pure spectator (incl. an
+// anonymous watcher), which would overwrite the device's own resumable game and make the home page
+// offer to "resume" a game it was only watching. Exported as a test seam.
+export function shouldPersistLocalCopy(gm: GameManager): boolean {
+  const mp = asMultiplayer(gm);
+  if (!mp) return true;                                  // local game — always persist
+  const seat = mp.getViewerSeatInfo().seat;
+  const isHost = typeof mp.isHost === 'function' && mp.isHost();
+  return seat !== null || isHost;
+}
+
 // Extend window interface for global properties
 declare global {
   interface Window {
@@ -1265,9 +1277,10 @@ export function startGameplay(gameData: Record<string, unknown>) {
 
         renderOverrideBar(gameManager);
         showPhaseControls(gameManager);
-        
-        // Save current state
-        localStorage.setItem('currentGame', gameManager.toJSON());
+
+        // Save current state — but not for a pure spectator (see shouldPersistLocalCopy).
+        const persistLocal = shouldPersistLocalCopy(gameManager);
+        if (persistLocal) localStorage.setItem('currentGame', gameManager.toJSON());
 
         // Check for game completion
         if (gameManager.isGameComplete()) {
@@ -1275,7 +1288,7 @@ export function startGameplay(gameData: Record<string, unknown>) {
             if (!gameManager.state.isComplete) {
                 gameManager.completeGame();
                 // Save again after marking as complete
-                localStorage.setItem('currentGame', gameManager.toJSON());
+                if (persistLocal) localStorage.setItem('currentGame', gameManager.toJSON());
             }
             
             const winnerIndex = gameManager.getWinner() || 0;

@@ -620,15 +620,20 @@ gating rewrite, so they've been removed rather than left to rot. What shipped vs
   masquerades as a seated player in presence.
 - **Deliberate "spectate on this device" control** — DONE (PR #9), for signed-in devices.
 
-Still genuinely open, carried into Phase 12 "Still open" below:
+All three carried items are now DONE (spectator-audit cleanups, 2026-07-20):
 
-- **Spectated game pollutes `localStorage.currentGame`** (`game.astro` writes it on load), so the
-  device's home page later offers to "resume" someone else's game.
-- **No `onAuthStateChanged` await before `loadFirebaseGame`** — a cold load can briefly misreport a
-  seated player as having no access (latent race).
-- **Signed-out / TV mode** (the big one) — a device that isn't signed in still can't watch:
-  `games/.read` requires auth, and `loadFirebaseGame` can't distinguish "not found" from "not
-  permitted". Needs anonymous auth, a public-read projection, or a share-token scheme.
+- **Spectated game pollutes `localStorage.currentGame`** — FIXED. Persistence is now gated on
+  `shouldPersistLocalCopy()` (participant seated OR host) in `game.astro` (load), `game.ts`
+  (`updateUI`), and `firebaseGameState.ts` (`applyRemoteState`). A pure spectator never overwrites
+  the device's own resumable game.
+- **No `onAuthStateChanged` await before `loadFirebaseGame`** — FIXED. `awaitAuthReady()` (auth.ts)
+  resolves once Firebase reports the initial auth state; `setupFirebaseSync` awaits it before
+  loading, so a seated player is never briefly misjudged a spectator.
+- **Signed-out / TV mode** — DONE via **anonymous auth**. `ensureAnonymousAuth()` signs a signed-out
+  device in anonymously so it can READ a shared game as a read-only spectator; anonymous sessions get
+  a minimal in-memory identity and create NO `/users` or `/directory` entry (no roster pollution).
+  **Requires the Anonymous provider enabled in the Firebase console** (Auth → Sign-in method).
+  Covered by `tests/emulator/watch-mode.test.ts` + `tests/unit/undo-series-policy.test.ts`.
 
 ## Phase 12: three-role model (player / spectator / host) — spec agreed 2026-07-19
 
@@ -799,8 +804,10 @@ eligibility fallback, and the host-takeover-aborts-auction path (host declares a
   **Rules deploy required** (`firebase deploy --only database`) before these gate in production.
 - **Optional collision-reducer**: soft-assign the outcome to the defender left of the bidder with a
   non-blocking "waiting for X" hint. Only worth it if simultaneous entry annoys real players.
-- **Carried from the spectator audit:** spectated game pollutes `localStorage.currentGame`; no
-  `onAuthStateChanged` await before `loadFirebaseGame` (cold-load race); signed-out / TV watch mode.
+- **Carried from the spectator audit** — DONE (2026-07-20): localStorage-pollution gated on
+  `shouldPersistLocalCopy()`; `awaitAuthReady()` closes the cold-load race; signed-out / TV watch
+  mode via anonymous auth (`ensureAnonymousAuth()`, no roster pollution). ⚠️ needs the **Anonymous
+  sign-in provider enabled in the Firebase console**.
 - **No migration needed for the host claim.** The pre-existing games have no `currentHost`, so they
   read as "no host claimed": seated players can record and the creator can claim with one click.
   New games seed the claim at creation. A backfill is optional.

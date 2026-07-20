@@ -428,8 +428,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const firebaseGame = await setupFirebaseSync(firebaseGameId);
       if (firebaseGame) {
         gameData = firebaseGame.state;
-        // Save to localStorage for consistency / offline fallback.
-        localStorage.setItem('currentGame', JSON.stringify(gameData));
+        // Save to localStorage for offline fallback ONLY for a participant (seated) or the host.
+        // A pure spectator must not overwrite this device's own resumable game — otherwise the home
+        // page later offers to "resume" a game the viewer was only watching (spectator pollution).
+        if (firebaseGame.getMySeat() !== null || firebaseGame.isHost()) {
+          localStorage.setItem('currentGame', JSON.stringify(gameData));
+        }
       } else if (!gameData) {
         // No cloud game loaded and no local fallback available.
         console.error('Failed to load Firebase game');
@@ -497,7 +501,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     try {
       // Import Firebase dependencies
       const { FirebaseGameManager } = await import('../lib/firebaseGameState');
-      const { getCurrentUser, onAuthStateChange } = await import('../lib/auth');
+      const { getCurrentUser, onAuthStateChange, awaitAuthReady, ensureAnonymousAuth } = await import('../lib/auth');
       const { isFirebaseConfigured } = await import('../lib/firebase');
       const { teamOfSeat } = await import('../lib/multiplayer');
 
@@ -509,6 +513,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // Show connection status
       showConnectionStatus();
       updateConnectionStatus('connecting', 'Connecting to cloud...');
+
+      // Wait for auth to settle BEFORE loading, so a signed-in seated player isn't briefly misread
+      // as a spectator (the cold-load race). If still signed out, sign in anonymously so a shared
+      // game can be WATCHED read-only — the games read rule requires auth != null.
+      const settledUser = await awaitAuthReady();
+      if (!settledUser) {
+        await ensureAnonymousAuth();
+      }
 
       // Load the existing Firebase game (single load for the whole page).
       const firebaseGame = await FirebaseGameManager.loadFirebaseGame(gameId);

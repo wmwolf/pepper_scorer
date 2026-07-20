@@ -186,10 +186,14 @@ export class FirebaseGameManager extends GameManager {
 
     this.notifyStateChange();
 
-    try {
-      localStorage.setItem('currentGame', JSON.stringify(this.state));
-    } catch {
-      // localStorage may be unavailable (private mode / quota); non-fatal.
+    // Persist a local copy for offline fallback — but ONLY for a participant (seated) or the host.
+    // A pure spectator watching live updates must not overwrite this device's own resumable game.
+    if (this.shouldPersistLocalCopy()) {
+      try {
+        localStorage.setItem('currentGame', JSON.stringify(this.state));
+      } catch {
+        // localStorage may be unavailable (private mode / quota); non-fatal.
+      }
     }
 
     if (this.uiUpdateCallback) {
@@ -784,6 +788,13 @@ export class FirebaseGameManager extends GameManager {
   // Is the signed-in user one of the four seated players?
   public isParticipant(): boolean {
     return this.getMySeat() !== null;
+  }
+
+  // Should this device keep a local `currentGame` copy (offline fallback + home-page resume)? Only
+  // when it is a PARTICIPANT (seated) or the host. A pure spectator (incl. an anonymous watcher)
+  // must not persist, or the home page later offers to resume a game it was only watching.
+  public shouldPersistLocalCopy(): boolean {
+    return this.getMySeat() !== null || this.isHost();
   }
 
   // Viewer status for turn-gating: whether anyone is signed in on this device, and if so
