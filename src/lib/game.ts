@@ -33,6 +33,9 @@ interface MultiplayerManager {
   setManualOverride(value: boolean): void;
   isSeatPresent?(_seat: number): boolean;
   hasPresenceData?(): boolean;
+  // Does every seat have a present player-role device (i.e. can the concurrent auction run without
+  // stalling on a seat that can't bid)? Present on FirebaseGameManager; optional here.
+  allSeatsHavePlayerDevice?(): boolean;
   // Host-based gating: the creator may enter every decision; others wait + override.
   isHost?(): boolean;
   getHostName?(): string;
@@ -47,6 +50,10 @@ interface MultiplayerManager {
   enterBid(seat: number, value: ActionValue, suit?: string): Promise<void>;
   // eslint-disable-next-line no-unused-vars
   setTrump(seat: number, suit: string): Promise<void>;
+  // Host takeover of a live auction: declare the bid winner directly (seat 0 = throw-in). Aborts
+  // the auction and writes the bidder part. Present on FirebaseGameManager; optional here.
+  // eslint-disable-next-line no-unused-vars
+  hostTakeoverBidder?(bidWinnerSeat: number): Promise<void>;
 }
 
 function asMultiplayer(gm: GameManager): MultiplayerManager | null {
@@ -358,14 +365,25 @@ let auctionEditingTrump = false;
 // Is the mobile auction the right UI for the current bidder phase? It needs a multiplayer
 // game with all four seats authenticated, not in manual-override, and a non-pepper hand
 // (pepper auto-bids). Otherwise we fall back to the existing tap bidder/bid controls.
-function auctionEligible(gm: GameManager, mp: MultiplayerManager | null, currentHand: string, phase: string): boolean {
+// Exported as a test seam (tests/unit/auction-ui.test.ts drives the player-device fallback).
+export function auctionEligible(gm: GameManager, mp: MultiplayerManager | null, currentHand: string, phase: string): boolean {
     if (!mp || phase !== 'bidder') return false;
     if (mp.isManualOverride()) return false;
     const handIndex = gm.state.hands.length - 1;
     if (isPepperRound(handIndex)) return false;
     const players = mp.getFirebasePlayers();
     if (players.length < 4) return false;
-    return [0, 1, 2, 3].every(i => Boolean(players[i]?.userId));
+    if (![0, 1, 2, 3].every(i => Boolean(players[i]?.userId))) return false;
+    // Refinement: only run the concurrent auction when every seat can actually bid — i.e. has a
+    // present device in PLAYER role. A seat whose only client is spectating/hosting (or is offline)
+    // can't bid, so the auction would stall waiting on it; fall back to host tap-flow entry instead
+    // (Half 2). Guard on hasPresenceData() so a pre-presence first paint keeps the old behavior and
+    // doesn't drop the auction before presence has reported.
+    if (typeof mp.hasPresenceData === 'function' && mp.hasPresenceData() &&
+        typeof mp.allSeatsHavePlayerDevice === 'function' && !mp.allSeatsHavePlayerDevice()) {
+        return false;
+    }
+    return true;
 }
 
 function auctionSeatName(gm: GameManager, mp: MultiplayerManager, seat1: number): string {
@@ -419,7 +437,17 @@ export function renderAuction(gm: GameManager, mp: MultiplayerManager) {
     if (!auction.entries) auction.entries = {};
     if (!auction.order) auction.order = [];
 
-    const mySeat0 = mp.getMySeat();          // 0-based or null (spectator)
+    // Participation is decided by this DEVICE's role, not its account's seat. A seated account on a
+    // shared display (host or spectator role) must NOT get the bid pad / trump selector — the trump
+    // selector's mere presence leaks bid-vs-pass. Only a device in PLAYER role participates; a host
+    // gets the takeover view (below); everyone else sees the read-only masked strip.
+    const rawSeat0 = mp.getMySeat();         // account seat, 0-based or null
+    const role = typeof mp.getDeviceRole === 'function'
+        ? mp.getDeviceRole()
+        : (rawSeat0 !== null ? 'player' : 'spectator');
+    const participating = role === 'player' && rawSeat0 !== null;
+    const hostTakeover = !participating && typeof mp.isHost === 'function' && mp.isHost();
+    const mySeat0 = participating ? rawSeat0 : null;
     const mySeat = mySeat0 === null ? null : mySeat0 + 1; // 1-based
     const complete = auctionIsComplete(auction);
     const { highSeat } = resolveAuction(auction);
@@ -467,6 +495,8 @@ export function renderAuction(gm: GameManager, mp: MultiplayerManager) {
     const bidBtn = 'btn-auction-bid px-4 py-4 rounded-lg border border-blue-300 bg-blue-50 text-blue-800 text-xl font-bold shadow-sm hover:bg-blue-100 active:bg-blue-200 transition-colors';
     const passBtn = 'btn-auction-pass px-4 py-4 rounded-lg border border-gray-300 bg-gray-100 text-gray-700 text-lg font-semibold shadow-sm hover:bg-gray-200 active:bg-gray-300 transition-colors';
     const suitBtn = 'btn-auction-suit px-4 py-4 rounded-lg border border-blue-300 bg-blue-50 text-2xl shadow-sm hover:bg-blue-100 active:bg-blue-200 transition-colors';
+    const declareBtn = 'btn-host-declare px-4 py-3 rounded-lg border border-blue-300 bg-blue-50 text-blue-800 text-lg font-semibold shadow-sm hover:bg-blue-100 active:bg-blue-200 transition-colors';
+    const declareThrowIn = 'btn-host-declare px-4 py-3 rounded-lg border border-red-300 bg-red-50 text-red-800 font-semibold shadow-sm hover:bg-red-100 active:bg-red-200 transition-colors';
 
     const bidMenu = (heading: string, showCancel: boolean) => `
         <p class="text-gray-800 font-medium mb-3">${heading}</p>
@@ -490,7 +520,19 @@ export function renderAuction(gm: GameManager, mp: MultiplayerManager) {
 
     // Action area, driven by the viewer's own seat state (no turn pointer).
     let action: string;
-    if (mySeat === null) {
+    if (hostTakeover) {
+        // Host takeover: the host may declare the outcome directly, ending the live auction. The
+        // strip above stays masked (public info only), so this is safe on a shared display. Buttons
+        // are in bidding order (auction.order), plus a throw-in.
+        const declareButtons = auction.order
+            .map(seat => `<button class="${declareBtn}" data-declare="${seat}">${esc(auctionSeatName(gm, mp, seat))}</button>`)
+            .join('');
+        action = `
+            <p class="text-gray-800 font-medium mb-1">You are hosting this auction.</p>
+            <p class="text-sm text-gray-600 mb-3">Declaring a winner ends the live auction and switches to manual entry.</p>
+            <div class="grid grid-cols-2 gap-3">${declareButtons}</div>
+            <button class="${declareThrowIn} w-full mt-3" data-declare="0">No one bid — throw in the hand</button>`;
+    } else if (mySeat === null) {
         // Spectator: read-only.
         action = complete
             ? `<p class="text-gray-600">${result?.thrownIn ? 'Thrown in — everyone passed.' : 'Auction complete.'}</p>`
@@ -564,8 +606,19 @@ export function renderAuction(gm: GameManager, mp: MultiplayerManager) {
 }
 
 function wireAuctionButtons(mp: MultiplayerManager, mySeat: number | null) {
-    if (mySeat === null) return;
     const refresh = () => { if (typeof window.updateUI === 'function') window.updateUI(); };
+
+    // Host takeover: declaring a winner (or throw-in via data-declare="0") aborts the live auction
+    // and writes the bidder part. Wired before the seat guard because the host need not be seated.
+    document.querySelectorAll('.btn-host-declare').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const seat = parseInt((btn as HTMLElement).dataset.declare || '0', 10);
+            if (typeof mp.hostTakeoverBidder === 'function') await mp.hostTakeoverBidder(seat);
+            refresh();
+        });
+    });
+
+    if (mySeat === null) return;
 
     // Choosing a bid value enters it immediately (concurrent — no turn check); the trump menu
     // then renders for a non-pass bid. Editing state is cleared once the write goes out.

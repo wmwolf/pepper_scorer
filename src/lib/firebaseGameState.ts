@@ -1147,6 +1147,18 @@ export class FirebaseGameManager extends GameManager {
     if (this.state.hands.length - 1 !== handIndex) return;
     if (getCurrentPhase(this.getCurrentHand()) !== 'bidder') return;
 
+    // Close the reveal-delay race with a host takeover: the delayed timer that scheduled us
+    // captured a snapshot of the completed auction, but the host may have ABORTED it (cleared the
+    // bidding node) and declared a winner directly during the 2.8s reveal. Re-read the node — if
+    // it is gone or now for a different hand, the host's decision is authoritative; do not apply.
+    const database = getFirebaseDatabase();
+    if (database) {
+      const snap = await get(ref(database, `games/${this.gameId}/bidding`));
+      if (!snap.exists()) return; // aborted by a host takeover
+      const live = this.normalizeAuction(snap.val() as AuctionState);
+      if (live.handIndex !== handIndex) return; // node was recycled for a later hand
+    }
+
     const parts: string[] = result.thrownIn
       ? ['0']
       : [String(result.winnerSeat), result.winningBid as string,
@@ -1156,6 +1168,30 @@ export class FirebaseGameManager extends GameManager {
     for (const part of parts) {
       GameManager.prototype.addHandPart.call(this, part);
     }
+    await this.syncToFirebase();
+  }
+
+  // Abort the live auction by clearing the bidding node. The current host uses this to take over a
+  // running auction (the rules grant the host `bidding` writes). Because a device with a pending
+  // reveal timer re-reads this node in applyAuctionToHand, clearing it here also cancels any
+  // natural application in flight — making the host's takeover authoritative and immediate.
+  public async abortAuction(): Promise<void> {
+    if (!this.gameId || !isFirebaseConfigured()) return;
+    const database = getFirebaseDatabase();
+    if (!database) return;
+    await set(ref(database, `games/${this.gameId}/bidding`), null);
+    this.auctionState = null;
+  }
+
+  // Host takeover of a live auction: declare the bid winner directly (seat 0 = throw-in), exactly
+  // like the non-Firebase tap flow. Aborts the auction first so no pending reveal can clobber the
+  // host's decision, then writes the bidder part. A non-throw-in leaves the hand in the `bid`
+  // phase, from which the host flows through the normal bid/trump tap controls (evaluateGating
+  // already permits the host); a throw-in (0) completes the hand outright.
+  public async hostTakeoverBidder(bidWinnerSeat: number): Promise<void> {
+    if (getCurrentPhase(this.getCurrentHand()) !== 'bidder') return;
+    await this.abortAuction();
+    GameManager.prototype.addHandPart.call(this, String(bidWinnerSeat));
     await this.syncToFirebase();
   }
 
