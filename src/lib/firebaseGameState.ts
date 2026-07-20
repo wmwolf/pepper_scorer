@@ -536,6 +536,17 @@ export class FirebaseGameManager extends GameManager {
       this.maybePromoteHost();
     });
     this.listeners.push(() => off(hostRef, 'value', unsubscribeHost));
+
+    // Series-advance request: a shared, cancelable "next game starting…" countdown for hostless
+    // games. Mirror it so every device shows/hides the countdown together.
+    const advanceRef = ref(database, `games/${this.gameId}/seriesAdvance`);
+    const unsubscribeAdvance = onValue(advanceRef, (snapshot) => {
+      const val = snapshot.exists() ? (snapshot.val() as { by: string; ts: number }) : null;
+      this.seriesAdvancePending = val && typeof val.by === 'string' ? val : null;
+      if (this.seriesAdvanceCallback) this.seriesAdvanceCallback(this.seriesAdvancePending);
+      if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
+    });
+    this.listeners.push(() => off(advanceRef, 'value', unsubscribeAdvance));
   }
 
   // Notified when the host claim moves, so the UI can say "Dave took over as host".
@@ -952,6 +963,113 @@ export class FirebaseGameManager extends GameManager {
       this.currentHostUid = uid;
       this.setDeviceRole('host');
       if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
+    }
+  }
+
+  // Undo coordination (agreed 2026-07-19)
+  // ====================================
+  // In a HOSTLESS multiplayer game any seated player may undo, but only one at a time and only
+  // after confirming — so the flow first takes a short-lived DB lock. A held lock blocks a second
+  // player from starting a concurrent undo (they get a "someone's already undoing" notice). The
+  // lock clears on disconnect and is treated as stale after a few seconds, so a device that crashes
+  // mid-confirmation can't wedge undo for everyone. (When a host IS present, only the host undoes
+  // and no lock is needed — that gate lives in game.ts's evaluateUndoPolicy.)
+  private static readonly UNDO_LOCK_STALE_MS = 12000;
+
+  // Try to take the undo lock. Returns true if this device now holds it (freshly, or already did).
+  // Aborts (false) if another device holds a non-stale lock.
+  public async acquireUndoLock(): Promise<boolean> {
+    if (!this.gameId || !isFirebaseConfigured()) return true; // local game — no coordination
+    const database = getFirebaseDatabase();
+    const uid = getCurrentUser()?.uid ?? null;
+    if (!database || !uid) return false;
+    const lockRef = ref(database, `games/${this.gameId}/undoLock`);
+    const now = Date.now();
+    try {
+      const result = await runTransaction(lockRef, (cur: { uid: string; ts: number } | null) => {
+        if (cur && cur.uid !== uid && now - (cur.ts || 0) < FirebaseGameManager.UNDO_LOCK_STALE_MS) {
+          return; // another device holds a fresh lock — abort
+        }
+        return { uid, ts: now };
+      });
+      const held = result.committed && (result.snapshot.val() as { uid: string } | null)?.uid === uid;
+      if (held) onDisconnect(lockRef).remove();
+      return held;
+    } catch (error) {
+      console.error('Error acquiring undo lock:', error);
+      return false;
+    }
+  }
+
+  // Release the undo lock, but only if this device still holds it (never clobber a newer holder).
+  public async releaseUndoLock(): Promise<void> {
+    if (!this.gameId || !isFirebaseConfigured()) return;
+    const database = getFirebaseDatabase();
+    const uid = getCurrentUser()?.uid ?? null;
+    if (!database || !uid) return;
+    const lockRef = ref(database, `games/${this.gameId}/undoLock`);
+    try {
+      await onDisconnect(lockRef).cancel();
+      await runTransaction(lockRef, (cur: { uid: string } | null) => {
+        if (cur && cur.uid !== uid) return cur; // not ours — leave it
+        return null;
+      });
+    } catch (error) {
+      console.error('Error releasing undo lock:', error);
+    }
+  }
+
+  // Series-advance coordination (agreed 2026-07-19)
+  // ==============================================
+  // When a host is present, only the host advances to the next game (so everyone can read the
+  // stats first) — that gate lives in game.ts. In a HOSTLESS game the first player to advance
+  // writes a `seriesAdvance` request; every device shows a ~5s countdown that ANY player may
+  // cancel, and the initiator performs the advance at the deadline if it wasn't cancelled.
+  public static readonly SERIES_ADVANCE_DELAY_MS = 5000;
+  private seriesAdvancePending: { by: string; ts: number } | null = null;
+  private seriesAdvanceCallback: ((_pending: { by: string; ts: number } | null) => void) | null = null;
+
+  // The current pending series-advance request (null when none), for the countdown UI.
+  public getSeriesAdvancePending(): { by: string; ts: number } | null {
+    return this.seriesAdvancePending;
+  }
+
+  // Subscribe to changes in the pending series-advance request. Fires on the initial value and on
+  // every change (start / cancel), so all devices show or hide the countdown together.
+  public setSeriesAdvanceCallback(callback: (_pending: { by: string; ts: number } | null) => void): void {
+    this.seriesAdvanceCallback = callback;
+  }
+
+  // Start (or refresh) a series-advance request for this device. Idempotent-ish: re-requesting just
+  // restamps it. The written `ts` anchors the shared countdown deadline so every device agrees.
+  public async requestSeriesAdvance(): Promise<boolean> {
+    if (!this.gameId || !isFirebaseConfigured()) return false;
+    const database = getFirebaseDatabase();
+    const uid = getCurrentUser()?.uid ?? null;
+    if (!database || !uid) return false;
+    const advRef = ref(database, `games/${this.gameId}/seriesAdvance`);
+    try {
+      const payload = { by: uid, ts: Date.now() };
+      onDisconnect(advRef).remove(); // a dropped initiator cancels the pending advance
+      await set(advRef, payload);
+      return true;
+    } catch (error) {
+      console.error('Error requesting series advance:', error);
+      return false;
+    }
+  }
+
+  // Cancel any pending series-advance request (any player may cancel).
+  public async cancelSeriesAdvance(): Promise<void> {
+    if (!this.gameId || !isFirebaseConfigured()) return;
+    const database = getFirebaseDatabase();
+    if (!database) return;
+    const advRef = ref(database, `games/${this.gameId}/seriesAdvance`);
+    try {
+      await onDisconnect(advRef).cancel();
+      await set(advRef, null);
+    } catch (error) {
+      console.error('Error cancelling series advance:', error);
     }
   }
 

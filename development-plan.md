@@ -787,10 +787,16 @@ eligibility fallback, and the host-takeover-aborts-auction path (host declares a
   "one account, two devices, two roles (player+host)" configuration is covered in
   `tests/emulator/presence-devices.test.ts`.
 - **Auction eligibility + hybrid preemption** — DONE (NEXT BUILD above, Halves 1 and 2).
-- **Undo lockout** (agreed design): host-only when a host is present; else any player, gated by a
-  DB lockout + confirmation modal. Build after auto-promotion so it can key off "is there a host".
-- **Series advance gating** (agreed design, not built): host-only when a host is present; else a
-  ~5s timer any player can cancel.
+- **Undo lockout** — DONE. `evaluateUndoPolicy()` (game.ts test seam): host present ⇒ host-only;
+  hostless ⇒ a seated player may undo after a confirm modal, gated by a short-lived DB lock
+  (`acquireUndoLock`/`releaseUndoLock`, stale after 12s, onDisconnect-cleared) so two players can't
+  undo at once. Spectators / signed-out / unseated are blocked. Rule: `games/$id/undoLock`.
+- **Series advance gating** — DONE. `evaluateSeriesAdvancePolicy()` (game.ts test seam): host present
+  ⇒ only the host advances (others wait, can read stats); hostless ⇒ the first player starts a shared
+  ~5s countdown (`requestSeriesAdvance`/`cancelSeriesAdvance`, node `games/$id/seriesAdvance`) that
+  ANY player may cancel; the initiator performs the advance at the deadline. Rule: `games/$id/seriesAdvance`.
+  Both proven in `tests/emulator/undo-series-coordination.test.ts` + `tests/unit/undo-series-policy.test.ts`.
+  **Rules deploy required** (`firebase deploy --only database`) before these gate in production.
 - **Optional collision-reducer**: soft-assign the outcome to the defender left of the bidder with a
   non-blocking "waiting for X" hint. Only worth it if simultaneous entry annoys real players.
 - **Carried from the spectator audit:** spectated game pollutes `localStorage.currentGame`; no
