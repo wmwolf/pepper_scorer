@@ -38,6 +38,14 @@
           ".write": "auth != null && ((root.child('games').child($gameId).child('players').child('0').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('1').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('2').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('3').child('userId').val() === auth.uid) || root.child('games').child($gameId).child('metadata').child('currentHost').val() === auth.uid)"
         },
 
+        "undoLock": {
+          ".write": "auth != null && ((root.child('games').child($gameId).child('players').child('0').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('1').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('2').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('3').child('userId').val() === auth.uid) || root.child('games').child($gameId).child('metadata').child('currentHost').val() === auth.uid)"
+        },
+
+        "seriesAdvance": {
+          ".write": "auth != null && ((root.child('games').child($gameId).child('players').child('0').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('1').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('2').child('userId').val() === auth.uid || root.child('games').child($gameId).child('players').child('3').child('userId').val() === auth.uid) || root.child('games').child($gameId).child('metadata').child('currentHost').val() === auth.uid)"
+        },
+
         "presence": {
           "$uid": {
             ".write": "auth != null && $uid === auth.uid"

@@ -54,6 +54,12 @@ interface MultiplayerManager {
   // the auction and writes the bidder part. Present on FirebaseGameManager; optional here.
   // eslint-disable-next-line no-unused-vars
   hostTakeoverBidder?(bidWinnerSeat: number): Promise<void>;
+  // Undo / series-advance coordination (agreed 2026-07-19). All present on FirebaseGameManager.
+  acquireUndoLock?(): Promise<boolean>;
+  releaseUndoLock?(): Promise<void>;
+  requestSeriesAdvance?(): Promise<boolean>;
+  cancelSeriesAdvance?(): Promise<void>;
+  getSeriesAdvancePending?(): { by: string; ts: number } | null;
 }
 
 function asMultiplayer(gm: GameManager): MultiplayerManager | null {
@@ -140,6 +146,56 @@ export function evaluateGating(gm: GameManager, currentHand: string, phase: stri
 
   // Signed in, not seated, not host: no write access under the rules — read-only.
   return { spectator: true, responsibleName: 'the players', verb, arrow: '', directionText: '' };
+}
+
+// Undo policy for the current game (agreed 2026-07-19). Undo rewrites shared state, so in a
+// multiplayer game it is gated:
+//   - a HOST is present  => only the host may undo (others are blocked with a reason).
+//   - NO host present    => any seated player (in a recording role) may undo, but must confirm and
+//                           first take a short DB lock (handled by the caller) so two players can't
+//                           undo at once. Spectators / signed-out / unseated devices are blocked.
+// Local (non-Firebase) games are always 'open'. Exported as a test seam (tests/unit/undo-policy).
+export type UndoDecision = { kind: 'open' } | { kind: 'blocked'; reason: string } | { kind: 'confirm' };
+export function evaluateUndoPolicy(gm: GameManager): UndoDecision {
+  const mp = asMultiplayer(gm);
+  if (!mp) return { kind: 'open' };                       // local game — full control
+
+  const { signedIn, seat } = mp.getViewerSeatInfo();
+  if (!signedIn) return { kind: 'blocked', reason: 'Sign in to undo.' };
+
+  const isHost = typeof mp.isHost === 'function' && mp.isHost();
+  const hostPresent = typeof mp.isHostPresent === 'function' && mp.isHostPresent();
+
+  if (hostPresent) {
+    return isHost ? { kind: 'open' } : { kind: 'blocked', reason: 'Only the host can undo right now.' };
+  }
+
+  // No host present: a seated player in a recording role may undo (with confirmation + lock).
+  const role = typeof mp.getDeviceRole === 'function' ? mp.getDeviceRole() : (seat !== null ? 'player' : 'spectator');
+  if (seat !== null && role !== 'spectator') return { kind: 'confirm' };
+  return { kind: 'blocked', reason: 'Only a seated player can undo.' };
+}
+
+// Series-advance policy (agreed 2026-07-19). Moving to the next game pulls everyone forward, so:
+//   - a HOST is present  => only the host advances (others wait, so they can read the stats).
+//   - NO host present    => any seated player may advance, but it starts a ~5s countdown any player
+//                           can cancel (handled by the caller). Others are blocked.
+// Local games are 'open'. Exported as a test seam.
+export type SeriesAdvanceDecision = 'open' | 'host' | 'host-only' | 'timer' | 'blocked';
+export function evaluateSeriesAdvancePolicy(gm: GameManager): SeriesAdvanceDecision {
+  const mp = asMultiplayer(gm);
+  if (!mp) return 'open';                                 // local game — full control
+
+  const { signedIn, seat } = mp.getViewerSeatInfo();
+  if (!signedIn) return 'blocked';
+
+  const isHost = typeof mp.isHost === 'function' && mp.isHost();
+  const hostPresent = typeof mp.isHostPresent === 'function' && mp.isHostPresent();
+
+  if (hostPresent) return isHost ? 'host' : 'host-only';
+
+  const role = typeof mp.getDeviceRole === 'function' ? mp.getDeviceRole() : (seat !== null ? 'player' : 'spectator');
+  return seat !== null && role !== 'spectator' ? 'timer' : 'blocked';
 }
 
 // Extend window interface for global properties
@@ -879,42 +935,155 @@ function setupTricksButtons(gameManager: GameManager, updateUI: () => void) {
     });
 }
 
+// A transient bottom-center toast for gating notices ("Only the host can undo", etc.). Self-removing.
+function flashNotice(message: string) {
+    document.getElementById('pepper-toast')?.remove();
+    const toast = document.createElement('div');
+    toast.id = 'pepper-toast';
+    toast.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-gray-900 text-white text-sm shadow-lg';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3200);
+}
+
+// A simple confirm overlay resolving to true (confirm) / false (cancel or dismiss). Used to make
+// undo deliberate in a shared game. Kept dependency-free so it works in jsdom tests too.
+function showConfirmModal(title: string, body: string, confirmLabel: string): Promise<boolean> {
+    return new Promise(resolve => {
+        document.getElementById('pepper-confirm-overlay')?.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'pepper-confirm-overlay';
+        overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4';
+        overlay.innerHTML = `
+            <div class="bg-white rounded-xl shadow-xl max-w-sm w-full p-5">
+                <h3 class="text-lg font-semibold text-gray-900 mb-1">${esc(title)}</h3>
+                <p class="text-sm text-gray-600 mb-4">${esc(body)}</p>
+                <div class="flex justify-end gap-3">
+                    <button id="pepper-confirm-cancel" class="px-4 py-2 rounded-lg text-gray-700 hover:bg-gray-100">Cancel</button>
+                    <button id="pepper-confirm-ok" class="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700">${esc(confirmLabel)}</button>
+                </div>
+            </div>`;
+        const done = (val: boolean) => { overlay.remove(); resolve(val); };
+        overlay.querySelector('#pepper-confirm-ok')?.addEventListener('click', () => done(true));
+        overlay.querySelector('#pepper-confirm-cancel')?.addEventListener('click', () => done(false));
+        overlay.addEventListener('click', e => { if (e.target === overlay) done(false); });
+        document.body.appendChild(overlay);
+    });
+}
+
 function setupUndoButton(gameManager: GameManager, updateUI: () => void) {
     const undoButton = document.getElementById('undo-button');
     if (!undoButton) return;
-  
-    undoButton.addEventListener('click', () => {
-      // If we're in the end-game state
-      if (gameManager.isGameComplete()) {
-        // Check if statistics are visible
-        const statsVisible = document.getElementById('game-statistics-container')?.classList.contains('hidden') === false;
-        
-        // If statistics are showing, just show victory modal instead of undoing
-        if (statsVisible) {
-          // Hide statistics
-          document.getElementById('game-statistics-container')?.classList.add('hidden');
-          
-          // Hide post-victory controls if present
-          const postControls = document.getElementById('post-victory-controls');
-          if (postControls) postControls.remove();
-          
-          // Show victory celebration (which has its own undo button)
-          showVictoryCelebration(gameManager);
-          return;
-        }
-        
-        // If victory modal is visible, remove it
-        const victoryModal = document.getElementById('dynamic-victory-overlay') || 
-                          document.getElementById('victory-overlay');
-        if (victoryModal) {
-          victoryModal.remove();
-        }
-      }
 
-      // Now perform the actual undo
-      gameManager.undo();
-      updateUI();
+    // The real, state-changing undo (plus victory-modal teardown when undoing off the end screen).
+    const performUndo = () => {
+        if (gameManager.isGameComplete()) {
+            const victoryModal = document.getElementById('dynamic-victory-overlay') ||
+                              document.getElementById('victory-overlay');
+            if (victoryModal) victoryModal.remove();
+        }
+        gameManager.undo();
+        updateUI();
+    };
+
+    undoButton.addEventListener('click', async () => {
+        // Pure view toggle: while stats are showing, "undo" just returns to the victory modal — no
+        // state change, so it is never gated.
+        if (gameManager.isGameComplete()) {
+            const statsVisible = document.getElementById('game-statistics-container')?.classList.contains('hidden') === false;
+            if (statsVisible) {
+                document.getElementById('game-statistics-container')?.classList.add('hidden');
+                document.getElementById('post-victory-controls')?.remove();
+                showVictoryCelebration(gameManager);
+                return;
+            }
+        }
+
+        // Multiplayer gating: a host present => host-only; hostless => confirm + one-at-a-time lock.
+        const decision = evaluateUndoPolicy(gameManager);
+        if (decision.kind === 'blocked') { flashNotice(decision.reason); return; }
+        if (decision.kind === 'confirm') {
+            const mp = asMultiplayer(gameManager);
+            const gotLock = mp?.acquireUndoLock ? await mp.acquireUndoLock() : true;
+            if (!gotLock) { flashNotice('Another player is undoing right now.'); return; }
+            const ok = await showConfirmModal('Undo the last action?',
+                'This changes the game for everyone at the table.', 'Undo');
+            if (ok) performUndo();
+            await mp?.releaseUndoLock?.();
+            return;
+        }
+
+        performUndo();
     });
+}
+
+// Series-advance countdown state (hostless games). `seriesAdvanceAction` is set ONLY on the device
+// that initiated the advance, so only it performs the advance at the deadline; other devices merely
+// show the shared countdown and can cancel it.
+let seriesAdvanceTicker: ReturnType<typeof setInterval> | null = null;
+let seriesAdvanceAction: (() => void) | null = null;
+const SERIES_ADVANCE_MS = 5000; // keep in sync with FirebaseGameManager.SERIES_ADVANCE_DELAY_MS
+
+// Render (or tear down) the shared "next game starting in Ns… [Cancel]" banner from the manager's
+// pending series-advance node. Runs from updateUI (so remote start/cancel reflect) and from its own
+// half-second ticker (so the countdown updates and the initiator fires at the deadline).
+function renderSeriesAdvanceCountdown(gameManager: GameManager) {
+    const mp = asMultiplayer(gameManager);
+    const pending = mp?.getSeriesAdvancePending?.() ?? null;
+    const existing = document.getElementById('series-advance-banner');
+
+    if (!pending) {
+        existing?.remove();
+        if (seriesAdvanceTicker) { clearInterval(seriesAdvanceTicker); seriesAdvanceTicker = null; }
+        seriesAdvanceAction = null;
+        return;
+    }
+
+    // The initiator performs the advance once the shared deadline passes (node still present).
+    if (seriesAdvanceAction && Date.now() >= pending.ts + SERIES_ADVANCE_MS) {
+        const action = seriesAdvanceAction;
+        seriesAdvanceAction = null;
+        if (seriesAdvanceTicker) { clearInterval(seriesAdvanceTicker); seriesAdvanceTicker = null; }
+        mp?.cancelSeriesAdvance?.(); // clear the node so other devices' banners hide
+        action();
+        return;
+    }
+
+    const remaining = Math.max(0, Math.ceil((pending.ts + SERIES_ADVANCE_MS - Date.now()) / 1000));
+    const host = document.getElementById('end-game-controls');
+    let banner = existing;
+    if (!banner && host) {
+        banner = document.createElement('div');
+        banner.id = 'series-advance-banner';
+        banner.className = 'mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 flex items-center justify-between gap-3';
+        host.prepend(banner);
+    }
+    if (banner) {
+        banner.innerHTML = `
+            <span class="text-sm">Next game starting in <strong>${remaining}s</strong>…</span>
+            <button id="series-advance-cancel" class="px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-800 text-sm hover:bg-amber-100">Cancel</button>`;
+        banner.querySelector('#series-advance-cancel')?.addEventListener('click', () => {
+            void mp?.cancelSeriesAdvance?.();
+        });
+    }
+    if (!seriesAdvanceTicker) {
+        seriesAdvanceTicker = setInterval(() => renderSeriesAdvanceCountdown(gameManager), 500);
+    }
+}
+
+// Apply the series-advance policy to a forward action (next game / make series / new series). Host
+// present => only the host advances; hostless => a ~5s cancelable countdown that any player can
+// stop; blocked otherwise. Exported for the DOM wiring in showVictoryCelebration.
+async function handleSeriesAdvance(gameManager: GameManager, performAdvance: () => void) {
+    const decision = evaluateSeriesAdvancePolicy(gameManager);
+    if (decision === 'open' || decision === 'host') { performAdvance(); return; }
+    if (decision === 'host-only') { flashNotice('Waiting for the host to start the next game.'); return; }
+    if (decision === 'blocked') { flashNotice('Only a seated player can start the next game.'); return; }
+    // 'timer' (hostless): start the shared, cancelable countdown; this device fires it at the deadline.
+    const mp = asMultiplayer(gameManager);
+    seriesAdvanceAction = performAdvance;
+    await mp?.requestSeriesAdvance?.();
+    renderSeriesAdvanceCountdown(gameManager);
 }
 
 // Rebuild the score-log table from the current game state.
@@ -1138,7 +1307,10 @@ export function startGameplay(gameData: Record<string, unknown>) {
                 // Show victory celebration instead of normal end game controls
                 showVictoryCelebration(gameManager);
             }
-            
+
+            // Reflect any pending series-advance countdown (started here or on another device).
+            renderSeriesAdvanceCountdown(gameManager);
+
             return; // Don't continue with normal UI updates
           }
     }
@@ -1460,51 +1632,60 @@ function createConfettiEffect() {
         </div>
       `;
       
-      // Add event listeners to the post-victory buttons
-      document.getElementById('post-victory-series-btn')?.addEventListener('click', async () => {
-        try {
-          // Properly await series conversion for Firebase games
-          await Promise.resolve(gameManager.convertToSeries());
+      // Add event listeners to the post-victory buttons. The forward-advance actions are gated by
+      // the series-advance policy (host-only when a host is present; a ~5s cancelable countdown when
+      // hostless) — see handleSeriesAdvance. "New Game" (leaving the game) is not gated.
+      const makeSeriesAdvance = () => {
+        // Properly await series conversion for Firebase games
+        Promise.resolve(gameManager.convertToSeries()).then(() => {
           gameManager.startNextGame();
           localStorage.setItem('currentGame', gameManager.toJSON());
           window.location.reload();
-        } catch (error) {
+        }).catch(error => {
           console.error('Error creating series:', error);
-          // Fallback: just reload to show any partial progress
           window.location.reload();
-        }
+        });
+      };
+      document.getElementById('post-victory-series-btn')?.addEventListener('click', () => {
+        void handleSeriesAdvance(gameManager, makeSeriesAdvance);
       });
-      
-      document.getElementById('post-victory-new-series-btn')?.addEventListener('click', () => {
+
+      const nextGameAdvance = () => {
         // In series mode, this is "Next Game"
         gameManager.startNextGame();
         localStorage.setItem('currentGame', gameManager.toJSON());
         window.location.reload();
+      };
+      document.getElementById('post-victory-new-series-btn')?.addEventListener('click', () => {
+        void handleSeriesAdvance(gameManager, nextGameAdvance);
       });
-      
-      document.getElementById('post-victory-start-new-series-btn')?.addEventListener('click', () => {
+
+      const startNewSeries = () => {
         // At the end of a series, create a new series with the same players and teams
         const players = [...gameManager.state.players];
         const teams = [...gameManager.state.teams];
-        
+
         // Rotate dealer to the next player
         const lastDealerIndex = parseInt(gameManager.getCurrentHand()[0] || '1') - 1;
         const nextDealerIndex = (lastDealerIndex + 1) % 4;
-        
+
         // Create a new game manager with the same players but new state
         const newGameManager = new GameManager(players, teams);
         // Start with the next dealer
         newGameManager.addHandPart((nextDealerIndex + 1).toString());
-        
+
         // Convert to series immediately
         newGameManager.state.isSeries = true;
         newGameManager.state.seriesScores = [0, 0];
         newGameManager.state.gameNumber = 1;
-        
+
         localStorage.setItem('currentGame', newGameManager.toJSON());
         window.location.reload();
+      };
+      document.getElementById('post-victory-start-new-series-btn')?.addEventListener('click', () => {
+        void handleSeriesAdvance(gameManager, startNewSeries);
       });
-      
+
       document.getElementById('post-victory-new-game-btn')?.addEventListener('click', () => {
         localStorage.removeItem('currentGame');
         window.location.href = getPath('');

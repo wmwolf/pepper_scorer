@@ -107,6 +107,18 @@ describe('games write', () => {
     await assertFails(set(ref(outsider, `games/${GAME_ID}/bidding`), { handIndex: 1, order: [], entries: {} }))
   })
 
+  it('lets a seated player write undoLock and seriesAdvance but forbids an outsider', async () => {
+    const seated = testEnv.authenticatedContext(SEATED).database()
+    await assertSucceeds(set(ref(seated, `games/${GAME_ID}/undoLock`), { uid: SEATED, ts: 1234 }))
+    await assertSucceeds(set(ref(seated, `games/${GAME_ID}/undoLock`), null))
+    await assertSucceeds(set(ref(seated, `games/${GAME_ID}/seriesAdvance`), { by: SEATED, ts: 1234 }))
+    await assertSucceeds(set(ref(seated, `games/${GAME_ID}/seriesAdvance`), null))
+
+    const outsider = testEnv.authenticatedContext(OUTSIDER).database()
+    await assertFails(set(ref(outsider, `games/${GAME_ID}/undoLock`), { uid: OUTSIDER, ts: 1 }))
+    await assertFails(set(ref(outsider, `games/${GAME_ID}/seriesAdvance`), { by: OUTSIDER, ts: 1 }))
+  })
+
   it('lets a seated player bump metadata/status and lastUpdated but not createdBy', async () => {
     const seated = testEnv.authenticatedContext(SEATED).database()
     await assertSucceeds(set(ref(seated, `games/${GAME_ID}/metadata/status`), 'completed'))
