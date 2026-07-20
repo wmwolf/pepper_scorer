@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { evaluateUndoPolicy, evaluateSeriesAdvancePolicy } from '../../src/lib/game'
+import { evaluateUndoPolicy, evaluateSeriesAdvancePolicy, shouldPersistLocalCopy } from '../../src/lib/game'
 import type { GameManager } from '../../src/lib/gameState'
 
 // Fake manager satisfying the duck-typed MultiplayerManager the policies read. `firebase: false`
@@ -82,5 +82,23 @@ describe('evaluateSeriesAdvancePolicy', () => {
   it('blocks a spectator-mode or non-seated device when no host is present', () => {
     expect(evaluateSeriesAdvancePolicy(fakeGm({ hostPresent: false, seat: 2, deviceRole: 'spectator' }))).toBe('blocked')
     expect(evaluateSeriesAdvancePolicy(fakeGm({ hostPresent: false, seat: null }))).toBe('blocked')
+  })
+})
+
+describe('shouldPersistLocalCopy', () => {
+  it('always persists for a local (non-Firebase) game', () => {
+    expect(shouldPersistLocalCopy(fakeGm({ firebase: false, seat: null }))).toBe(true)
+  })
+
+  it('persists for a seated participant', () => {
+    expect(shouldPersistLocalCopy(fakeGm({ seat: 0 }))).toBe(true)
+  })
+
+  it('persists for the host (even unseated)', () => {
+    expect(shouldPersistLocalCopy(fakeGm({ host: true, seat: null }))).toBe(true)
+  })
+
+  it('does NOT persist for a pure spectator (unseated, not host) — the pollution fix', () => {
+    expect(shouldPersistLocalCopy(fakeGm({ seat: null, host: false }))).toBe(false)
   })
 })
