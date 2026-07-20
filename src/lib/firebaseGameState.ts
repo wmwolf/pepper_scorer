@@ -532,6 +532,8 @@ export class FirebaseGameManager extends GameManager {
       this.currentHostUid = next;
       if (this.hostChangeCallback) this.hostChangeCallback(next);
       if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
+      // A host change may mean the host vanished (or a new one appeared) — re-evaluate promotion.
+      this.maybePromoteHost();
     });
     this.listeners.push(() => off(hostRef, 'value', unsubscribeHost));
   }
@@ -875,15 +877,82 @@ export class FirebaseGameManager extends GameManager {
     return this.currentHostUid ? this.presentUids.has(this.currentHostUid) : false;
   }
 
-  // Seat order to promote through when the host vanishes: dealer order from the first dealer,
-  // first signed-in seat wins (agreed 2026-07-19). Returns null when no seat is eligible, in
-  // which case the game has nobody who can administer it and should pause.
+  // Seat to promote to host when the host vanishes: dealer order from the game's first dealer, the
+  // first PRESENT seated player wins (agreed 2026-07-19). Returns null when no seated player is
+  // present, in which case nobody can administer the game and it pauses until one returns.
   public nextHostSeatInDealerOrder(): number | null {
-    for (let seat = 0; seat < 4; seat++) {
+    const firstDealer = parseInt(this.state.hands[0]?.[0] || '1', 10); // 1-based; default seat 1
+    for (let i = 0; i < 4; i++) {
+      const seat = (firstDealer - 1 + i) % 4; // 0-based, walking from the first dealer
       const uid = this.firebasePlayers[seat]?.userId;
       if (uid && this.presentUids.has(uid)) return seat;
     }
     return null;
+  }
+
+  // Auto host-promotion (Phase D). When the current host's presence vanishes, the game still needs
+  // an administrator (to drive tap-flow bidding, undo, series advance). The device that is the
+  // next-in-line present seated player promotes ITSELF via a takeover-safe transaction, after a
+  // short debounce that is re-checked so a transient network blip doesn't cause needless churn.
+  // Deterministic single writer: only nextHostSeatInDealerOrder()'s seat acts, so devices don't
+  // stampede. With no present seated player, nobody promotes and the game pauses (manual claim
+  // still works). Invoked from the presence and host listeners after they update their state.
+  private static readonly HOST_PROMOTION_DELAY_MS = 3000;
+  private hostPromotionTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private maybePromoteHost(): void {
+    if (!this.gameId || !isFirebaseConfigured()) return;
+    // Don't trust "host absent" until presence has reported at least once (avoids a first-paint
+    // false promotion before the real host's presence has loaded).
+    if (!this.hasPresenceData()) return;
+    // Only auto-promote when a host IS claimed but has gone absent. A hostless game (released or
+    // never claimed) is covered by manual claim, not promotion.
+    if (this.currentHostUid === null || this.isHostPresent()) {
+      this.clearHostPromotion();
+      return;
+    }
+    const myUid = getCurrentUser()?.uid ?? null;
+    const mySeat = this.getMySeat();
+    // Only the next-in-line present seated player promotes itself.
+    if (myUid === null || mySeat === null || this.nextHostSeatInDealerOrder() !== mySeat) {
+      this.clearHostPromotion();
+      return;
+    }
+    if (this.hostPromotionTimer) return; // already pending
+    this.hostPromotionTimer = setTimeout(() => {
+      this.hostPromotionTimer = null;
+      // Re-check after the debounce: the host may have returned, or another device may now be
+      // first in line (e.g. an earlier-in-dealer-order seat reconnected).
+      if (this.currentHostUid === null || this.isHostPresent()) return;
+      if (this.getMySeat() !== this.nextHostSeatInDealerOrder()) return;
+      const uid = getCurrentUser()?.uid ?? null;
+      if (!uid) return;
+      this.promoteSelfToHost(uid, this.currentHostUid).catch(err => console.error('host promotion:', err));
+    }, FirebaseGameManager.HOST_PROMOTION_DELAY_MS);
+  }
+
+  private clearHostPromotion(): void {
+    if (this.hostPromotionTimer) {
+      clearTimeout(this.hostPromotionTimer);
+      this.hostPromotionTimer = null;
+    }
+  }
+
+  // Take over host from the vanished `absentHost`, only if the DB still records that same host —
+  // so a manual claim or a rival promoter that landed first is not stomped (one host at a time).
+  private async promoteSelfToHost(uid: string, absentHost: string): Promise<void> {
+    const database = getFirebaseDatabase();
+    if (!database || !this.gameId) return;
+    const hostRef = ref(database, `games/${this.gameId}/metadata/currentHost`);
+    const result = await runTransaction(hostRef, (current: string | null) => {
+      if (current !== absentHost) return; // someone already changed it — abort, don't stomp
+      return uid;
+    });
+    if (result.committed && result.snapshot.val() === uid) {
+      this.currentHostUid = uid;
+      this.setDeviceRole('host');
+      if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
+    }
   }
 
   // Manual-override ("score on one device") flag. This is a per-device preference, NOT
@@ -925,6 +994,8 @@ export class FirebaseGameManager extends GameManager {
       this.presentUids = new Set(this.presentDevices.keys());
       // Presence affects who may act, so refresh the UI (re-evaluates gating).
       if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
+      // A presence change may mean the host just vanished — consider auto-promoting a new one.
+      this.maybePromoteHost();
     });
     this.listeners.push(() => off(presenceRef, 'value', unsubscribePresence));
 
@@ -1745,6 +1816,7 @@ export class FirebaseGameManager extends GameManager {
     this.listeners = [];
     this.connectionListener = null;
     this.stateChangeListeners = [];
+    this.clearHostPromotion();
   }
 
   // Set up victory overlay listener to monitor for series creation by other players
