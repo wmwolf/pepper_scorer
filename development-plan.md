@@ -706,16 +706,33 @@ implement, nothing to drift:
   seated. Proven in `tests/emulator/collision-safety.test.ts`. The mode-DERIVATION accessors
   (`nextHostSeatInDealerOrder()`, `allSeatsHavePlayerDevice()`) exist but are not yet wired to
   auto-promotion or `auctionEligible()` — see below.
-- **E. Hybrid preemption + auction abort — NOT built.** Highest risk. `maybeApplyAuction` holds a
-  2.8s reveal delay before `applyAuctionToHand`; a host preempting inside that window can have the
-  auction result land AFTER their entry. The `phase === 'bidder'` guard only helps if the host's
-  write has committed and propagated within 2.8s — exactly what fails on a backgrounded phone.
-  Needs an explicit auction abort (clear `bidding`, mark the hand host-entered), with emulator
-  coverage for the preempt-vs-reveal race.
+- **E. DONE (role-aware auction + host takeover build).** The explicit auction abort landed as
+  `FirebaseGameManager.abortAuction()` / `hostTakeoverBidder()`, and the 2.8s race is closed:
+  `applyAuctionToHand` now RE-READS the `bidding` node before applying and bails if the host has
+  cleared it, so a host takeover is authoritative even when the taking-over write hasn't propagated
+  to the completing device within 2.8s. Emulator-proven in `tests/emulator/host-takeover.test.ts`
+  (including the delayed-timer race). See the NEXT BUILD section below for the full write-up.
 
-### NEXT BUILD — role-aware auction + host takeover (agreed 2026-07-19)
+### NEXT BUILD — role-aware auction + host takeover — DONE (built 2026-07-19)
 
-This is the designated next work item. It has two tightly-related halves.
+Shipped. Both halves landed together on branch `role-aware-auction-host-takeover`. Summary of what
+was built (the original spec is preserved below for reference):
+
+- **Half 1 — role-aware rendering.** `renderAuction` (`game.ts`) now keys participation on the
+  DEVICE role (`getDeviceRole()`), not the account's seat: only a `player`-role seated device gets
+  the bid pad / trump selector; a seated `spectator`/`host` device shows the read-only masked strip.
+  This closes the shared-display leak (the trump selector no longer appears for a bid and never for
+  a pass). `auctionEligible()` additionally requires every seat to have a present player-role device
+  (`allSeatsHavePlayerDevice()`, guarded on `hasPresenceData()` to keep first-paint behavior); when
+  a seat can't bid it falls back to host tap-flow entry instead of stalling.
+- **Half 2 — host takeover.** `hostTakeoverBidder(seat)` (`firebaseGameState.ts`) lets the host
+  declare the bidder (seat 0 = throw-in) on a live auction: it `abortAuction()`s (clears `bidding`)
+  then writes the bidder part; the host flows through the normal bid/trump tap controls after. The
+  host's auction view (`game.ts`) shows the masked strip + declare-winner buttons. This is the
+  explicit **Phase E** auction abort; `applyAuctionToHand` re-reads the node to make the takeover
+  authoritative and kill the 2.8s reveal race.
+- **Tests.** `tests/unit/auction-ui.test.ts` (role-aware rendering, host-takeover UI, eligibility
+  fallback), `tests/emulator/host-takeover.test.ts` (abort + write, throw-in, delayed-timer race).
 
 **Motivation — a real information leak (confirmed in code 2026-07-19).** The auction is rendered
 off the viewer's *seat* (account), NOT their per-device role, so ANY device logged into a seated
@@ -764,7 +781,7 @@ eligibility fallback, and the host-takeover-aborts-auction path (host declares a
 - **Auto host-promotion on disconnect** (Phase D remainder): on host presence-loss, promote in
   dealer order — `nextHostSeatInDealerOrder()` exists but nothing calls it. With no players signed
   in, pause.
-- **Auction eligibility + hybrid preemption** — folded into the NEXT BUILD above (Halves 1 and 2).
+- **Auction eligibility + hybrid preemption** — DONE (NEXT BUILD above, Halves 1 and 2).
 - **Undo lockout** (agreed design): host-only when a host is present; else any player, gated by a
   DB lockout + confirmation modal. Build after auto-promotion so it can key off "is there a host".
 - **Series advance gating** (agreed design, not built): host-only when a host is present; else a

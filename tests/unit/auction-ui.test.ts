@@ -7,7 +7,7 @@
 // previously verified only manually.
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { renderAuction } from '../../src/lib/game'
+import { renderAuction, auctionEligible } from '../../src/lib/game'
 import {
   createAuction,
   enterBid as engineEnterBid,
@@ -19,7 +19,11 @@ import {
 
 // A minimal stand-in for FirebaseGameManager holding a mutable AuctionState mutated only through
 // the real engine — exactly what the wiring calls in production.
-function makeHarness(dealerSeat: number, mySeat0: number | null) {
+function makeHarness(
+  dealerSeat: number,
+  mySeat0: number | null,
+  opts: { role?: 'player' | 'spectator' | 'host'; isHost?: boolean } = {},
+) {
   const players = [
     { userId: 'u1', displayName: 'Alice', isAuthenticated: true, position: 0 },
     { userId: 'u2', displayName: 'Bob', isAuthenticated: true, position: 1 },
@@ -27,9 +31,12 @@ function makeHarness(dealerSeat: number, mySeat0: number | null) {
     { userId: 'u4', displayName: 'Dave', isAuthenticated: true, position: 3 },
   ]
   let auction: AuctionState | null = createAuction(dealerSeat, 0)
+  const declared: number[] = []
   const gm = { state: { players: ['Alice', 'Bob', 'Carol', 'Dave'], hands: ['1'] } }
   const mp = {
     getMySeat: () => mySeat0,
+    getDeviceRole: () => opts.role ?? (mySeat0 !== null ? 'player' : 'spectator'),
+    isHost: () => opts.isHost ?? false,
     getFirebasePlayers: () => players,
     getAuction: () => auction,
     ensureAuctionForCurrentHand: async () => {},
@@ -39,8 +46,13 @@ function makeHarness(dealerSeat: number, mySeat0: number | null) {
     setTrump: async (seat: number, suit: string) => {
       auction = engineSetTrump(auction!, seat, suit as TrumpSuit)
     },
+    // Mirror FirebaseGameManager.hostTakeoverBidder: abort the auction and record the declaration.
+    hostTakeoverBidder: async (seat: number) => { declared.push(seat); auction = null },
   }
-  return { gm, mp, engineEnter: (seat: number, v: ActionValue, s?: TrumpSuit) => { auction = engineEnterBid(auction!, seat, v, s) } }
+  return {
+    gm, mp, declared,
+    engineEnter: (seat: number, v: ActionValue, s?: TrumpSuit) => { auction = engineEnterBid(auction!, seat, v, s) },
+  }
 }
 
 function render(h: ReturnType<typeof makeHarness>) {
@@ -170,5 +182,133 @@ describe('throw-in', () => {
     for (const seat of [2, 3, 4, 1]) h.engineEnter(seat, 'PASS')
     render(h)
     expect(html()).toContain('Thrown in')
+  })
+})
+
+// Role-aware rendering (the shared-display leak fix): participation keys on the DEVICE role, not
+// the account's seat. A seated account on a shared display (spectator or host role) must never see
+// the bid pad or trump selector — the trump selector's mere presence broadcasts bid-vs-pass.
+describe('role-aware rendering', () => {
+  it('gives a seated device in PLAYER role the bid pad (unchanged behavior)', () => {
+    const h = makeHarness(1, 1) // seat 2, defaults to player role
+    render(h)
+    const out = html()
+    expect(out).toContain('Enter your bid')
+    expect(out).toContain('btn-auction-bid')
+  })
+
+  it('hides the bid pad AND trump selector from a seated device in SPECTATOR role', () => {
+    // The leak scenario: seat 2 is signed in on a shared display set to spectate. Even after that
+    // seat has bid in the engine, this device must show only the read-only view.
+    const h = makeHarness(1, 1, { role: 'spectator' })
+    h.engineEnter(2, '5', 'H') // seat 2 (order[0]) bid + trump — would open the selector if seated
+    render(h)
+    const out = html()
+    expect(out).not.toContain('btn-auction-bid')
+    expect(out).not.toContain('btn-auction-suit')   // the leak: trump selector must NOT appear
+    expect(out).not.toContain('choose your trump')
+    expect(out).not.toContain('Enter your bid')
+    expect(out).toContain('Waiting for players to bid')
+  })
+
+  it('does not leak "(you)"/edit affordances to a seated spectator', () => {
+    const h = makeHarness(1, 1, { role: 'spectator' })
+    h.engineEnter(2, '5', 'H')
+    render(h)
+    const out = html()
+    expect(out).not.toContain('auction-edit-bid')
+    expect(out).not.toContain('auction-edit-trump')
+  })
+})
+
+describe('host takeover of a live auction', () => {
+  it('shows the host declare controls (no bid pad / trump selector) with a masked strip', () => {
+    const h = makeHarness(1, null, { role: 'host', isHost: true }) // unseated host on a laptop
+    h.engineEnter(2, '6', 'C') // a live, in-progress bid
+    render(h)
+    const out = html()
+    expect(out).toContain('You are hosting this auction')
+    expect(out).toContain('Declaring a winner ends the live auction')
+    expect(out).toContain('btn-host-declare')
+    expect(out).not.toContain('btn-auction-bid')
+    expect(out).not.toContain('btn-auction-suit')
+    // Masked: seat 2 (order[0]) is revealed and public, but the host never gets a participant view.
+    expect(out).not.toContain('Enter your bid')
+  })
+
+  it('offers a declare button per seat plus a throw-in', () => {
+    const h = makeHarness(1, null, { role: 'host', isHost: true })
+    render(h)
+    const out = html()
+    for (const name of ['Alice', 'Bob', 'Carol', 'Dave']) expect(out).toContain(name)
+    expect(out).toContain('data-declare="0"')       // throw-in
+    expect(out).toContain('No one bid')
+  })
+
+  it('declaring a winner calls hostTakeoverBidder with that seat (ending the auction)', async () => {
+    const h = makeHarness(1, null, { role: 'host', isHost: true }) // dealer 1 -> order [2,3,4,1]
+    ;(window as unknown as { updateUI: () => void }).updateUI = () => render(h)
+    render(h)
+    // Declare seat 3 (Carol) the winner.
+    document.querySelector<HTMLButtonElement>('.btn-host-declare[data-declare="3"]')!.click()
+    await tick()
+    expect(h.declared).toEqual([3])
+  })
+
+  it('declaring a throw-in calls hostTakeoverBidder(0)', async () => {
+    const h = makeHarness(1, null, { role: 'host', isHost: true })
+    ;(window as unknown as { updateUI: () => void }).updateUI = () => render(h)
+    render(h)
+    document.querySelector<HTMLButtonElement>('.btn-host-declare[data-declare="0"]')!.click()
+    await tick()
+    expect(h.declared).toEqual([0])
+  })
+
+  it('lets a host account PLAYING on a player-role device still bid (not the takeover view)', () => {
+    // Host account, seated seat 2, but this device is in player role (their phone). They play.
+    const h = makeHarness(1, 1, { role: 'player', isHost: true })
+    render(h)
+    const out = html()
+    expect(out).toContain('Enter your bid')
+    expect(out).not.toContain('btn-host-declare')
+  })
+})
+
+// auctionEligible gates whether the concurrent auction runs at all. Beyond the four-seats check, it
+// must not stall on a seat that cannot bid (its only device is spectating/hosting, or it's offline);
+// when presence reports such a seat, it falls back to host tap-flow entry.
+describe('auctionEligible — player-device fallback', () => {
+  const seated4 = [
+    { userId: 'u1', displayName: 'Alice' }, { userId: 'u2', displayName: 'Bob' },
+    { userId: 'u3', displayName: 'Carol' }, { userId: 'u4', displayName: 'Dave' },
+  ]
+  // handIndex 4 (5th hand) is past the pepper rounds, so isPepperRound is false.
+  const gm = { state: { hands: ['h0', 'h1', 'h2', 'h3', ''] } }
+  function mp(over: Record<string, unknown>) {
+    return {
+      isManualOverride: () => false,
+      getFirebasePlayers: () => seated4,
+      hasPresenceData: () => true,
+      allSeatsHavePlayerDevice: () => true,
+      ...over,
+    }
+  }
+
+  it('is eligible when all four seats have a present player device', () => {
+    expect(auctionEligible(gm as never, mp({}) as never, '5', 'bidder')).toBe(true)
+  })
+
+  it('falls back (not eligible) when a seat lacks a present player device', () => {
+    expect(auctionEligible(gm as never, mp({ allSeatsHavePlayerDevice: () => false }) as never, '5', 'bidder')).toBe(false)
+  })
+
+  it('does NOT drop the auction before presence has reported (first-paint guard)', () => {
+    // hasPresenceData() false => trust the four-seats check, keep the old behavior.
+    expect(auctionEligible(gm as never, mp({ hasPresenceData: () => false, allSeatsHavePlayerDevice: () => false }) as never, '5', 'bidder')).toBe(true)
+  })
+
+  it('is not eligible outside the bidder phase or under manual override', () => {
+    expect(auctionEligible(gm as never, mp({}) as never, '5', 'bid')).toBe(false)
+    expect(auctionEligible(gm as never, mp({ isManualOverride: () => true }) as never, '5', 'bidder')).toBe(false)
   })
 })
