@@ -778,9 +778,14 @@ eligibility fallback, and the host-takeover-aborts-auction path (host declares a
 
 ### Still open
 
-- **Auto host-promotion on disconnect** (Phase D remainder): on host presence-loss, promote in
-  dealer order — `nextHostSeatInDealerOrder()` exists but nothing calls it. With no players signed
-  in, pause.
+- **Auto host-promotion on disconnect** (Phase D remainder) — DONE. On host presence-loss, the
+  next present seated player in dealer order promotes ITSELF (`maybePromoteHost()` →
+  `promoteSelfToHost()`, a takeover-safe transaction, debounced ~3s and re-checked so a transient
+  blip doesn't churn); `nextHostSeatInDealerOrder()` now actually walks dealer order from the first
+  dealer. With no present seated player it pauses. Wired into the presence + host listeners.
+  Emulator-proven in `tests/emulator/host-promotion.test.ts` (promotion + blip guard). The
+  "one account, two devices, two roles (player+host)" configuration is covered in
+  `tests/emulator/presence-devices.test.ts`.
 - **Auction eligibility + hybrid preemption** — DONE (NEXT BUILD above, Halves 1 and 2).
 - **Undo lockout** (agreed design): host-only when a host is present; else any player, gated by a
   DB lockout + confirmation modal. Build after auto-promotion so it can key off "is there a host".

@@ -129,6 +129,50 @@ describe('per-device presence', () => {
     expect(bobGm.allSeatsHavePlayerDevice()).toBe(false)
   })
 
+  it('lets one account be a PLAYER on one device and the HOST on another, at once', async () => {
+    // The "one user, two devices, two roles" workflow: a seated player scores/hosts on a laptop
+    // while playing on their phone. The seat must stay playable (its phone is a player device) and
+    // BOTH roles' writes must be accepted for the one account against the real rules.
+    const alice = await signIn('alice@test.dev')
+    const bob = await signIn('bob@test.dev')
+    const carol = await signIn('carol@test.dev')
+    const dave = await signIn('dave@test.dev')
+
+    await signIn('alice@test.dev')
+    const gm = new FirebaseGameManager(['Alice', 'Bob', 'Carol', 'Dave'], ['We', 'They'])
+    await gm.createFirebaseGame(SEATED([alice, bob, carol, dave]), alice)
+    const gameId = gm.getGameId()!
+    gm.setDeviceRole('player') // the phone: Alice plays here
+    gm.setupPresence()
+    await flush()
+
+    // The laptop: same account, host role, distinct deviceId. One browser context has one deviceId,
+    // so the second device is written at the node (self-write, allowed by the rules).
+    await set(ref(getFirebaseDatabase()!, `games/${gameId}/presence/${alice}/laptop`),
+      { mode: 'host', ts: Date.now() })
+    await flush()
+
+    // Both roles are live for the one account, and the seat is still playable (the phone plays).
+    expect(gm.getPresentRoles(alice)).toEqual(expect.arrayContaining(['player', 'host']))
+    expect(gm.seatHasPlayerDevice(0)).toBe(true)
+
+    // The account can act as a PLAYER (enter a bid) — accepted by the rules for a seated uid.
+    gm.addHandPart('1') // dealer 1, phase bidder
+    await flush()
+    await gm.ensureAuctionForCurrentHand()
+    await gm.enterBid(1, '5') // Alice's own seat (1-based)
+    const biddingSnap = await get(ref(getFirebaseDatabase()!, `games/${gameId}/bidding`))
+    expect(biddingSnap.exists()).toBe(true)
+
+    // ...and as the HOST (abort the auction + declare a winner) — accepted for currentHost=Alice.
+    await gm.hostTakeoverBidder(2)
+    await flush()
+    const cleared = await get(ref(getFirebaseDatabase()!, `games/${gameId}/bidding`))
+    expect(cleared.exists()).toBe(false)
+    const hands = await get(ref(getFirebaseDatabase()!, `games/${gameId}/gameState/hands`))
+    expect((hands.val() as string[])[0]).toBe('12')
+  })
+
   it('re-announces with the new role when the device switches modes', async () => {
     const alice = await signIn('alice@test.dev')
     const bob = await signIn('bob@test.dev')
