@@ -429,6 +429,29 @@ function updateHandInfo(gameManager: GameManager) {
 // off, and whether the viewer has explicitly reopened their bid or trump menu (to change an
 // already-entered value). Cleared when the hand changes.
 let auctionEnsuredHand: number | null = null;
+// Self-heal timer for a lost auction-init write (real-game bug 2026-07-21): if ensuring the
+// bidding node fails or the write is lost, the auction used to stick on "Starting the auction…"
+// forever because the ensure was fire-and-forget and never retried. This periodically clears the
+// per-hand guard and re-renders so a seated device re-attempts the init until the node appears.
+let auctionEnsureRetryTimer: ReturnType<typeof setTimeout> | null = null;
+const AUCTION_ENSURE_RETRY_MS = 2500;
+
+function clearAuctionEnsureRetry() {
+    if (auctionEnsureRetryTimer) { clearTimeout(auctionEnsureRetryTimer); auctionEnsureRetryTimer = null; }
+}
+
+function scheduleAuctionEnsureRetry() {
+    if (auctionEnsureRetryTimer) return;
+    auctionEnsureRetryTimer = setTimeout(() => {
+        auctionEnsureRetryTimer = null;
+        auctionEnsuredHand = null; // allow a fresh ensure attempt on the re-render
+        // Leave a breadcrumb: this fires only when the auction node hasn't arrived in time, which is
+        // the "stuck on Starting the auction…" symptom. Helps diagnose if it recurs in the wild.
+        console.warn('[auction] init did not land in time — retrying the auction node creation');
+        if (typeof window.updateUI === 'function') window.updateUI();
+    }, AUCTION_ENSURE_RETRY_MS);
+}
+
 let auctionEditingBid = false;
 let auctionEditingTrump = false;
 
@@ -491,16 +514,28 @@ export function renderAuction(gm: GameManager, mp: MultiplayerManager) {
         auctionEnsuredHand = handIndex;
         auctionEditingBid = false;
         auctionEditingTrump = false;
-        if (mp.getMySeat() !== null) mp.ensureAuctionForCurrentHand();
+        if (mp.getMySeat() !== null) {
+            // If the init write fails/loses, clear the guard so the next render retries instead of
+            // sticking on "Starting the auction…" forever.
+            Promise.resolve(mp.ensureAuctionForCurrentHand()).catch(() => {
+                if (auctionEnsuredHand === handIndex) auctionEnsuredHand = null;
+            });
+        }
     }
 
     container.classList.remove('hidden');
     updateInstructions('Bidding');
 
     if (!auction || auction.handIndex !== handIndex) {
+        // The node isn't here yet — normally it arrives momentarily via the bidding listener. But a
+        // lost write would leave us stuck, so schedule a self-healing retry (a seated device only).
+        if (mp.getMySeat() !== null) scheduleAuctionEnsureRetry();
         container.innerHTML = '<p class="text-gray-600">Starting the auction…</p>';
         return;
     }
+
+    // The node is present — cancel any pending self-heal retry for this hand.
+    clearAuctionEnsureRetry();
     // Defensive: RTDB drops empty `entries`/`order`, so a freshly-created auction may arrive with
     // them undefined. The manager normalizes on read, but guard here too (this UI is untested):
     // without it, `auction.entries[seat]` would throw and freeze the whole auction.
