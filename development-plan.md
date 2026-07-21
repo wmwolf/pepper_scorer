@@ -594,9 +594,9 @@ that stuck the auction on "Starting…" (now self-heals), and mobile cramping (s
 scroll-to-decision). Presence-driven auction↔host flipping validated in the wild; players prefer
 host-driven when not all four are logged in.
 
-Remaining work: Phase 11 PWA rollout, Phase 10, and the optional collision-reducer. One Firebase-
-console toggle is still open: **enable the Anonymous sign-in provider** for signed-out watch/TV mode
-(everything else works without it).
+Remaining work: Phase 11 PWA rollout, Phase 10, and the optional collision-reducer. All Firebase-
+console setup is done — the Anonymous sign-in provider for signed-out watch/TV mode is **enabled and
+confirmed working in prod (`pepper-scorer`) 2026-07-21**.
 
 Recommended order from here:
 
@@ -811,8 +811,8 @@ eligibility fallback, and the host-takeover-aborts-auction path (host declares a
   non-blocking "waiting for X" hint. Only worth it if simultaneous entry annoys real players.
 - **Carried from the spectator audit** — DONE (2026-07-20): localStorage-pollution gated on
   `shouldPersistLocalCopy()`; `awaitAuthReady()` closes the cold-load race; signed-out / TV watch
-  mode via anonymous auth (`ensureAnonymousAuth()`, no roster pollution). ⚠️ needs the **Anonymous
-  sign-in provider enabled in the Firebase console**.
+  mode via anonymous auth (`ensureAnonymousAuth()`, no roster pollution). The **Anonymous sign-in
+  provider is enabled + confirmed working in prod 2026-07-21**.
 - **No migration needed for the host claim.** The pre-existing games have no `currentHost`, so they
   read as "no host claimed": seated players can record and the creator can claim with one click.
   New games seed the claim at creation. A backfill is optional.
