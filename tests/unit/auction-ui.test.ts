@@ -6,7 +6,7 @@
 // here — it needs real Firebase + four Google sign-ins). It covers the DOM path that was
 // previously verified only manually.
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { renderAuction, auctionEligible } from '../../src/lib/game'
 import {
   createAuction,
@@ -188,6 +188,55 @@ describe('throw-in', () => {
 // Role-aware rendering (the shared-display leak fix): participation keys on the DEVICE role, not
 // the account's seat. A seated account on a shared display (spectator or host role) must never see
 // the bid pad or trump selector — the trump selector's mere presence broadcasts bid-vs-pass.
+// Real-game bug (2026-07-21): the auction stuck on "Starting the auction…" forever after a lost
+// init write, because ensureAuctionForCurrentHand was fire-and-forget and never retried. The render
+// must now self-heal — retry the init on a timer until the bidding node appears.
+describe('auction init self-heals a lost write (no permanent "Starting…")', () => {
+  it('retries ensureAuctionForCurrentHand after a failure instead of sticking', async () => {
+    vi.useFakeTimers()
+    try {
+      const players = [
+        { userId: 'u1', displayName: 'Alice', isAuthenticated: true, position: 0 },
+        { userId: 'u2', displayName: 'Bob', isAuthenticated: true, position: 1 },
+        { userId: 'u3', displayName: 'Carol', isAuthenticated: true, position: 2 },
+        { userId: 'u4', displayName: 'Dave', isAuthenticated: true, position: 3 },
+      ]
+      let auction: AuctionState | null = null
+      let ensureCalls = 0
+      const gm = { state: { players: ['Alice', 'Bob', 'Carol', 'Dave'], hands: ['1'] } }
+      const mp = {
+        getMySeat: () => 1,
+        getFirebasePlayers: () => players,
+        getAuction: () => auction,
+        ensureAuctionForCurrentHand: async () => {
+          ensureCalls++
+          if (ensureCalls === 1) throw new Error('lost write') // first attempt fails
+          auction = createAuction(1, 0)                        // retry succeeds
+        },
+        enterBid: async () => {},
+        setTrump: async () => {},
+      }
+      ;(window as unknown as { updateUI: () => void }).updateUI = () => renderAuction(gm as never, mp as never)
+
+      renderAuction(gm as never, mp as never)
+      await Promise.resolve() // let the rejected ensure's .catch reset the guard
+      expect(html()).toContain('Starting the auction')
+      expect(ensureCalls).toBe(1)
+
+      // Advance past the self-heal interval: the retry re-attempts the init (which now succeeds).
+      await vi.advanceTimersByTimeAsync(2600)
+      expect(ensureCalls).toBeGreaterThanOrEqual(2)
+
+      // A final re-render (as the bidding listener would trigger) now shows the auction, not "Starting…".
+      renderAuction(gm as never, mp as never)
+      expect(html()).not.toContain('Starting the auction')
+      expect(html()).toContain('Bidding')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('role-aware rendering', () => {
   it('gives a seated device in PLAYER role the bid pad (unchanged behavior)', () => {
     const h = makeHarness(1, 1) // seat 2, defaults to player role
