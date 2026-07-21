@@ -584,22 +584,27 @@ any automated path.
 
 Status: Phases 1–9 done; **Phase 11 security deployed**; **Phase 11 error monitoring (Sentry)
 deployed to `main` and live** (2026-07-19); Phase 11 **PWA/offline + data export parked on branch
-`phase-11-pwa-and-export`** (not deployed). Phase 12 (multiplayer role model) **A–D done and
-merged**; the five-user topology (four players + one unseated host) is emulator-verified
-(`tests/emulator/five-user-game.test.ts`). Remaining major work: Phase 12 "NEXT BUILD"
-(role-aware auction + host takeover), Phase 12 D/E remainder, Phase 11 PWA rollout, Phase 10.
+`phase-11-pwa-and-export`** (not deployed). **Phase 12 (multiplayer role model) is COMPLETE and
+merged** (2026-07-19/20, PRs #10–#13): role-aware auction, host takeover, auto host-promotion, undo
+lockout, series-advance gating, and the spectator-audit cleanups (anonymous watch mode, cold-load
+auth race, localStorage-pollution). The undo/series rule nodes are **deployed to prod (2026-07-21)**.
+**First real multiplayer game played 2026-07-21** — surfaced and fixed three bugs (PRs #14–#17): the
+"Make it a Series" navigation-race loop (+ host force-advance failsafe), a lost auction-init write
+that stuck the auction on "Starting…" (now self-heals), and mobile cramping (sticky score banner +
+scroll-to-decision). Presence-driven auction↔host flipping validated in the wild; players prefer
+host-driven when not all four are logged in.
+
+Remaining work: Phase 11 PWA rollout, Phase 10, and the optional collision-reducer. One Firebase-
+console toggle is still open: **enable the Anonymous sign-in provider** for signed-out watch/TV mode
+(everything else works without it).
 
 Recommended order from here:
 
-1. **Real-device QA** (in progress). The whole role model (host claim, per-device spectate,
-   collision-safe entry) is proven headlessly but under-exercised on real signed-in devices; the
-   fifth-account-hosts-on-the-laptop setup is the current test vehicle. Surface what the emulator
-   can't (Google auth, presence/onDisconnect timing, multi-device latency).
-2. **Phase 12 "NEXT BUILD"** — role-aware auction (closes the trump-selector leak so a seated
-   player can host/spectate on a second device) + host takeover of an active auction. Highest
-   user-facing value; unblocks the single-account two-device flow. See the section above.
-3. **Phase 12 D/E remainder** — auto host-promotion, undo lockout, series-advance gating.
-4. **Phase 11 PWA rollout** — merge `phase-11-pwa-and-export`, deploy, watch the first PWA rollout
+1. **More real-device play testing** — the first game went well; more play will reveal seams
+   (the group is the test vehicle). Watch: the series-advance flow for everyone + the host
+   force-advance button; whether the auction ever stalls again (the new `[auction] init did not land
+   in time` warn will confirm); how the sticky banner + auto-scroll feel.
+2. **Phase 11 PWA rollout** — merge `phase-11-pwa-and-export`, deploy, watch the first PWA rollout
    (GH-Pages HTML-staleness note in the Production Features section). Do after the multiplayer work
    settles, so a caching layer doesn't complicate multiplayer debugging.
 5. **Phase 10 — Advanced Statistics & Historical Analysis.** Largest and most independent; benefits
@@ -709,8 +714,8 @@ implement, nothing to drift:
   host, may record ANY tap-flow step (per-step ownership gone; the trump exception with it). The
   auction stays per-seat (handled before gating); a spectator-mode device is read-only even if
   seated. Proven in `tests/emulator/collision-safety.test.ts`. The mode-DERIVATION accessors
-  (`nextHostSeatInDealerOrder()`, `allSeatsHavePlayerDevice()`) exist but are not yet wired to
-  auto-promotion or `auctionEligible()` — see below.
+  (`nextHostSeatInDealerOrder()`, `allSeatsHavePlayerDevice()`) are now WIRED — auto-promotion and
+  `auctionEligible()` respectively (see below).
 - **E. DONE (role-aware auction + host takeover build).** The explicit auction abort landed as
   `FirebaseGameManager.abortAuction()` / `hostTakeoverBidder()`, and the 2.8s race is closed:
   `applyAuctionToHand` now RE-READS the `bidding` node before applying and bails if the host has
@@ -801,7 +806,7 @@ eligibility fallback, and the host-takeover-aborts-auction path (host declares a
   ~5s countdown (`requestSeriesAdvance`/`cancelSeriesAdvance`, node `games/$id/seriesAdvance`) that
   ANY player may cancel; the initiator performs the advance at the deadline. Rule: `games/$id/seriesAdvance`.
   Both proven in `tests/emulator/undo-series-coordination.test.ts` + `tests/unit/undo-series-policy.test.ts`.
-  **Rules deploy required** (`firebase deploy --only database`) before these gate in production.
+  Rules **deployed to prod by Bill 2026-07-21**, so these gate live.
 - **Optional collision-reducer**: soft-assign the outcome to the defender left of the bidder with a
   non-blocking "waiting for X" hint. Only worth it if simultaneous entry annoys real players.
 - **Carried from the spectator audit** — DONE (2026-07-20): localStorage-pollution gated on
@@ -811,6 +816,27 @@ eligibility fallback, and the host-takeover-aborts-auction path (host declares a
 - **No migration needed for the host claim.** The pre-existing games have no `currentHost`, so they
   read as "no host claimed": seated players can record and the creator can claim with one click.
   New games seed the claim at creation. A backfill is optional.
+
+### Post-launch fixes (first real game, 2026-07-21)
+
+The first live multiplayer game worked overall (presence-driven auction↔host flipping validated;
+host-driven preferred). Three bugs surfaced, all fixed and merged:
+
+- **PR #14 — "Make it a Series" / Next Game looped, never advanced.** Navigation race: the
+  victory-button handler called the async Firebase `startNextGame()` (which navigates) then
+  synchronously `window.location.reload()`, and the reload won. Fix: `startNextGame()` delegates to
+  awaitable `advanceSeriesAndNavigate()` that OWNS navigation; handlers no longer reload for Firebase
+  games. Added **host force-advance** (`forceAdvanceSeries()` + a host-only button) that goes to the
+  existing next game instead of spawning a duplicate. `tests/emulator/series-advance.test.ts`.
+- **PR #15 — auction stuck on "Starting the auction…" permanently.** A lost `ensureAuctionForCurrentHand()`
+  write left the auction wedged because init was fire-and-forget behind a per-hand guard. Fix:
+  self-heal — clear the guard on failure + a ~2.5s retry + a `console.warn` breadcrumb.
+- **PR #16 — flaky auto-promotion role adoption.** `promoteSelfToHost` adopted the host role only on
+  `committed:true`, but RTDB reports `false` on a no-op-equal write; fixed to gate on the committed
+  VALUE.
+- **PR #17 — mobile cramping.** Score/state banner is now `sticky top-0` (compact on mobile); after
+  each advance the decision area scrolls to just below it (instant scroll — `behavior:'smooth'` is a
+  silent no-op in some browsers). Browser-verified.
 
 ## Technical Details
 
