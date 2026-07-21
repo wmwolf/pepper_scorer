@@ -778,6 +778,11 @@ export class FirebaseGameManager extends GameManager {
     return this.roomCode;
   }
 
+  // The id of the series this game belongs to, or null if it is a standalone game.
+  public getSeriesId(): string | null {
+    return this.seriesId;
+  }
+
   // The 0-based seat of the currently signed-in user, or null if they are not seated
   // (a spectator, or not signed in). Used to gate turn-based controls and to render
   // "you are seat N" / relative-direction indicators.
@@ -1804,35 +1809,70 @@ export class FirebaseGameManager extends GameManager {
     }
   }
 
-  // Override startNextGame to create new Firebase game in series
+  // Override startNextGame to create a new Firebase game in the series. Fire-and-forget so the base
+  // signature stays `void`; callers who need to sequence should use advanceSeriesAndNavigate()
+  // directly. IMPORTANT: this method OWNS navigation — a caller must NOT also reload/navigate, or
+  // the two race (the "Make it a Series did nothing but reload" bug: the caller's reload landed
+  // before this navigation, bouncing the table back to the completed game every time).
   override startNextGame(): void {
-    if (!this.state.isSeries || !this.seriesId) {
-      // Fallback path: the new game re-uses the current game node, so carry the sync
-      // version forward. super.startNextGame() rebuilds state without a version, and
-      // without this the transaction would treat the (higher-versioned) completed game
-      // still on the node as "newer" and revert our fresh game.
-      const prevVersion = FirebaseGameManager.versionOf(this.state);
-      super.startNextGame();
-      this.state.version = prevVersion;
-      this.syncToFirebase();
-      return;
-    }
+    void this.advanceSeriesAndNavigate();
+  }
 
-    // Create new Firebase game for the series
-    this.createNextGameInSeries().then(newGameId => {
-      if (newGameId) {
-        // Navigate to new game
-        window.location.href = getPath('/game?id=' + newGameId);
-      } else {
-        // Fallback to local series progression on the same game node — carry the
-        // version forward for the same reason as above.
+  // Awaitable series advance: create the next game (or fall back to the same node) and navigate to
+  // it. Shared by the normal Next Game flow and the host force-advance failsafe. Resolves once
+  // navigation has been initiated (or the local fallback synced).
+  public async advanceSeriesAndNavigate(): Promise<void> {
+    if (!this.state.isSeries || !this.seriesId) {
+      // Fallback path: the new game re-uses the current game node, so carry the sync version
+      // forward (super.startNextGame() rebuilds state without a version; without this the
+      // transaction would treat the higher-versioned completed game still on the node as "newer"
+      // and revert our fresh game). Guard the advance so a double call can't throw.
+      if (this.isGameComplete()) {
         const prevVersion = FirebaseGameManager.versionOf(this.state);
         super.startNextGame();
         this.state.version = prevVersion;
-        this.syncToFirebase();
-        window.location.reload();
+        await this.syncToFirebase();
       }
-    });
+      window.location.reload();
+      return;
+    }
+
+    const newGameId = await this.createNextGameInSeries();
+    if (newGameId) {
+      window.location.href = getPath('/game?id=' + newGameId);
+    } else {
+      // Same-node fallback — again guarded against a double advance.
+      if (this.isGameComplete()) {
+        const prevVersion = FirebaseGameManager.versionOf(this.state);
+        super.startNextGame();
+        this.state.version = prevVersion;
+        await this.syncToFirebase();
+      }
+      window.location.reload();
+    }
+  }
+
+  // Host force-advance failsafe (real-game feedback 2026-07-21): if the normal Next Game flow ever
+  // gets stuck, the host can force it. If the series already advanced past this game (a next game
+  // was created but the initiator never navigated), just GO there — don't spawn a duplicate.
+  // Otherwise create the next game as usual. Safe to call repeatedly.
+  public async forceAdvanceSeries(): Promise<void> {
+    if (!isFirebaseConfigured()) { await this.advanceSeriesAndNavigate(); return; }
+    const database = getFirebaseDatabase();
+    if (!this.state.isSeries || !this.seriesId) { await this.convertToSeries(); }
+    if (database && this.seriesId) {
+      try {
+        const snap = await get(ref(database, `series/${this.seriesId}/currentGameId`));
+        const currentGameId = snap.exists() ? (snap.val() as string) : null;
+        if (currentGameId && currentGameId !== this.gameId) {
+          window.location.href = getPath('/game?id=' + currentGameId);
+          return;
+        }
+      } catch (error) {
+        console.error('Error checking series current game for force-advance:', error);
+      }
+    }
+    await this.advanceSeriesAndNavigate();
   }
 
   // Create next game in Firebase series
@@ -1855,8 +1895,12 @@ export class FirebaseGameManager extends GameManager {
 
       const originalGameData = originalGameSnapshot.val() as FirebaseGameData;
 
-      // Progress the series locally first to get updated state
-      super.startNextGame();
+      // Progress the series locally to get the fresh next-game state — but only if we haven't
+      // already (a retried/forced call may find local state already advanced; advancing again would
+      // throw "current game not complete").
+      if (this.isGameComplete()) {
+        super.startNextGame();
+      }
 
       // Create new game in Firebase
       const newGameId = push(ref(database, 'games')).key!;
