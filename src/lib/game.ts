@@ -1135,6 +1135,26 @@ async function handleSeriesAdvance(gameManager: GameManager, performAdvance: () 
     renderSeriesAdvanceCountdown(gameManager);
 }
 
+// After a game-state advance, bring the decision area (prompt + controls) into view so a phone
+// player doesn't have to scroll past the sticky score banner to find it. We scroll #action-top to
+// just below the sticky banner, offsetting by the banner's ACTUAL height (a fixed scroll-margin
+// can't, since the banner height varies with names/trophies and can exceed it). Uses an instant
+// scroll rather than smooth — smooth is a silent no-op in some browsers. Skips when already in
+// position so repeated advances don't jitter. Tracks the last hand so we only scroll on a real
+// change, not on every render (remote sync, presence, etc.).
+let lastRenderedHandForScroll: string | null = null;
+function scrollToActionArea() {
+    const el = document.getElementById('action-top');
+    if (!el || typeof el.getBoundingClientRect !== 'function') return;
+    const banner = document.getElementById('score-banner');
+    const bannerH = banner ? Math.ceil(banner.getBoundingClientRect().height) : 0;
+    const desiredTop = bannerH + 8; // land just below the sticky banner
+    const rect = el.getBoundingClientRect();
+    if (Math.abs(rect.top - desiredTop) < 12) return; // already there — don't jump
+    const target = Math.max(0, window.scrollY + rect.top - desiredTop);
+    window.scrollTo(0, target);
+}
+
 // Rebuild the score-log table from the current game state.
 // Extracted to module scope so both the main updateUI loop and the
 // "Edit Last Tricks" handler can refresh the log after state changes.
@@ -1314,6 +1334,16 @@ export function startGameplay(gameData: Record<string, unknown>) {
 
         renderOverrideBar(gameManager);
         showPhaseControls(gameManager);
+
+        // On a real state advance (the hand string changed) in an in-progress game, scroll the
+        // decision area into view. Skip the first render and completed games (the victory screen
+        // owns the viewport then).
+        const handForScroll = gameManager.getCurrentHand();
+        if (lastRenderedHandForScroll !== null && handForScroll !== lastRenderedHandForScroll
+            && !gameManager.isGameComplete()) {
+            scrollToActionArea();
+        }
+        lastRenderedHandForScroll = handForScroll;
 
         // Save current state — but not for a pure spectator (see shouldPersistLocalCopy).
         const persistLocal = shouldPersistLocalCopy(gameManager);
