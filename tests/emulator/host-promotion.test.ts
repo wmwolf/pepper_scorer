@@ -131,8 +131,10 @@ describe('auto host-promotion on host presence loss', () => {
     // Alice's host device disconnects.
     await remove(ref(aliceDb, `games/${gameId}/presence/${alice}/laptop`))
 
-    // After the debounce, Bob (the next present seated player) auto-promotes to host.
+    // After the debounce, Bob (the next present seated player) auto-promotes to host — and adopts
+    // the host device role (waitUntil, not a bare expect, so a last-tick role update can't flake it).
     await waitUntil(() => bobGm.getCurrentHostUid() === bob, 7000)
+    await waitUntil(() => bobGm.getDeviceRole() === 'host', 2000)
     expect(bobGm.isHost()).toBe(true)
     expect(bobGm.getDeviceRole()).toBe('host')
     const hostSnap = await get(ref(getFirebaseDatabase()!, `games/${gameId}/metadata/currentHost`))

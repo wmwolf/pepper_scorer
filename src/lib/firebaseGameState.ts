@@ -975,7 +975,11 @@ export class FirebaseGameManager extends GameManager {
       if (current !== absentHost) return; // someone already changed it — abort, don't stomp
       return uid;
     });
-    if (result.committed && result.snapshot.val() === uid) {
+    // Adopt the host role whenever the node now holds OUR uid — NOT only when `committed` is true.
+    // RTDB reports committed:false for a benign no-op-equal write (e.g. a racing trigger already
+    // wrote our uid), and gating on it left this device as host in the DB but still 'player' role
+    // locally — the source of a flaky "expected 'player' to be 'host'". The node value is the truth.
+    if (result.snapshot.val() === uid) {
       this.currentHostUid = uid;
       this.setDeviceRole('host');
       if (this.uiUpdateCallback) this.uiUpdateCallback(this.state);
