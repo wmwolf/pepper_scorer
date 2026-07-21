@@ -60,6 +60,8 @@ interface MultiplayerManager {
   requestSeriesAdvance?(): Promise<boolean>;
   cancelSeriesAdvance?(): Promise<void>;
   getSeriesAdvancePending?(): { by: string; ts: number } | null;
+  // Host force-advance failsafe for a stuck series (2026-07-21).
+  forceAdvanceSeries?(): Promise<void>;
 }
 
 function asMultiplayer(gm: GameManager): MultiplayerManager | null {
@@ -1636,27 +1638,63 @@ function createConfettiEffect() {
             </button>
           `}
           
-          <button 
-            id="post-victory-new-game-btn" 
+          <button
+            id="post-victory-new-game-btn"
             class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
           >
             New Game
           </button>
         </div>
+
+        <!-- Host force-advance failsafe (2026-07-21): hidden unless this is a Firebase series game
+             and the viewer is the host. If the normal Next Game ever gets stuck, force it. -->
+        <button
+          id="post-victory-force-next-btn"
+          class="hidden mt-3 px-4 py-2 text-sm bg-amber-100 text-amber-800 border border-amber-300 rounded-lg hover:bg-amber-200 transition-colors"
+          title="If the next game didn't start for everyone, force it."
+        >
+          ⏭️ Force next game (host)
+        </button>
       `;
+
+      // Show the force-advance escape hatch only to the host of a Firebase series game.
+      {
+        const mp = asMultiplayer(gameManager);
+        const forceBtn = document.getElementById('post-victory-force-next-btn');
+        const isHostOfSeries = !!mp && gameManager.state.isSeries && !gameManager.isSeriesComplete()
+          && typeof mp.isHost === 'function' && mp.isHost();
+        if (forceBtn && isHostOfSeries) {
+          forceBtn.classList.remove('hidden');
+          forceBtn.addEventListener('click', () => {
+            forceBtn.setAttribute('disabled', 'true');
+            forceBtn.textContent = 'Starting next game…';
+            void (mp.forceAdvanceSeries?.() ?? Promise.resolve()).catch(err => {
+              console.error('Force-advance failed:', err);
+              forceBtn.removeAttribute('disabled');
+              forceBtn.textContent = '⏭️ Force next game (host)';
+            });
+          });
+        }
+      }
       
       // Add event listeners to the post-victory buttons. The forward-advance actions are gated by
       // the series-advance policy (host-only when a host is present; a ~5s cancelable countdown when
       // hostless) — see handleSeriesAdvance. "New Game" (leaving the game) is not gated.
+      // NOTE (2026-07-21 fix): for a Firebase game, startNextGame() OWNS navigation to the new game
+      // node. The caller must NOT also reload — doing so raced the navigation and bounced the table
+      // back to the completed game every time ("Make it a Series did nothing but loop"). Only a
+      // LOCAL game mutates state in place and needs the caller to persist + reload.
       const makeSeriesAdvance = () => {
-        // Properly await series conversion for Firebase games
+        const isFirebase = asMultiplayer(gameManager) !== null;
         Promise.resolve(gameManager.convertToSeries()).then(() => {
           gameManager.startNextGame();
-          localStorage.setItem('currentGame', gameManager.toJSON());
-          window.location.reload();
+          if (!isFirebase) {
+            localStorage.setItem('currentGame', gameManager.toJSON());
+            window.location.reload();
+          }
         }).catch(error => {
           console.error('Error creating series:', error);
-          window.location.reload();
+          if (!isFirebase) window.location.reload();
         });
       };
       document.getElementById('post-victory-series-btn')?.addEventListener('click', () => {
@@ -1664,10 +1702,12 @@ function createConfettiEffect() {
       });
 
       const nextGameAdvance = () => {
-        // In series mode, this is "Next Game"
-        gameManager.startNextGame();
-        localStorage.setItem('currentGame', gameManager.toJSON());
-        window.location.reload();
+        const isFirebase = asMultiplayer(gameManager) !== null;
+        gameManager.startNextGame(); // Firebase: navigates itself; local: mutates in place
+        if (!isFirebase) {
+          localStorage.setItem('currentGame', gameManager.toJSON());
+          window.location.reload();
+        }
       };
       document.getElementById('post-victory-new-series-btn')?.addEventListener('click', () => {
         void handleSeriesAdvance(gameManager, nextGameAdvance);
