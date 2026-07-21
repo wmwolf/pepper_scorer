@@ -61,8 +61,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <button id="room-code-copy" class="ml-1 px-2 py-0.5 text-xs rounded bg-gray-200 hover:bg-gray-300 transition-colors">Copy</button>
   </div>
 
-  <!-- Score Display -->
-  <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+  <!-- Score Display — sticky so scores + current hand state stay visible while scrolling on a phone
+       (compact padding on mobile to keep the sticky header short). -->
+  <div id="score-banner" class="sticky top-0 z-30 bg-white rounded-lg shadow-sm p-3 md:p-6 mb-6">
     <!-- Mobile Layout -->
     <div class="flex justify-between md:hidden">
       <!-- New Element (left on mobile) -->
@@ -71,28 +72,28 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <p class="text-lg font-medium text-gray-700" id="bid-info-mobile">Waiting for bid</p>
       </div>
       
-      <!-- Stacked scores on right (mobile) -->
-      <div class="flex flex-col gap-4">
+      <!-- Stacked scores on right (mobile) — compact so the sticky header stays short. -->
+      <div class="flex flex-col gap-1">
         <!-- Team 1 Score -->
-        <div class="text-right">
+        <div class="text-right leading-tight">
           <div class="flex items-center justify-end gap-1">
-            <h2 class="text-lg font-medium text-gray-700" id="team1-name-mobile">Team 1</h2>
+            <h2 class="text-sm font-medium text-gray-700" id="team1-name-mobile">Team 1</h2>
             <div id="team1-wins-mobile" class="flex gap-1">
               <!-- Trophy icons will be added here by JS -->
             </div>
           </div>
-          <p class="text-3xl font-bold text-gray-800" id="team1-score-mobile">0</p>
+          <p class="text-2xl font-bold text-gray-800" id="team1-score-mobile">0</p>
         </div>
-        
+
         <!-- Team 2 Score -->
-        <div class="text-right">
+        <div class="text-right leading-tight">
           <div class="flex items-center justify-end gap-1">
             <div id="team2-wins-mobile" class="flex gap-1">
               <!-- Trophy icons will be added here by JS -->
             </div>
-            <h2 class="text-lg font-medium text-gray-700" id="team2-name-mobile">Team 2</h2>
+            <h2 class="text-sm font-medium text-gray-700" id="team2-name-mobile">Team 2</h2>
           </div>
-          <p class="text-3xl font-bold text-gray-800" id="team2-score-mobile">0</p>
+          <p class="text-2xl font-bold text-gray-800" id="team2-score-mobile">0</p>
         </div>
       </div>
     </div>
@@ -132,8 +133,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
       <!-- Action Area (now spans 3 columns instead of 2) -->
       <div class="lg:col-span-3 space-y-6">
-        <!-- Instructions -->
-        <div class="bg-white rounded-lg shadow-sm p-6">
+        <!-- Instructions. #action-top is the scroll anchor: after each game-state advance we scroll
+             it to just below the sticky score banner (offset computed from the banner's height). -->
+        <div id="action-top" class="bg-white rounded-lg shadow-sm p-6">
           <div class="flex justify-between items-center mb-4">
             <p class="text-lg text-gray-700" id="game-instruction">
               Waiting for game to start...
