@@ -432,6 +432,25 @@ function calculateAwardStats(awardId: string, winnerName: string, data: AwardTra
     case 'big_talker':
       return playerStats ? `${winnerName} came up short on ${playerStats.bidsFailed} bids` : `${winnerName} missed a lot of bids`;
 
+    case 'reeks_of_weakness': {
+      let sixBids = 0;
+      const playerNames = Object.keys(data.playerStats);
+      data.hands.forEach(hand => {
+        if (!isHandComplete(hand)) return;
+        if (hand.length >= 2 && hand[1] === '0') return; // throw-in
+        try {
+          const { bidWinner, bid } = decodeHand(hand);
+          if (bid === 6 && playerNames[bidWinner - 1] === winnerName) sixBids++;
+        } catch { /* skip malformed hands */ }
+      });
+      return `${winnerName} hedged with ${sixBids} six-bids`;
+    }
+
+    case 'shoat': {
+      const net = playerStats?.netPoints ?? 0;
+      return `${winnerName} finished ${net} net points on offense`;
+    }
+
     default:
       return `${winnerName} earned this award`;
   }
@@ -626,6 +645,16 @@ export const gameAwards: AwardDefinition[] = [
     scope: 'game',
     important: false,
     icon: 'ban'
+  },
+  {
+    id: 'reeks_of_weakness',
+    name: 'Reeks of Weakness',
+    description: 'Sly or non-committal?',
+    technicalDefinition: 'Player who won the bid with at least two 6-bids in a single game. A genuinely strong hand just bids a moon; a 6-bid hedges — it only makes sense when you fear the opponents might steal a trick or two and you would rather cap the damage. Most 6-bids in the game wins (minimum 2).',
+    type: 'player',
+    scope: 'game',
+    important: false,
+    icon: 'skunk'
   }
 ];
 
@@ -758,6 +787,16 @@ export const seriesAwards: AwardDefinition[] = [
     scope: 'series',
     important: false,
     icon: 'megaphone'
+  },
+  {
+    id: 'shoat',
+    name: 'SHOAT',
+    description: 'What do YOU think it stands for?',
+    technicalDefinition: 'Player who finished the series net-negative on their offensive bids — the summed team score across every hand they won the bid on is below zero. The most-negative net offensive total wins.',
+    type: 'player',
+    scope: 'series',
+    important: false,
+    icon: 'poop'
   }
 ];
 
@@ -1711,6 +1750,51 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
           statDetails: calculateAwardStats(award.id, winner.name, data)
         };
       }
+
+      case 'reeks_of_weakness': {
+        // Player who WON THE BID (not necessarily the hand) with >=2 six-bids in a single game.
+        // A strong hand bids a moon; a 6-bid hedges against the opponents stealing a trick or two.
+        const playerNames = Object.keys(data.playerStats);
+        const sixBidsByName: Record<string, number> = {};
+        data.hands.forEach(hand => {
+          if (!isHandComplete(hand)) return;
+          if (hand.length >= 2 && hand[1] === '0') return; // throw-in — nobody bid
+          try {
+            const { bidWinner, bid } = decodeHand(hand);
+            // decodeHand returns numeric bids as NUMBERS, so a 6-bid is `6`, not '6'.
+            if (bid !== 6) return;
+            const name = playerNames[bidWinner - 1];
+            if (name) sixBidsByName[name] = (sixBidsByName[name] ?? 0) + 1;
+          } catch { /* skip malformed hands */ }
+        });
+        const qualifying = playerStats.filter(p => (sixBidsByName[p.name] ?? 0) >= 2);
+        if (qualifying.length === 0) return null;
+        const maxSix = Math.max(...qualifying.map(p => sixBidsByName[p.name] ?? 0));
+        const top = qualifying.filter(p => (sixBidsByName[p.name] ?? 0) === maxSix);
+        // Deterministic tie-break by name so a completed game always yields the same winner.
+        const winner = [...top].sort((a, b) => a.name.localeCompare(b.name))[0];
+        return {
+          ...award,
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
+      }
+
+      case 'shoat': {
+        // Player who finished the series net-negative on their offensive bids (netPoints is the
+        // summed team score across every hand they bid). Most-negative total wins.
+        const qualifying = playerStats.filter(p => p.netPoints < 0);
+        if (qualifying.length === 0) return null;
+        const minNet = Math.min(...qualifying.map(p => p.netPoints));
+        const worst = qualifying.filter(p => p.netPoints === minNet);
+        // Deterministic tie-break by name.
+        const winner = [...worst].sort((a, b) => a.name.localeCompare(b.name))[0];
+        return {
+          ...award,
+          winner: winner.name,
+          statDetails: calculateAwardStats(award.id, winner.name, data)
+        };
+      }
     }
   }
 
@@ -1726,13 +1810,25 @@ export function evaluateAward(award: AwardDefinition, data: AwardTrackingData): 
 // touching every award definition.
 const GAME_DUBIOUS_IDS = new Set([
   'overreaching', 'false_confidence', 'helping_hand', 'playing_it_safe', 'no_trump_no_problem',
+  'reeks_of_weakness',
 ]);
-const SERIES_DUBIOUS_IDS = new Set(['moon_struck', 'punching_bag', 'feast_or_famine', 'big_talker']);
+const SERIES_DUBIOUS_IDS = new Set([
+  'moon_struck', 'punching_bag', 'feast_or_famine', 'big_talker', 'shoat',
+]);
 
 type AwardCategory = 'team' | 'player' | 'dubious';
 
+/**
+ * Single source of truth for which awards belong in the tongue-in-cheek "dubious" bucket.
+ * Consumers that need this classification (the amber card styling in `game.ts`, the award-selection
+ * regression test) MUST import this rather than keeping a parallel id list — those copies drifted.
+ */
+export function isDubiousAward(id: string): boolean {
+  return GAME_DUBIOUS_IDS.has(id) || SERIES_DUBIOUS_IDS.has(id);
+}
+
 function awardCategory(award: AwardDefinition): AwardCategory {
-  if (GAME_DUBIOUS_IDS.has(award.id) || SERIES_DUBIOUS_IDS.has(award.id)) return 'dubious';
+  if (isDubiousAward(award.id)) return 'dubious';
   return award.type;
 }
 
@@ -1743,7 +1839,7 @@ function awardCategory(award: AwardDefinition): AwardCategory {
 const AWARD_WEIGHTS: Record<string, number> = {
   // Rare + notable — showcase these.
   remember_the_time: 3, honeypot: 3, shoot_for_the_moons: 3, moon_struck: 3, pepper_perfect: 3,
-  brick_wall: 3, great_minds: 3, dynamic_duo: 3, moonshot: 3,
+  brick_wall: 3, great_minds: 3, dynamic_duo: 3, moonshot: 3, reeks_of_weakness: 3, shoat: 3,
   // Uncommon / characterful.
   footprints_in_the_sand: 2, playing_it_safe: 2, bid_specialists: 2, no_trump_no_problem: 2,
   false_confidence: 2, helping_hand: 2, clutch_player: 2, suit_specialist: 2, misery_loves_company: 2,

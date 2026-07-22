@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  gameAwards, seriesAwards, selectGameAwards, selectSeriesAwards, evaluateAward,
+  gameAwards, seriesAwards, selectGameAwards, selectSeriesAwards, evaluateAward, isDubiousAward,
 } from '@/lib/pepper-awards';
 import { trackAwardData } from '@/lib/statistics-util';
 import { generateGame, type GameStyle } from '../helpers/randomGames';
@@ -28,11 +28,8 @@ interface Tally {
 
 const MIN_SAMPLE = 100;
 
-const GAME_DUBIOUS = new Set([
-  'overreaching', 'false_confidence', 'helping_hand', 'playing_it_safe', 'no_trump_no_problem',
-]);
 const categoryOf = (id: string): string =>
-  GAME_DUBIOUS.has(id) ? 'dubious' : (gameAwards.find(a => a.id === id)!.type);
+  isDubiousAward(id) ? 'dubious' : (gameAwards.find(a => a.id === id)!.type);
 
 /** Run `n` seeded games (cycling through styles) and tally eligibility vs selection. */
 function simulate(n: number, seed: number): Tally {

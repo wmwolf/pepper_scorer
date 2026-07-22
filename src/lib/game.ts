@@ -1,6 +1,7 @@
 // src/lib/game.ts
 
 import { GameManager, getCurrentPhase, isPepperRound, calculateScore, isHandComplete } from './gameState';
+import { isDubiousAward } from './pepper-awards';
 import { getPath } from './path-utils';
 import { type SeatPlayer } from './multiplayer';
 import {
@@ -2200,13 +2201,9 @@ function createConfettiEffect() {
     winner: string;
     statDetails?: string;
   }) {
-    // Define styling based on award type. Keep this list in sync with GAME_DUBIOUS_IDS /
-    // SERIES_DUBIOUS_IDS in pepper-awards.ts (the "dubious" tongue-in-cheek awards get amber cards).
-    const dubiousIds = [
-      'overreaching', 'false_confidence', 'helping_hand', 'playing_it_safe', 'no_trump_no_problem',
-      'moon_struck', 'punching_bag', 'feast_or_famine', 'big_talker',
-    ];
-    const isDubious = dubiousIds.includes(award.id);
+    // Dubious (tongue-in-cheek) awards get amber cards. Classification is owned by
+    // `isDubiousAward` in pepper-awards.ts — the single source of truth (no parallel id list here).
+    const isDubious = isDubiousAward(award.id);
     
     const cardStyle = isDubious ? {
       headerBg: 'bg-amber-600',
@@ -2261,7 +2258,9 @@ function createConfettiEffect() {
       'clock-rewind': '⏪',
       'honey-pot': '🍯',
       'boxing-glove': '🥊',
-      'megaphone': '📣'
+      'megaphone': '📣',
+      'skunk': '🦨',
+      'poop': '💩'
     };
     
     const iconEmoji = iconMap[award.icon] || '🏆'; // Default to trophy if icon not found
