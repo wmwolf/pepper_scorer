@@ -3,6 +3,7 @@
 import { GameManager, getCurrentPhase, isPepperRound, calculateScore, isHandComplete } from './gameState';
 import { isDubiousAward } from './pepper-awards';
 import { getPath } from './path-utils';
+import { shortNames } from './displayNames';
 import { type SeatPlayer } from './multiplayer';
 import {
   revealedCount,
@@ -898,13 +899,18 @@ function setupPlayerButtons(gameManager: GameManager, updateUI: () => void) {
         (dealerIndex + 1 + i) % 4
     );
     
+    // Short labels (first name, disambiguated) keep the 2-across mobile / 4-across desktop grid
+    // legible with full Google display names; the full name stays available on hover.
+    const labels = shortNames(gameManager.state.players);
+
     // Create buttons in bidding order
     biddingOrder.forEach((index) => {
         const player = gameManager.state.players[index];
         const button = document.createElement('button');
-        button.className = 'px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-800 font-medium rounded-lg transition-colors';
+        button.className = 'px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-800 font-medium rounded-lg transition-colors truncate';
         button.dataset.player = (index + 1).toString();
-        button.textContent = player || '';
+        button.textContent = labels[index] || player || '';
+        if (player) button.title = player;
         button.addEventListener('click', () => {
             gameManager.addHandPart((index + 1).toString());
             updateUI();
@@ -1156,6 +1162,33 @@ function scrollToActionArea() {
     window.scrollTo(0, target);
 }
 
+// Set a score-table team header to a compact, non-wrapping label with the full team name as a
+// tooltip. A team is made of the two 0-based seats teamIndex and teamIndex+2 (0 & 2, or 1 & 3).
+function setTeamHeader(id: string, teamIndex: number, state: GameManager['state']) {
+    const th = document.getElementById(id);
+    if (!th) return;
+    const seatA = teamIndex;
+    const seatB = teamIndex + 2;
+    const teamName = state.teams[teamIndex] || '';
+    const defaultName = `${state.players[seatA] || ''} & ${state.players[seatB] || ''}'s Team`;
+    const labels = shortNames(state.players);
+
+    let label: string;
+    if (teamName && teamName !== defaultName) {
+        label = teamName;                          // custom name — keep it (CSS truncates)
+    } else {
+        const pair = [labels[seatA], labels[seatB]].filter(Boolean).join(' & ');
+        label = pair || teamName || `Team ${teamIndex + 1}`;
+    }
+
+    th.textContent = label;
+    th.title = teamName || `Team ${teamIndex + 1}`;
+    th.style.maxWidth = '7rem';
+    th.style.overflow = 'hidden';
+    th.style.textOverflow = 'ellipsis';
+    th.style.whiteSpace = 'nowrap';
+}
+
 // Rebuild the score-log table from the current game state.
 // Extracted to module scope so both the main updateUI loop and the
 // "Edit Last Tricks" handler can refresh the log after state changes.
@@ -1171,6 +1204,9 @@ function rebuildScoreLog(gameManager: GameManager, reverseHistory: boolean) {
         if (reverseHistory) {
             handsToDisplay = handsToDisplay.slice().reverse();
         }
+
+        // Short labels for the compact Dealer/Bid cells (full name stays in the sticky banner).
+        const labels = shortNames(gameManager.state.players);
 
         const runningScores: [number, number] = [0, 0];
 
@@ -1195,7 +1231,8 @@ function rebuildScoreLog(gameManager: GameManager, reverseHistory: boolean) {
 
             // Always show hand number and dealer
             const dealer = parseInt(hand[0] || '1');
-            const dealerName = gameManager.state.players[dealer - 1];
+            const dealerFull = gameManager.state.players[dealer - 1] || '';
+            const dealerName = labels[dealer - 1] || dealerFull;
 
             // Initialize cells with known data
             let bidDisplay = '';
@@ -1208,8 +1245,8 @@ function rebuildScoreLog(gameManager: GameManager, reverseHistory: boolean) {
                 if (bidWinner === 0) {
                     bidDisplay = 'Pass';
                 } else {
-                    const bidderName = gameManager.state.players[bidWinner - 1];
-                    bidDisplay = `${bidderName}: ${bidToString(hand[2] || '')} in ${trumpToString(hand[3] || '')}`;
+                    const bidderName = labels[bidWinner - 1] || gameManager.state.players[bidWinner - 1];
+                    bidDisplay = `${bidderName} ${bidToString(hand[2] || '')} ${trumpToString(hand[3] || '')}`;
                 }
             }
 
@@ -1257,8 +1294,8 @@ function rebuildScoreLog(gameManager: GameManager, reverseHistory: boolean) {
             // Add cells with score coloring based on classification
             row.innerHTML = `
                 <td class="py-2 text-center">${handNumber}</td>
-                <td class="py-2 px-4 text-left">${dealerName}</td>
-                <td class="py-2 px-4 text-left">${bidDisplay}</td>
+                <td class="py-2 px-4 text-left truncate" style="max-width:6rem" title="${dealerFull}">${dealerName}</td>
+                <td class="py-2 px-4 text-left whitespace-nowrap">${bidDisplay}</td>
                 <td class="py-2 text-center ${classification.setTeam === 0 ? 'text-red-600 font-medium' : ''}">${team1Score}</td>
                 <td class="py-2 text-center ${classification.setTeam === 1 ? 'text-red-600 font-medium' : ''}">${team2Score}</td>
             `;
@@ -1308,11 +1345,12 @@ export function startGameplay(gameData: Record<string, unknown>) {
           (undoButton as HTMLButtonElement).disabled = !canUndo;
         }
     
-        // Update the score log
-        const team1Header = document.getElementById('log-team1');
-        const team2Header = document.getElementById('log-team2');
-        if (team1Header) team1Header.textContent = gameManager.state.teams[0] || 'Team 1';
-        if (team2Header) team2Header.textContent = gameManager.state.teams[1] || 'Team 2';
+        // Update the score log team headers. Full team names live in the sticky banner; the
+        // narrow score-table columns get a compact label so the header row never wraps.
+        // A custom (renamed) team keeps its name (CSS-truncated); a team still on the default
+        // "X & Y's Team" shows the two members' short first names instead.
+        setTeamHeader('log-team1', 0, gameManager.state);
+        setTeamHeader('log-team2', 1, gameManager.state);
         
         // Update history toggle button text
         const reverseButtonText = document.getElementById('reverse-button-text');

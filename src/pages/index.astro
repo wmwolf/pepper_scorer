@@ -127,6 +127,8 @@ import ResumeGameModal from '../components/resume-modal.astro';
                       <!-- Search results will appear here -->
                     </div>
                   </div>
+                  <!-- Length hint: only shown when the name is long enough to be shortened in-game -->
+                  <p id={`player-hint-${i}`} class="hidden text-xs text-amber-600"></p>
                 </div>
               ))}
             </div>
@@ -167,6 +169,8 @@ import ResumeGameModal from '../components/resume-modal.astro';
                     placeholder="Enter team name"
                     required
                   />
+                  <!-- Length hint: only shown when the team name is long enough to be trimmed in the score table -->
+                  <p id={`team-hint-${i}`} class="hidden text-xs text-amber-600"></p>
                 </div>
               ))}
             </div>
@@ -206,6 +210,7 @@ import ResumeGameModal from '../components/resume-modal.astro';
   import { signInWithGoogle, signInWithGoogleCredential, useGoogleIdentityServices, signOutUser, onAuthStateChange, getCurrentUser, searchUsers } from '../lib/auth';
   import { googleOAuthClientId } from '../lib/firebase';
   import { subscribeToInvitations, acceptInvitation, declineInvitation } from '../lib/invitations';
+  import { playerNameWillTruncate, teamNameWillTruncate } from '../lib/displayNames';
 
   // Check for unfinished game on load
   document.addEventListener('DOMContentLoaded', async () => {
@@ -222,6 +227,9 @@ import ResumeGameModal from '../components/resume-modal.astro';
 
       // Setup user autocomplete for player inputs
       setupUserAutocomplete();
+
+      // Setup the "this name will be shortened in-game" length hints
+      setupNameHints();
 
       // Setup "join by room code" (Phase 8)
       setupJoinByRoomCode();
@@ -738,6 +746,10 @@ function setupUserAutocomplete() {
         // Hide dropdown
         dropdown.classList.add('hidden');
 
+        // A registered display name can be long — refresh the length hint (setting .value
+        // programmatically does not fire an 'input' event).
+        updatePlayerHint(playerIndex);
+
       });
     });
 
@@ -746,6 +758,65 @@ function setupUserAutocomplete() {
 
   // Make selectedUsers accessible for game creation
   window.getSelectedUsers = () => selectedUsers;
+}
+
+// Length hints under the setup fields: only shown when a name is long enough to be shortened
+// somewhere in the game UI (score-log cells for players, score-table headers for teams). The
+// thresholds live in ../lib/displayNames so the warning matches what actually renders.
+function currentUserMatches(value, selectedUser) {
+  const user = getCurrentUser();
+  if (!user) return false;
+  if (selectedUser?.userId && selectedUser.userId === user.uid) return true;
+  return Boolean(value) && value.trim() === (user.displayName || '').trim();
+}
+
+function updatePlayerHint(i) {
+  const input = document.getElementById(`player-${i}`);
+  const hint = document.getElementById(`player-hint-${i}`);
+  if (!input || !hint) return;
+
+  const value = input.value.trim();
+  if (!value || !playerNameWillTruncate(value)) {
+    hint.classList.add('hidden');
+    hint.textContent = '';
+    return;
+  }
+
+  const selected = (window.getSelectedUsers ? window.getSelectedUsers() : {})[i];
+  if (currentUserMatches(value, selected)) {
+    // It's the signed-in user's own name — they can shorten it at the source.
+    hint.innerHTML = `Long name — most of the game shows a shortened version. `
+      + `<a href="${getPath('/account')}" class="underline hover:text-amber-700">Change your display name</a> for a shorter label.`;
+  } else {
+    hint.textContent = 'Long name — the score table and buttons show a shortened version (first name, trimmed with “…”).';
+  }
+  hint.classList.remove('hidden');
+}
+
+function updateTeamHint(i) {
+  const input = document.getElementById(`team-${i}`);
+  const hint = document.getElementById(`team-hint-${i}`);
+  if (!input || !hint) return;
+
+  const value = input.value.trim();
+  if (!value || !teamNameWillTruncate(value)) {
+    hint.classList.add('hidden');
+    hint.textContent = '';
+    return;
+  }
+  hint.textContent = 'Long team name — it shows in full on the scoreboard, but is trimmed with “…” in the score-table column headers.';
+  hint.classList.remove('hidden');
+}
+
+function setupNameHints() {
+  [1, 2, 3, 4].forEach(i => {
+    const input = document.getElementById(`player-${i}`);
+    input?.addEventListener('input', () => updatePlayerHint(i));
+  });
+  [1, 2].forEach(i => {
+    const input = document.getElementById(`team-${i}`);
+    input?.addEventListener('input', () => updateTeamHint(i));
+  });
 }
 
 // Join a game by its shareable room code (Phase 8).
